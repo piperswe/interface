@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { THINKING_PRESETS, describeBudget, presetFor } from './thinking-presets';
 
 describe('THINKING_PRESETS', () => {
-	it('starts with Off and ascends through Max', () => {
+	it('starts with Off and ascends through Extra high', () => {
 		expect(THINKING_PRESETS[0]).toEqual({ id: 'off', label: 'Off', budget: null });
-		expect(THINKING_PRESETS.at(-1)?.id).toBe('max');
+		expect(THINKING_PRESETS.at(-1)?.id).toBe('extra-high');
 		// Budgets (excluding Off) are strictly increasing.
 		const budgets = THINKING_PRESETS.slice(1).map((p) => p.budget!);
 		const sorted = [...budgets].sort((a, b) => a - b);
@@ -27,7 +27,6 @@ describe('presetFor', () => {
 		expect(presetFor(4096)?.id).toBe('medium');
 		expect(presetFor(16384)?.id).toBe('high');
 		expect(presetFor(32768)?.id).toBe('extra-high');
-		expect(presetFor(64000)?.id).toBe('max');
 	});
 	it('returns null for non-matching positive budgets (custom)', () => {
 		expect(presetFor(1234)).toBeNull();
@@ -39,7 +38,7 @@ describe('describeBudget', () => {
 	it('uses the preset label when matched', () => {
 		expect(describeBudget(null)).toBe('Off');
 		expect(describeBudget(1024)).toBe('Low');
-		expect(describeBudget(64000)).toBe('Max');
+		expect(describeBudget(32768)).toBe('Extra high');
 	});
 	it('falls back to a localised token count for custom values', () => {
 		expect(describeBudget(2500)).toBe('2,500 tok');

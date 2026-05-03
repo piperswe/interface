@@ -10,6 +10,7 @@
 	} from '$lib/settings.remote';
 	import { page } from '$app/state';
 	import { untrack } from 'svelte';
+	import type { ReasoningType } from '$lib/server/models/config';
 
 	let { data }: { data: PageData } = $props();
 	const theme = $derived(page.data.theme as 'system' | 'light' | 'dark');
@@ -21,17 +22,27 @@
 	const thresholdForm = saveSetting.for('context_compaction_threshold');
 	const summaryTokensForm = saveSetting.for('context_compaction_summary_tokens');
 
-	let models = $state(untrack(() => data.modelList.map((m) => ({ ...m }))));
+	let models = $state(untrack(() => data.modelList.map((m) => ({ slug: m.slug, label: m.label, reasoning: m.reasoning as ReasoningType | undefined }))));
 
 	const serializedModels = $derived(
-		models
-			.filter((m) => m.slug.trim())
-			.map((m) => `${m.slug.trim()}|${m.label.trim()}`)
-			.join('\n'),
+		JSON.stringify(
+			models
+				.filter((m) => m.slug.trim())
+				.map((m) => {
+					const entry: { slug: string; label: string; reasoning?: ReasoningType } = {
+						slug: m.slug.trim(),
+						label: m.label.trim(),
+					};
+					if (m.reasoning) entry.reasoning = m.reasoning;
+					return entry;
+				}),
+			null,
+			2,
+		),
 	);
 
 	function addModel() {
-		models.push({ slug: '', label: '' });
+		models.push({ slug: '', label: '', reasoning: undefined });
 	}
 
 	function removeModel(i: number) {
@@ -55,7 +66,11 @@
 	}
 
 	function resetToDefaults() {
-		models = data.defaultModelList.map((m) => ({ ...m }));
+		models = data.defaultModelList.map((m) => ({
+			slug: m.slug,
+			label: m.label,
+			reasoning: m.reasoning as ReasoningType | undefined,
+		}));
 	}
 
 	function deleteHandler(name: string) {
@@ -354,15 +369,16 @@
 			{#if models.length > 0}
 				<div style="display: flex; flex-direction: column; gap: 0.4rem">
 					<div
-						style="display: grid; grid-template-columns: 1fr 1fr auto auto auto; gap: 0.4rem; align-items: center; padding: 0 0.1rem"
+						style="display: grid; grid-template-columns: 1fr 1fr auto auto auto auto; gap: 0.4rem; align-items: center; padding: 0 0.1rem"
 					>
 						<span style="font-size: 0.8rem; color: var(--muted)">Slug</span>
 						<span style="font-size: 0.8rem; color: var(--muted)">Label</span>
+						<span style="font-size: 0.8rem; color: var(--muted)">Reasoning</span>
 						<span></span><span></span><span></span>
 					</div>
 					{#each models as model, i (i)}
 						<div
-							style="display: grid; grid-template-columns: 1fr 1fr auto auto auto; gap: 0.4rem; align-items: center"
+							style="display: grid; grid-template-columns: 1fr 1fr auto auto auto auto; gap: 0.4rem; align-items: center"
 						>
 							<input
 								type="text"
@@ -378,6 +394,11 @@
 								aria-label="Model label"
 								style="min-width: 0"
 							/>
+							<select bind:value={model.reasoning} aria-label="Reasoning type" style="min-width: 0">
+								<option value={undefined}>Auto</option>
+								<option value="max_tokens">max_tokens</option>
+								<option value="effort">effort</option>
+							</select>
 							<button
 								type="button"
 								onclick={() => moveUp(i)}

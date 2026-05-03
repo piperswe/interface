@@ -32,6 +32,7 @@ export class OpenRouterLLM implements LLM {
 					...(tools ? { tools } : {}),
 					...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
 					...(request.maxTokens !== undefined ? { maxTokens: request.maxTokens } : {}),
+					...(request.reasoning ? { reasoning: request.reasoning as unknown as import('@openrouter/sdk/models').Reasoning } : {}),
 				},
 			});
 

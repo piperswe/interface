@@ -45,6 +45,7 @@
 
 	const currentLabel = $derived(models.find((m) => m.slug === selectedModel)?.label ?? selectedModel);
 	const budgetSummary = $derived(describeBudget(thinkingBudget));
+	const selectedReasoning = $derived(models.find((m) => m.slug === selectedModel)?.reasoning);
 
 	function onKeyDown(e: KeyboardEvent) {
 		if (e.key !== 'Enter') return;
@@ -164,21 +165,21 @@
 					<div class="compose-options-section-label">Thinking budget</div>
 					<ul class="compose-options-presets">
 						{#each THINKING_PRESETS as p (p.id)}
-							<li>
-								<label class="compose-options-preset">
-									<input
-										type="radio"
-										name="thinking_preset"
-										value={p.id}
-										checked={activePresetId === p.id}
-										onchange={() => pickPreset(p)}
-									/>
-									<span class="compose-options-preset-label">{p.label}</span>
-									{#if p.budget != null}
-										<span class="compose-options-preset-meta">{p.budget.toLocaleString()} tok</span>
-									{/if}
-								</label>
-							</li>
+						<li>
+							<label class="compose-options-preset">
+								<input
+									type="radio"
+									name="thinking_preset"
+									value={p.id}
+									checked={activePresetId === p.id}
+									onchange={() => pickPreset(p)}
+								/>
+								<span class="compose-options-preset-label">{p.label}</span>
+								{#if p.budget != null && selectedReasoning !== 'effort'}
+									<span class="compose-options-preset-meta">{p.budget.toLocaleString()} tok</span>
+								{/if}
+							</label>
+						</li>
 						{/each}
 						<li>
 							<label class="compose-options-preset">

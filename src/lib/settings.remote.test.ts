@@ -104,9 +104,10 @@ describe('saveSetting', () => {
 		);
 	});
 
-	it('accepts the model_list key with arbitrary text', async () => {
-		await expectRedirect(saveSetting({ key: 'model_list', value: 'a|A\nb|B' }) as Promise<unknown>, '/settings');
-		expect(await getSetting(env, 'model_list')).toBe('a|A\nb|B');
+	it('accepts the model_list key with JSON text', async () => {
+		const json = JSON.stringify([{ slug: 'a', label: 'A' }, { slug: 'b', label: 'B' }]);
+		await expectRedirect(saveSetting({ key: 'model_list', value: json }) as Promise<unknown>, '/settings');
+		expect(await getSetting(env, 'model_list')).toBe(json);
 	});
 });
 

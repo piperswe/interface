@@ -129,7 +129,7 @@ describe('settings', () => {
 			expect(await getModelList(env)).toEqual(DEFAULT_MODEL_LIST);
 		});
 		it('returns the parsed list when set', async () => {
-			await setSetting(env, 'model_list', 'foo|Foo\nbar|Bar');
+			await setSetting(env, 'model_list', JSON.stringify([{ slug: 'foo', label: 'Foo' }, { slug: 'bar', label: 'Bar' }]));
 			expect(await getModelList(env)).toEqual([
 				{ slug: 'foo', label: 'Foo' },
 				{ slug: 'bar', label: 'Bar' },

@@ -301,6 +301,50 @@ describe('OpenRouterLLM', () => {
 		expect(observed!.maxTokens).toBe(256);
 	});
 
+	it('passes reasoning config to the SDK request', async () => {
+		let observed: { reasoning?: unknown } | null = null;
+		const client = {
+			chat: {
+				send: async (req: { chatRequest: typeof observed }) => {
+					observed = req.chatRequest;
+					return (async function* () {
+						yield chunk({}, { finishReason: 'stop' });
+					})();
+				},
+			},
+		} as unknown as OpenRouter;
+		const llm = new OpenRouterLLM(client, 'm', 'openrouter');
+		await collect(
+			llm.chat({
+				messages: [],
+				reasoning: { type: 'effort', effort: 'high' },
+			}),
+		);
+		expect(observed!.reasoning).toEqual({ type: 'effort', effort: 'high' });
+	});
+
+	it('passes max_tokens reasoning config to the SDK request', async () => {
+		let observed: { reasoning?: unknown } | null = null;
+		const client = {
+			chat: {
+				send: async (req: { chatRequest: typeof observed }) => {
+					observed = req.chatRequest;
+					return (async function* () {
+						yield chunk({}, { finishReason: 'stop' });
+					})();
+				},
+			},
+		} as unknown as OpenRouter;
+		const llm = new OpenRouterLLM(client, 'm', 'openrouter');
+		await collect(
+			llm.chat({
+				messages: [],
+				reasoning: { type: 'max_tokens', maxTokens: 4096 },
+			}),
+		);
+		expect(observed!.reasoning).toEqual({ type: 'max_tokens', maxTokens: 4096 });
+	});
+
 	it('emits a usage event when usage is sent without a choices payload', async () => {
 		const client = fakeClient([
 			{

@@ -148,6 +148,21 @@ describe('AnthropicLLM', () => {
 		expect(capture.params?.thinking).toEqual({ type: 'enabled', budget_tokens: 5000 });
 	});
 
+	it('passes reasoning max_tokens as native thinking to the SDK', async () => {
+		const capture: { params?: { thinking?: { type: string; budget_tokens?: number } } } = {};
+		const llm = new AnthropicLLM(
+			fakeAnthropic([{ type: 'message_stop' } as unknown as MessageStreamEvent], capture),
+			'claude-sonnet-4-5',
+		);
+		await collect(
+			llm.chat({
+				messages: [{ role: 'user', content: 'hi' }],
+				reasoning: { type: 'max_tokens', maxTokens: 5000 },
+			}),
+		);
+		expect(capture.params?.thinking).toEqual({ type: 'enabled', budget_tokens: 5000 });
+	});
+
 	it('applies cache_control to system when requested', async () => {
 		const capture: { params?: { system?: unknown } } = {};
 		const llm = new AnthropicLLM(

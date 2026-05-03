@@ -1,5 +1,30 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_MODEL_LIST, parseModelList, serializeModelList } from './config';
+import {
+	DEFAULT_MODEL_LIST,
+	parseModelList,
+	serializeModelList,
+	reasoningTypeFor,
+} from './config';
+
+describe('reasoningTypeFor', () => {
+	it('detects effort models', () => {
+		expect(reasoningTypeFor('openai/o3-mini')).toBe('effort');
+		expect(reasoningTypeFor('openai/gpt-5.5')).toBe('effort');
+		expect(reasoningTypeFor('x-ai/grok-3')).toBe('effort');
+		expect(reasoningTypeFor('google/gemini-3.1-pro-preview')).toBe('effort');
+	});
+	it('detects max_tokens models', () => {
+		expect(reasoningTypeFor('anthropic/claude-sonnet-4.6')).toBe('max_tokens');
+		expect(reasoningTypeFor('claude-opus-4.7')).toBe('max_tokens');
+		expect(reasoningTypeFor('moonshotai/kimi-k2.6')).toBe('max_tokens');
+		expect(reasoningTypeFor('google/gemini-2.5-pro-preview-06-05')).toBe('max_tokens');
+		expect(reasoningTypeFor('alibaba/qwen3.5')).toBe('max_tokens');
+	});
+	it('returns null for unknown models', () => {
+		expect(reasoningTypeFor('mistral/mistral-large')).toBeNull();
+		expect(reasoningTypeFor('foo/bar')).toBeNull();
+	});
+});
 
 describe('parseModelList', () => {
 	it('returns the defaults for null/empty input', () => {
@@ -7,26 +32,37 @@ describe('parseModelList', () => {
 		expect(parseModelList('')).toEqual(DEFAULT_MODEL_LIST);
 		expect(parseModelList('   \n  ')).toEqual(DEFAULT_MODEL_LIST);
 	});
-	it('parses pipe-delimited slug|label pairs', () => {
-		const out = parseModelList('foo/bar|Foo Bar\nx/y|XY');
+	it('parses JSON array with slug/label/reasoning', () => {
+		const out = parseModelList(
+			JSON.stringify([
+				{ slug: 'foo/bar', label: 'Foo Bar' },
+				{ slug: 'x/y', label: 'XY', reasoning: 'effort' },
+			]),
+		);
 		expect(out).toEqual([
 			{ slug: 'foo/bar', label: 'Foo Bar' },
-			{ slug: 'x/y', label: 'XY' },
+			{ slug: 'x/y', label: 'XY', reasoning: 'effort' },
 		]);
 	});
 	it('treats slug-only lines as label = slug', () => {
-		expect(parseModelList('foo/bar')).toEqual([{ slug: 'foo/bar', label: 'foo/bar' }]);
+		expect(parseModelList(JSON.stringify([{ slug: 'foo/bar' }]))).toEqual([
+			{ slug: 'foo/bar', label: 'foo/bar' },
+		]);
 	});
-	it('skips comments and blank lines', () => {
-		const out = parseModelList('# header\n\nfoo|Foo\n\n# trailing');
-		expect(out).toEqual([{ slug: 'foo', label: 'Foo' }]);
+	it('ignores invalid reasoning values', () => {
+		const out = parseModelList(
+			JSON.stringify([{ slug: 'a', label: 'A', reasoning: 'bogus' }]),
+		);
+		expect(out).toEqual([{ slug: 'a', label: 'A' }]);
 	});
-	it('trims surrounding whitespace on slug and label', () => {
-		const out = parseModelList('  foo  |  Foo  ');
-		expect(out).toEqual([{ slug: 'foo', label: 'Foo' }]);
+	it('filters out entries with empty slug', () => {
+		expect(parseModelList(JSON.stringify([{ slug: '', label: 'A' }]))).toEqual(DEFAULT_MODEL_LIST);
 	});
-	it('returns defaults when every line is filtered out', () => {
-		expect(parseModelList('# only comments\n# nothing\n')).toEqual(DEFAULT_MODEL_LIST);
+	it('returns defaults for invalid JSON', () => {
+		expect(parseModelList('not json')).toEqual(DEFAULT_MODEL_LIST);
+	});
+	it('returns defaults for non-array JSON', () => {
+		expect(parseModelList('{"slug":"a"}')).toEqual(DEFAULT_MODEL_LIST);
 	});
 });
 
@@ -34,15 +70,20 @@ describe('serializeModelList', () => {
 	it('round-trips with parseModelList for the defaults', () => {
 		expect(parseModelList(serializeModelList(DEFAULT_MODEL_LIST))).toEqual(DEFAULT_MODEL_LIST);
 	});
-	it('joins each entry with a pipe', () => {
-		expect(
-			serializeModelList([
-				{ slug: 'a', label: 'A' },
-				{ slug: 'b', label: 'B' },
-			]),
-		).toBe('a|A\nb|B');
-	});
-	it('returns empty string for empty list', () => {
-		expect(serializeModelList([])).toBe('');
+	it('serializes to pretty-printed JSON', () => {
+		const out = serializeModelList([
+			{ slug: 'a', label: 'A' },
+			{ slug: 'b', label: 'B', reasoning: 'effort' },
+		]);
+		expect(out).toBe(
+			JSON.stringify(
+				[
+					{ slug: 'a', label: 'A' },
+					{ slug: 'b', label: 'B', reasoning: 'effort' },
+				],
+				null,
+				2,
+			),
+		);
 	});
 });

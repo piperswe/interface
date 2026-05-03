@@ -10,7 +10,6 @@ export const THINKING_PRESETS: Preset[] = [
 	{ id: 'medium', label: 'Medium', budget: 4096 },
 	{ id: 'high', label: 'High', budget: 16384 },
 	{ id: 'extra-high', label: 'Extra high', budget: 32768 },
-	{ id: 'max', label: 'Max', budget: 64000 },
 ];
 
 export function presetFor(budget: number | null): Preset | null {

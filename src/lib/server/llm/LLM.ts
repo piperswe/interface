@@ -42,6 +42,12 @@ export type ToolDefinition = {
 
 export type ThinkingConfig = { type: 'enabled'; budgetTokens: number } | { type: 'disabled' };
 
+export type ReasoningEffort = 'xhigh' | 'high' | 'medium' | 'low' | 'minimal' | 'none';
+
+export type ReasoningConfig =
+	| { type: 'max_tokens'; maxTokens: number }
+	| { type: 'effort'; effort: ReasoningEffort };
+
 export type CacheControl = { type: 'ephemeral' } | null;
 
 export type Usage = {
@@ -58,6 +64,7 @@ export type ChatRequest = {
 	systemPrompt?: string;
 	tools?: ToolDefinition[];
 	thinking?: ThinkingConfig;
+	reasoning?: ReasoningConfig;
 	cacheControl?: CacheControl;
 	temperature?: number;
 	maxTokens?: number;

@@ -46,6 +46,9 @@ export class AnthropicLLM implements LLM {
 			if (request.thinking && request.thinking.type === 'enabled') {
 				params.thinking = { type: 'enabled', budget_tokens: request.thinking.budgetTokens };
 			}
+			if (request.reasoning && request.reasoning.type === 'max_tokens') {
+				params.thinking = { type: 'enabled', budget_tokens: request.reasoning.maxTokens };
+			}
 			if (request.temperature !== undefined) params.temperature = request.temperature;
 
 			const stream = this.#client.messages.stream(params);

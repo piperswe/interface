@@ -3,7 +3,7 @@ import { OpenRouter } from '@openrouter/sdk';
 import type { ChatStreamChunk, ChatUsage, GenerationResponseData } from '@openrouter/sdk/models';
 import { routeLLM } from '../llm/route';
 import { compactHistory } from '../llm/context';
-import type { ChatRequest, ContentBlock, Message, StreamEvent, ToolDefinition, Usage } from '../llm/LLM';
+import type { ChatRequest, ContentBlock, Message, ReasoningEffort, StreamEvent, ToolDefinition, Usage } from '../llm/LLM';
 import { ToolRegistry } from '../tools/registry';
 import type { ToolCitation } from '../tools/registry';
 import { fetchUrlTool } from '../tools/fetch_url';
@@ -16,6 +16,8 @@ import { listSubAgents } from '../sub_agents';
 import { createAgentTool } from '../tools/agent';
 import { createGetModelsTool } from '../tools/get_models';
 import { getModelList, getSystemPrompt, getUserBio } from '../settings';
+import { reasoningTypeFor } from '../models/config';
+import type { ReasoningConfig } from '../llm/LLM';
 import type { AddMessageResult, Artifact, ArtifactType, ConversationState, MessageRow, MetaSnapshot } from '$lib/types/conversation';
 
 export type { AddMessageResult, Artifact, ArtifactType, ConversationState, MessageRow, MetaSnapshot };
@@ -418,16 +420,36 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			const DEFAULT_SYSTEM_PROMPT =
 				'You are Interface, an AI agent designed to serve as an interface between users and complex computer systems.';
 
-			const [convoRow, rawSystemPrompt, userBio] = await Promise.all([
+			const [convoRow, rawSystemPrompt, userBio, modelList] = await Promise.all([
 				this.env.DB.prepare('SELECT thinking_budget FROM conversations WHERE id = ?')
 					.bind(conversationId)
 					.first<{ thinking_budget: number | null }>(),
 				getSystemPrompt(this.env),
 				getUserBio(this.env),
+				getModelList(this.env),
 			]);
 			const thinkingBudget = convoRow?.thinking_budget ?? null;
-			const thinking: ChatRequest['thinking'] | undefined =
-				thinkingBudget && thinkingBudget > 0 ? { type: 'enabled', budgetTokens: thinkingBudget } : undefined;
+
+			const modelEntry = modelList.find((m) => m.slug === model);
+			const reasoningType = modelEntry?.reasoning ?? reasoningTypeFor(model);
+
+			let reasoning: ReasoningConfig | undefined;
+			let thinking: ChatRequest['thinking'] | undefined;
+
+			if (thinkingBudget != null && thinkingBudget > 0) {
+				if (reasoningType === 'effort') {
+					const effort = budgetToEffort(thinkingBudget);
+					if (effort) reasoning = { type: 'effort', effort };
+				} else if (reasoningType === 'max_tokens') {
+					reasoning = { type: 'max_tokens', maxTokens: thinkingBudget };
+				}
+			}
+
+			// Native Anthropic path still uses the legacy ThinkingConfig shape.
+			const isNativeAnthropic = model.startsWith('claude-') && typeof this.env.ANTHROPIC_KEY === 'string';
+			if (isNativeAnthropic && thinkingBudget != null && thinkingBudget > 0) {
+				thinking = { type: 'enabled', budgetTokens: thinkingBudget };
+			}
 
 			const COMPATIBILITY_NOTE =
 				'Your output is rendered in a UI that uses KaTeX for math typesetting. Dollar signs ($) are treated as LaTeX math delimiters, so be careful with dollar signs in non-math contexts (e.g. prices, currency). To include a literal dollar sign, escape it as \\$.';
@@ -445,12 +467,13 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 				let turnText = '';
 				let providerError: string | null = null;
 
-				for await (const ev of llm.chat({
-					messages,
-					systemPrompt,
-					...(tools ? { tools } : {}),
-					...(thinking ? { thinking } : {}),
-				})) {
+			for await (const ev of llm.chat({
+				messages,
+				systemPrompt,
+				...(tools ? { tools } : {}),
+				...(thinking ? { thinking } : {}),
+				...(reasoning ? { reasoning } : {}),
+			})) {
 					if (ev.type === 'text_delta') {
 						if (!firstTokenAt) firstTokenAt = Date.now();
 						turnText += ev.delta;
@@ -1014,4 +1037,12 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			this.#pingInterval = null;
 		}
 	}
+}
+
+function budgetToEffort(budget: number): ReasoningEffort | null {
+	if (budget <= 0) return null;
+	if (budget <= 1024) return 'low';
+	if (budget <= 4096) return 'medium';
+	if (budget <= 16384) return 'high';
+	return 'xhigh';
 }
