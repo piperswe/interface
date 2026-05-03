@@ -1,0 +1,47 @@
+src/lib/server/llm/OpenRouterLLM.ts
+  f1bf0f4a6dc2bc46 35
+src/lib/server/durable_objects/ConversationDurableObject.ts
+  f1bf0f4a6dc2bc46 6,19-20,423,429,432-452,470-476,1041-1048
+src/lib/server/models/config.ts
+  f1bf0f4a6dc2bc46 1-3,6-10,13-36,38-51,53-55,60
+src/lib/server/settings.test.ts
+  f1bf0f4a6dc2bc46 132
+src/lib/server/llm/AnthropicLLM.ts
+  f1bf0f4a6dc2bc46 49-51
+src/lib/settings.remote.test.ts
+  f1bf0f4a6dc2bc46 107-110
+src/routes/settings/+page.svelte
+  f1bf0f4a6dc2bc46 13,25,28-41,45,69-73,372,376,381,397-401
+src/lib/server/llm/LLM.ts
+  f1bf0f4a6dc2bc46 45-50,67
+src/lib/server/llm/OpenRouterLLM.test.ts
+  f1bf0f4a6dc2bc46 304-347
+src/lib/components/ComposeForm.svelte
+  f1bf0f4a6dc2bc46 48,168-182
+src/lib/components/thinking-presets.test.ts
+  f1bf0f4a6dc2bc46 5,7,41
+src/lib/server/models/config.test.ts
+  f1bf0f4a6dc2bc46 2-27,35-41,44,48-56,58-59,61-62,64-65,73-87
+src/lib/server/llm/AnthropicLLM.test.ts
+  f1bf0f4a6dc2bc46 151-165
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "5e3e983d622d9287e0d9a795d64fb5b6713276a4",
+  "prompts": {
+    "f1bf0f4a6dc2bc46": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_20ff6941affeCd77uSjlS7Vw5D",
+        "model": "cloudflare-workers-ai/@cf/moonshotai/kimi-k2.6"
+      },
+      "human_author": "Piper McCorkle",
+      "messages": [],
+      "total_additions": 281,
+      "total_deletions": 87,
+      "accepted_lines": 279,
+      "overriden_lines": 0
+    }
+  }
+}
