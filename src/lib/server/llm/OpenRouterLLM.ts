@@ -17,6 +17,7 @@ export class OpenRouterLLM implements LLM {
 	async *chat(request: ChatRequest): AsyncIterable<StreamEvent> {
 		let lastChunk: ChatStreamChunk | null = null;
 		const partialToolCalls = new Map<number, { id: string; name: string; args: string }>();
+		let emittedDone = false;
 
 		try {
 			const messages: ChatMessages[] = request.messages.map(toOpenRouterMessage);
@@ -79,8 +80,27 @@ export class OpenRouterLLM implements LLM {
 						}
 					}
 					partialToolCalls.clear();
+					emittedDone = true;
 					yield { type: 'done', finishReason: choice.finishReason, raw: lastChunk };
 				}
+			}
+
+			// Some providers omit finishReason on the final chunk. Guarantee a
+			// done event so the consumer can finalise correctly.
+			if (!emittedDone) {
+				for (const tc of partialToolCalls.values()) {
+					if (tc.id && tc.name) {
+						let input: unknown = {};
+						try {
+							input = JSON.parse(tc.args || '{}');
+						} catch {
+							input = { _raw: tc.args };
+						}
+						yield { type: 'tool_call', id: tc.id, name: tc.name, input };
+					}
+				}
+				partialToolCalls.clear();
+				yield { type: 'done', raw: lastChunk };
 			}
 		} catch (e) {
 			yield { type: 'error', message: formatError(e) };

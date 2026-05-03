@@ -186,5 +186,11 @@ export function attachConversationStream(
 	es.addEventListener('part', onPart);
 	es.addEventListener('refresh', onRefresh);
 
+	// If the connection fails (non-2xx, network drop, etc.) the browser will
+	// auto-reconnect, but the UI may have drifted. Force a reload so the
+	// server state is authoritative rather than letting the user sit on a
+	// stale or broken view.
+	es.addEventListener('error', onReload);
+
 	return () => es.close();
 }

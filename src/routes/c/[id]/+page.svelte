@@ -15,14 +15,28 @@
 	// `convState` mirrors `data.initialState` on first render, then diverges
 	// as live SSE deltas mutate it directly without going through the load
 	// function. The `$effect` below re-syncs after `invalidateAll()` (e.g.
-	// from a `refresh` SSE event).
+	// from a `refresh` SSE event) ONLY when the server state indicates a
+	// structural change — it must NOT clobber an in-progress stream.
 	const initialState = $derived(data.initialState);
 	let convState: ConversationState = $state(untrack(() => data.initialState));
 	let scrollEl: HTMLDivElement | null = $state(null);
 	let stickToBottom = $state(true);
 
 	$effect(() => {
-		convState = initialState;
+		const server = initialState;
+		// If a generation is currently streaming, the local state is the
+		// source of truth. Overwriting it would drop deltas that arrived
+		// between the fetch start and this effect running.
+		if (convState.inProgress !== null) return;
+		// Only sync when the server has advanced beyond our local copy.
+		const localLast = convState.messages.at(-1);
+		const serverLast = server.messages.at(-1);
+		if (!localLast && !serverLast) return;
+		const serverHasNew = !localLast || (serverLast && serverLast.id !== localLast.id);
+		const statusChanged = localLast && serverLast && localLast.id === serverLast.id && localLast.status !== serverLast.status;
+		if (serverHasNew || statusChanged) {
+			convState = server;
+		}
 	});
 
 	const busy = $derived(convState.inProgress !== null);

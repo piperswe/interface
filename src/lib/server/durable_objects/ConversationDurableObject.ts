@@ -96,7 +96,7 @@ function usageToOpenRouter(usage: Usage): ChatUsage {
 
 export default class ConversationDurableObject extends DurableObject<Env> {
 	#sql: SqlStorage;
-	#subscribers = new Set<ReadableStreamDefaultController<Uint8Array>>();
+	#subscribers = new Set<{ controller: ReadableStreamDefaultController<Uint8Array>; nextId: number }>();
 	// Live mirror of the assistant message currently being generated. Holds
 	// the running text/thinking/parts so a client that subscribes (or
 	// reloads) mid-stream gets a complete snapshot — the SQL row's
@@ -293,9 +293,9 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	// they don't keep streaming on an already-vanished conversation.
 	async destroy(): Promise<void> {
 		this.#inProgress = null;
-		for (const controller of this.#subscribers) {
+		for (const sub of this.#subscribers) {
 			try {
-				controller.close();
+				sub.controller.close();
 			} catch {
 				/* ignore */
 			}
@@ -306,18 +306,22 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	}
 
 	async subscribe(): Promise<ReadableStream<Uint8Array>> {
-		let storedController: ReadableStreamDefaultController<Uint8Array> | null = null;
+		let storedSub: { controller: ReadableStreamDefaultController<Uint8Array>; nextId: number } | null = null;
 		const self = this;
 
 		const stream = new ReadableStream<Uint8Array>({
 			start(controller) {
-				storedController = controller;
-				self.#subscribers.add(controller);
+				storedSub = { controller, nextId: 1 };
+				self.#subscribers.add(storedSub);
 				self.#startPingIfNeeded();
-				self.#sendSync(controller);
+				// Tell the browser to wait 3s before reconnecting on a dropped
+				// connection, and send the current snapshot so the client can
+				// resume without a full page reload.
+				controller.enqueue(self.#encoder.encode('retry: 3000\n\n'));
+				self.#sendSync(storedSub);
 			},
 			cancel() {
-				if (storedController) self.#subscribers.delete(storedController);
+				if (storedSub) self.#subscribers.delete(storedSub);
 				self.#stopPingIfEmpty();
 			},
 		});
@@ -325,7 +329,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		return stream;
 	}
 
-	#sendSync(controller: ReadableStreamDefaultController<Uint8Array>): void {
+	#sendSync(sub: { controller: ReadableStreamDefaultController<Uint8Array>; nextId: number }): void {
 		const messages = this.#readMessages();
 		const last = messages[messages.length - 1];
 		if (!last) return;
@@ -338,7 +342,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		// from scratch and the renderer would drop the SSR'd content.
 		const parts = isInProgress ? this.#inProgress!.parts.slice() : (last.parts ?? null);
 		const thinking = isInProgress ? this.#inProgress!.thinking : (last.thinking ?? null);
-		this.#enqueueTo(controller, 'sync', {
+		this.#enqueueTo(sub, 'sync', {
 			lastMessageId: last.id,
 			lastMessageStatus: last.status,
 			lastMessageContent: content,
@@ -981,29 +985,31 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		}
 	}
 
-	#sseFrame(event: string, data: unknown): Uint8Array {
-		return this.#encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+	#sseFrame(event: string, data: unknown, id?: number): Uint8Array {
+		const idLine = id != null ? `id: ${id}\n` : '';
+		return this.#encoder.encode(`event: ${event}\n${idLine}data: ${JSON.stringify(data)}\n\n`);
 	}
 
-	#enqueueTo(controller: ReadableStreamDefaultController<Uint8Array>, event: string, data: unknown): boolean {
+	#enqueueTo(sub: { controller: ReadableStreamDefaultController<Uint8Array>; nextId: number }, event: string, data: unknown): boolean {
 		try {
-			controller.enqueue(this.#sseFrame(event, data));
+			const id = sub.nextId++;
+			sub.controller.enqueue(this.#sseFrame(event, data, id));
 			return true;
 		} catch {
-			this.#subscribers.delete(controller);
+			this.#subscribers.delete(sub);
 			return false;
 		}
 	}
 
 	#broadcast(event: string, data: unknown): void {
 		if (this.#subscribers.size === 0) return;
-		const frame = this.#sseFrame(event, data);
-		const dead: ReadableStreamDefaultController<Uint8Array>[] = [];
-		for (const controller of this.#subscribers) {
+		const dead: { controller: ReadableStreamDefaultController<Uint8Array>; nextId: number }[] = [];
+		for (const sub of this.#subscribers) {
 			try {
-				controller.enqueue(frame);
+				const id = sub.nextId++;
+				sub.controller.enqueue(this.#sseFrame(event, data, id));
 			} catch {
-				dead.push(controller);
+				dead.push(sub);
 			}
 		}
 		for (const c of dead) this.#subscribers.delete(c);
@@ -1018,12 +1024,12 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 				this.#stopPingIfEmpty();
 				return;
 			}
-			const dead: ReadableStreamDefaultController<Uint8Array>[] = [];
-			for (const controller of this.#subscribers) {
+			const dead: { controller: ReadableStreamDefaultController<Uint8Array>; nextId: number }[] = [];
+			for (const sub of this.#subscribers) {
 				try {
-					controller.enqueue(frame);
+					sub.controller.enqueue(frame);
 				} catch {
-					dead.push(controller);
+					dead.push(sub);
 				}
 			}
 			for (const c of dead) this.#subscribers.delete(c);

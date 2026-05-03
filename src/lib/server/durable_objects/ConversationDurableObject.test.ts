@@ -189,9 +189,14 @@ describe('ConversationDurableObject', () => {
 
 		const stream = await stub.subscribe();
 		const reader = stream.getReader();
-		const { value } = await reader.read();
+		// First frame is the retry directive; second is the sync payload.
+		let text = '';
+		while (!text.includes('event: sync')) {
+			const { value } = await reader.read();
+			if (!value) break;
+			text += new TextDecoder().decode(value);
+		}
 		await reader.cancel();
-		const text = new TextDecoder().decode(value);
 		expect(text).toContain('event: sync');
 		expect(text).toContain('"lastMessageId":"u1"');
 	});
@@ -236,7 +241,13 @@ describe('ConversationDurableObject', () => {
 		});
 		const stream = await stub.subscribe();
 		const reader = stream.getReader();
-		await reader.read(); // consume the initial sync frame
+		// Consume the retry directive and the initial sync frame.
+		let consumed = '';
+		while (!consumed.includes('event: sync')) {
+			const { value } = await reader.read();
+			if (!value) break;
+			consumed += new TextDecoder().decode(value);
+		}
 		await stub.destroy();
 		// Reader should observe stream end once destroy() closes the controller.
 		const next = await reader.read();
