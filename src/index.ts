@@ -14,13 +14,15 @@ import {
 	getContextCompactionThreshold,
 	getContextCompactionSummaryTokens,
 	getModelList,
+	getSystemPrompt,
+	getUserBio,
 } from './settings';
 import { serializeModelList } from './models/config';
 import { createMcpServer, deleteMcpServer, listMcpServers } from './mcp_servers';
 
 export { default as ConversationDurableObject } from './durable_objects/ConversationDurableObject';
 
-const ALLOWED_SETTING_KEYS = new Set(['theme', 'context_compaction_threshold', 'context_compaction_summary_tokens', 'model_list']);
+const ALLOWED_SETTING_KEYS = new Set(['theme', 'context_compaction_threshold', 'context_compaction_summary_tokens', 'model_list', 'system_prompt', 'user_bio']);
 type Theme = 'system' | 'light' | 'dark';
 const CONVERSATION_ID_PATTERN = /^[0-9a-f-]{36}$/;
 
@@ -105,13 +107,15 @@ app.post('/conversations', async (c) => {
 
 // Settings
 app.get('/settings', async (c) => {
-	const [theme, mcpServers, conversations, threshold, summaryTokens, modelList] = await Promise.all([
+	const [theme, mcpServers, conversations, threshold, summaryTokens, modelList, systemPrompt, userBio] = await Promise.all([
 		readTheme(c.env),
 		listMcpServers(c.env),
 		listConversations(c.env),
 		getContextCompactionThreshold(c.env),
 		getContextCompactionSummaryTokens(c.env),
 		getModelList(c.env),
+		getSystemPrompt(c.env),
+		getUserBio(c.env),
 	]);
 	return htmlStream(
 		await renderSettingsPage(
@@ -122,6 +126,8 @@ app.get('/settings', async (c) => {
 				contextCompactionThreshold: threshold,
 				contextCompactionSummaryTokens: summaryTokens,
 				modelListRaw: serializeModelList(modelList),
+				systemPrompt: systemPrompt ?? '',
+				userBio: userBio ?? '',
 			},
 			{ conversations },
 		),

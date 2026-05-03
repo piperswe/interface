@@ -11,6 +11,7 @@ import { createWebSearchTool } from '../tools/web_search';
 import { KagiSearchBackend } from '../search/kagi';
 import { McpHttpClient } from '../mcp/client';
 import { listMcpServers } from '../mcp_servers';
+import { getSystemPrompt, getUserBio } from '../settings';
 import type { AddMessageResult, Artifact, ArtifactType, ConversationState, MessageRow, MetaSnapshot } from '../types/conversation';
 
 export type { AddMessageResult, Artifact, ArtifactType, ConversationState, MessageRow, MetaSnapshot };
@@ -361,12 +362,24 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 				messages = compaction.messages;
 			}
 
-			const convoRow = await this.env.DB.prepare('SELECT thinking_budget FROM conversations WHERE id = ?')
-				.bind(conversationId)
-				.first<{ thinking_budget: number | null }>();
+			const DEFAULT_SYSTEM_PROMPT =
+				'You are Interface, an AI agent designed to serve as an interface between users and complex computer systems.';
+
+			const [convoRow, rawSystemPrompt, userBio] = await Promise.all([
+				this.env.DB.prepare('SELECT thinking_budget FROM conversations WHERE id = ?')
+					.bind(conversationId)
+					.first<{ thinking_budget: number | null }>(),
+				getSystemPrompt(this.env),
+				getUserBio(this.env),
+			]);
 			const thinkingBudget = convoRow?.thinking_budget ?? null;
 			const thinking: ChatRequest['thinking'] | undefined =
 				thinkingBudget && thinkingBudget > 0 ? { type: 'enabled', budgetTokens: thinkingBudget } : undefined;
+
+			const effectiveSystemPrompt = rawSystemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+			const systemPrompt = userBio
+				? `${effectiveSystemPrompt}\n\nUser bio:\n${userBio}`
+				: effectiveSystemPrompt;
 
 			const registry = await this.#buildToolRegistry();
 			const tools: ToolDefinition[] | undefined =
@@ -379,6 +392,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 
 				for await (const ev of llm.chat({
 					messages,
+					systemPrompt,
 					...(tools ? { tools } : {}),
 					...(thinking ? { thinking } : {}),
 				})) {

@@ -57,6 +57,16 @@ export async function getContextCompactionSummaryTokens(env: Env, userId: number
 	return Math.max(256, n);
 }
 
+// ---- System prompt / user bio helpers -------------------------------------------------
+
+export async function getSystemPrompt(env: Env, userId: number = SINGLE_USER_ID): Promise<string | null> {
+	return getSetting(env, 'system_prompt', userId);
+}
+
+export async function getUserBio(env: Env, userId: number = SINGLE_USER_ID): Promise<string | null> {
+	return getSetting(env, 'user_bio', userId);
+}
+
 // ---- Model list helpers ----------------------------------------------------------------
 
 import { parseModelList, type ModelEntry } from './models/config';

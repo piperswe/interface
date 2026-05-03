@@ -8,9 +8,11 @@ export type SettingsPageProps = {
 	contextCompactionThreshold: number;
 	contextCompactionSummaryTokens: number;
 	modelListRaw: string;
+	systemPrompt: string;
+	userBio: string;
 };
 
-export function SettingsPage({ theme, providerKeys, mcpServers, contextCompactionThreshold, contextCompactionSummaryTokens, modelListRaw }: SettingsPageProps) {
+export function SettingsPage({ theme, providerKeys, mcpServers, contextCompactionThreshold, contextCompactionSummaryTokens, modelListRaw, systemPrompt, userBio }: SettingsPageProps) {
 	return (
 		<div className="settings-layout">
 			<h1 className="settings-title">Settings</h1>
@@ -140,6 +142,42 @@ export function SettingsPage({ theme, providerKeys, mcpServers, contextCompactio
 						<button type="submit">Save</button>
 					</form>
 				</details>
+			</section>
+
+			<section className="settings-section" aria-labelledby="system-prompt">
+				<h2 id="system-prompt">System prompt</h2>
+				<p style={{ color: 'var(--muted)', marginTop: 0 }}>
+					Injected as a system message at the start of every chat. Leave blank to use the default.
+				</p>
+				<form action="/settings" method="post">
+					<input type="hidden" name="key" value="system_prompt" />
+					<textarea
+						name="value"
+						rows={5}
+						defaultValue={systemPrompt}
+						placeholder="You are Interface, an AI agent designed to serve as an interface between users and complex computer systems."
+						style={{ display: 'block', width: '100%' }}
+					/>
+					<button type="submit" style={{ marginTop: '0.5rem' }}>Save</button>
+				</form>
+			</section>
+
+			<section className="settings-section" aria-labelledby="user-bio">
+				<h2 id="user-bio">User bio</h2>
+				<p style={{ color: 'var(--muted)', marginTop: 0 }}>
+					Appended to the system message to give the AI context about you.
+				</p>
+				<form action="/settings" method="post">
+					<input type="hidden" name="key" value="user_bio" />
+					<textarea
+						name="value"
+						rows={4}
+						defaultValue={userBio}
+						placeholder="Tell the AI about yourself…"
+						style={{ display: 'block', width: '100%' }}
+					/>
+					<button type="submit" style={{ marginTop: '0.5rem' }}>Save</button>
+				</form>
 			</section>
 
 			<section className="settings-section" aria-labelledby="model-list">
