@@ -103,8 +103,12 @@
 	bind:this={formEl}
 	{...sendMessage.for(conversationId).enhance(async ({ form, submit }) => {
 		await submit();
-		form.reset();
-		return;
+		// Don't `form.reset()` — that would deselect the model + thinking-
+		// budget radios (their `checked` is bound reactively as a property,
+		// not an HTML attribute, so reset can't restore them). Clear only
+		// the textarea.
+		const textarea = form.querySelector<HTMLTextAreaElement>('textarea[name="content"]');
+		if (textarea) textarea.value = '';
 	})}
 	class="compose"
 >
