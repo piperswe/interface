@@ -1,5 +1,5 @@
 <script lang="ts">
-	import '../app.css';
+	import '../app.scss';
 	import 'katex/dist/katex.min.css';
 	import AppShell from '$lib/components/AppShell.svelte';
 	import { page } from '$app/state';
