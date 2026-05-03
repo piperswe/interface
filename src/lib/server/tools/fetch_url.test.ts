@@ -51,4 +51,44 @@ describe('fetch_url tool', () => {
 		const result = await fetchUrlTool.execute(ctx, { url: 'https://example.com' });
 		expect(result.content).toMatch(/truncated/);
 	});
+
+	it('extracts the article body via Readability for HTML by default', async () => {
+		const html = `<!doctype html><html><head><title>Hello</title></head><body>
+			<header><nav><a href="/">Home</a></nav></header>
+			<main><article>
+				<h1>Hello world</h1>
+				<p>This is a substantial paragraph of body text long enough that Readability decides it is the main article content of the page rather than chrome or boilerplate. We need enough words for the heuristic to score this section highly.</p>
+				<p>Another paragraph reinforces the main article body, ensuring Readability picks the article element over the surrounding navigation. Lorem ipsum dolor sit amet consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.</p>
+			</article></main>
+			<footer>(c) 2099 noise that should be stripped</footer>
+		</body></html>`;
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			new Response(html, { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } }),
+		);
+		const result = await fetchUrlTool.execute(ctx, { url: 'https://example.com' });
+		expect(result.isError).toBeFalsy();
+		expect(result.content).toContain('mode=readability');
+		expect(result.content).toContain('Hello world');
+		expect(result.content).toContain('substantial paragraph');
+		expect(result.content).not.toContain('Home</a>');
+	});
+
+	it('returns raw HTML when readability is explicitly disabled', async () => {
+		const html = '<!doctype html><html><body><h1>Raw</h1><p>body</p></body></html>';
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+		);
+		const result = await fetchUrlTool.execute(ctx, { url: 'https://example.com', readability: false });
+		expect(result.content).toContain('mode=raw');
+		expect(result.content).toContain('<h1>Raw</h1>');
+	});
+
+	it('falls back to raw text for non-HTML responses even when readability is on', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			new Response('{"hello":"world"}', { status: 200, headers: { 'content-type': 'application/json' } }),
+		);
+		const result = await fetchUrlTool.execute(ctx, { url: 'https://example.com' });
+		expect(result.content).toContain('mode=raw');
+		expect(result.content).toContain('"hello":"world"');
+	});
 });
