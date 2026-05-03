@@ -88,9 +88,7 @@ function usageToOpenRouter(usage: Usage): ChatUsage {
 					},
 				}
 			: {}),
-		...(usage.thinkingTokens != null
-			? { completionTokensDetails: { reasoningTokens: usage.thinkingTokens } }
-			: {}),
+		...(usage.thinkingTokens != null ? { completionTokensDetails: { reasoningTokens: usage.thinkingTokens } } : {}),
 	};
 }
 
@@ -102,14 +100,12 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	// reloads) mid-stream gets a complete snapshot — the SQL row's
 	// `content` / `thinking` / `parts` columns are only persisted at
 	// end-of-turn, so we can't rely on them mid-flight.
-	#inProgress:
-		| {
-				messageId: string;
-				content: string;
-				thinking: string;
-				parts: MessagePart[];
-		  }
-		| null = null;
+	#inProgress: {
+		messageId: string;
+		content: string;
+		thinking: string;
+		parts: MessagePart[];
+	} | null = null;
 	#pingInterval: ReturnType<typeof setInterval> | null = null;
 	#encoder = new TextEncoder();
 
@@ -240,13 +236,9 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 
 	async regenerateTitle(conversationId: string): Promise<void> {
 		const history = this.#sql
-			.exec(
-				"SELECT role, content FROM messages WHERE status = 'complete' AND deleted_at IS NULL ORDER BY created_at ASC",
-			)
+			.exec("SELECT role, content FROM messages WHERE status = 'complete' AND deleted_at IS NULL ORDER BY created_at ASC")
 			.toArray() as unknown as Array<{ role: string; content: string }>;
-		const transcript = history
-			.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
-			.join('\n\n');
+		const transcript = history.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n\n');
 		const collapsed = transcript.replace(/\s+/g, ' ').trim();
 		try {
 			const llm = routeLLM(this.env, TITLE_MODEL);
@@ -280,9 +272,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		// Per-conversation thinking token budget. AnthropicLLM honors this when
 		// the model supports extended thinking; OpenRouterLLM ignores it.
 		const value = budget != null && budget > 0 ? Math.floor(budget) : null;
-		await this.env.DB.prepare('UPDATE conversations SET thinking_budget = ? WHERE id = ?')
-			.bind(value, conversationId)
-			.run();
+		await this.env.DB.prepare('UPDATE conversations SET thinking_budget = ? WHERE id = ?').bind(value, conversationId).run();
 	}
 
 	// Wipe all DO storage. Cloudflare doesn't expose a "delete this DO from
@@ -406,9 +396,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			const lastUsage = lastUsageRow[0]?.usage_json
 				? (parseJson<{ promptTokens: number; inputTokens?: number }>(lastUsageRow[0].usage_json) ?? null)
 				: null;
-			const usageForCompaction = lastUsage
-				? { inputTokens: lastUsage.inputTokens ?? lastUsage.promptTokens }
-				: null;
+			const usageForCompaction = lastUsage ? { inputTokens: lastUsage.inputTokens ?? lastUsage.promptTokens } : null;
 			const compaction = await compactHistory(messages, model, this.env, usageForCompaction);
 			if (compaction.wasCompacted) {
 				const infoPart: MessagePart = {
@@ -421,11 +409,11 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 				messages = compaction.messages;
 			}
 
-			const DEFAULT_SYSTEM_PROMPT =`You are **Interface**, an AI agent that bridges users and complex computer systems. You have access to tools for interacting with external services (YNAB, the web, documentation sources, sub-agents, etc.) and you use them proactively to give grounded, accurate answers rather than guessing.
+			const DEFAULT_SYSTEM_PROMPT = `You are **Interface**, an AI agent that bridges users and complex computer systems. You have access to tools for interacting with external services (YNAB, the web, documentation sources, sub-agents, etc.) and you use them proactively to give grounded, accurate answers rather than guessing.
 
 ## Core operating principles
 
-**Verify, don't assume.** Your training data is stale and your memory is fallible. When a user asks about facts, current events, product specs, API behavior, or anything else that could have changed or that you're not certain about, use `web_search`, `fetch_url`, or the documentation tools to check. Cite sources when you're relaying factual claims from the web.
+**Verify, don't assume.** Your training data is stale and your memory is fallible. When a user asks about facts, current events, product specs, API behavior, or anything else that could have changed or that you're not certain about, use ${'`'}web_search${'`'}, ${'`'}fetch_url${'`'}, or the documentation tools to check. Cite sources when you're relaying factual claims from the web.
 
 **Treat sources critically.** People on the internet lie, get things wrong, or have agendas. Prefer primary sources, official docs, and reputable outlets. When sources conflict, say so.
 
@@ -435,7 +423,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 
 **Respect exact values.** When the user quotes a specific value (an ID, a string, a number), use it verbatim.
 
-**Delegate when it helps.** For focused research or work that would clutter the main thread, consider the ${"`"}agent${"`"} tool — but always confirm the model with the user first (via ${"`"}get_models${"`"}) unless they've already picked one this conversation.
+**Delegate when it helps.** For focused research or work that would clutter the main thread, consider the ${'`'}agent${'`'} tool — but always confirm the model with the user first (via ${'`'}get_models${'`'}) unless they've already picked one this conversation.
 
 ## Style and tone
 
@@ -486,21 +474,20 @@ The user's bio, preferences, and context are provided separately in the user tur
 				: `${effectiveSystemPrompt}\n\n${COMPATIBILITY_NOTE}`;
 
 			const registry = await this.#buildToolRegistry(model);
-			const tools: ToolDefinition[] | undefined =
-				registry.definitions().length > 0 ? registry.definitions() : undefined;
+			const tools: ToolDefinition[] | undefined = registry.definitions().length > 0 ? registry.definitions() : undefined;
 
 			for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
 				const turnToolCalls: RecordedToolCall[] = [];
 				let turnText = '';
 				let providerError: string | null = null;
 
-			for await (const ev of llm.chat({
-				messages,
-				systemPrompt,
-				...(tools ? { tools } : {}),
-				...(thinking ? { thinking } : {}),
-				...(reasoning ? { reasoning } : {}),
-			})) {
+				for await (const ev of llm.chat({
+					messages,
+					systemPrompt,
+					...(tools ? { tools } : {}),
+					...(thinking ? { thinking } : {}),
+					...(reasoning ? { reasoning } : {}),
+				})) {
 					if (ev.type === 'text_delta') {
 						if (!firstTokenAt) firstTokenAt = Date.now();
 						turnText += ev.delta;
@@ -552,11 +539,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 						name: call.name,
 						input: call.input,
 					});
-					const result = await registry.execute(
-						{ env: this.env, conversationId, assistantMessageId: assistantId },
-						call.name,
-						call.input,
-					);
+					const result = await registry.execute({ env: this.env, conversationId, assistantMessageId: assistantId }, call.name, call.input);
 					const resultRecord: RecordedToolResult = {
 						toolUseId: call.id,
 						content: result.content,
@@ -618,9 +601,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 				assistantId,
 			);
 			this.#inProgress = null;
-			await this.env.DB.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?')
-				.bind(Date.now(), conversationId)
-				.run();
+			await this.env.DB.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').bind(Date.now(), conversationId).run();
 			this.#broadcast('meta', {
 				messageId: assistantId,
 				snapshot: { startedAt, firstTokenAt, lastChunk, usage, generation: null },
@@ -631,9 +612,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 			this.#broadcast('refresh', {});
 
 			if (lastGenerationId && llm.providerID === 'openrouter') {
-				this.ctx.waitUntil(
-					this.#fetchGenerationStats(assistantId, lastGenerationId, startedAt, firstTokenAt, lastChunk, usage),
-				);
+				this.ctx.waitUntil(this.#fetchGenerationStats(assistantId, lastGenerationId, startedAt, firstTokenAt, lastChunk, usage));
 			}
 		} catch (e) {
 			const msg = formatLLMError(e);
@@ -685,10 +664,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 	async #buildToolRegistry(model: string): Promise<ToolRegistry> {
 		const registry = await this.#buildBaseToolRegistry();
 		try {
-			const [subAgents, availableModels] = await Promise.all([
-				listSubAgents(this.env),
-				getModelList(this.env),
-			]);
+			const [subAgents, availableModels] = await Promise.all([listSubAgents(this.env), getModelList(this.env)]);
 			const enabledSubAgents = subAgents.filter((sa) => sa.enabled);
 			if (enabledSubAgents.length > 0) {
 				registry.register(createGetModelsTool({ currentModel: model, availableModels }));
@@ -730,9 +706,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 						const callClient = new McpHttpClient({ url, authJson });
 						try {
 							const result = await callClient.callTool(tool.name, input);
-							const text = result.content
-								.map((c) => (c.type === 'text' ? c.text : `[${c.type}]`))
-								.join('\n');
+							const text = result.content.map((c) => (c.type === 'text' ? c.text : `[${c.type}]`)).join('\n');
 							return { content: text, ...(result.isError ? { isError: true } : {}) };
 						} catch (e) {
 							return { content: e instanceof Error ? e.message : String(e), isError: true };
@@ -775,8 +749,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 		return rows.map((r) => {
 			const toolCalls = parseJson<RecordedToolCall[]>(r.tool_calls) ?? [];
 			const toolResults = parseJson<RecordedToolResult[]>(r.tool_results) ?? [];
-			const parts =
-				parseJson<MessagePart[]>(r.parts) ?? buildLegacyParts(r.content, toolCalls, toolResults, r.thinking);
+			const parts = parseJson<MessagePart[]>(r.parts) ?? buildLegacyParts(r.content, toolCalls, toolResults, r.thinking);
 			return {
 				id: r.id,
 				role: r.role as 'user' | 'assistant',
@@ -797,9 +770,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 
 	#readArtifactsByMessage(): Map<string, Artifact[]> {
 		const rows = this.#sql
-			.exec(
-				`SELECT id, message_id, type, name, language, version, content, created_at FROM artifacts ORDER BY created_at ASC`,
-			)
+			.exec(`SELECT id, message_id, type, name, language, version, content, created_at FROM artifacts ORDER BY created_at ASC`)
 			.toArray() as unknown as Array<{
 			id: string;
 			message_id: string;
@@ -854,9 +825,9 @@ The user's bio, preferences, and context are provided separately in the user tur
 			now,
 		);
 		// Update artifact_ids on the parent message.
-		const existing = this.#sql
-			.exec('SELECT artifact_ids FROM messages WHERE id = ?', input.messageId)
-			.toArray() as unknown as Array<{ artifact_ids: string | null }>;
+		const existing = this.#sql.exec('SELECT artifact_ids FROM messages WHERE id = ?', input.messageId).toArray() as unknown as Array<{
+			artifact_ids: string | null;
+		}>;
 		let ids: string[] = [];
 		if (existing[0]?.artifact_ids) {
 			try {
@@ -976,7 +947,8 @@ The user's bio, preferences, and context are provided separately in the user tur
 				messages: [
 					{
 						role: 'system',
-						content: 'You are a title generator. Given the user message, generate a short, clear, descriptive title (2-6 words) that summarises its topic or intent. Reply with the title only — no quotes, no explanation.',
+						content:
+							'You are a title generator. Given the user message, generate a short, clear, descriptive title (2-6 words) that summarises its topic or intent. Reply with the title only — no quotes, no explanation.',
 					},
 					{ role: 'user', content: collapsed },
 				],
