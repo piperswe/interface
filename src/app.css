@@ -350,6 +350,7 @@ textarea:focus {
 }
 
 .app-main {
+	position: relative;
 	display: flex;
 	flex-direction: column;
 	min-width: 0;
@@ -357,14 +358,22 @@ textarea:focus {
 	overflow: hidden;
 }
 
+/* Hamburger toggle floats over the active page on mobile so the page's
+   own header (conversation title, settings title, empty-state) is the
+   only header bar. Hidden on desktop. */
 .app-main-header {
 	display: none;
-	padding: 0.5rem;
-	border-bottom: 1px solid var(--border-soft);
+	position: absolute;
+	top: 0;
+	left: 0;
+	z-index: 30;
+	padding: calc((var(--mobile-header-min, 56px) - 40px) / 2) 0.5rem;
+	pointer-events: none;
 }
 
 .sidebar-toggle-button {
 	display: none;
+	pointer-events: auto;
 	align-items: center;
 	justify-content: center;
 	width: 40px;
@@ -423,6 +432,14 @@ textarea:focus {
 	}
 	.sidebar-toggle-button {
 		display: inline-flex;
+	}
+	/* Leave room on the leading edge of each page's first row so the
+	   floating hamburger doesn't overlap the title or content. */
+	.conversation-header {
+		padding-left: calc(40px + 1rem);
+	}
+	.settings-title {
+		padding-left: calc(40px + 0.5rem);
 	}
 }
 
