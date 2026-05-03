@@ -1,7 +1,8 @@
 import { Document, type Theme } from '../../Document';
+import { AppShell } from '../../components/AppShell';
 import { renderHtml, serializeProps } from '../../render';
 import { renderArtifactCode, renderMarkdown } from '../../markdown';
-import type { Artifact } from '../../../types/conversation';
+import type { Artifact, Conversation, MessagePart } from '../../../types/conversation';
 import { ConversationPage, type ConversationPageProps } from './Page';
 
 async function renderArtifactHtml(a: Artifact): Promise<string> {
@@ -10,10 +11,13 @@ async function renderArtifactHtml(a: Artifact): Promise<string> {
 	return '';
 }
 
-// Pre-render markdown for completed assistant messages server-side. Streaming
-// or errored messages keep contentHtml null and render as plain text on the
-// client; on completion the DO broadcasts `refresh` and the page reloads,
-// giving us a freshly SSR'd response with full markdown.
+async function renderPartHtml(part: MessagePart): Promise<MessagePart> {
+	if (part.type === 'text' || part.type === 'thinking') {
+		return { ...part, textHtml: await renderMarkdown(part.text) };
+	}
+	return part;
+}
+
 async function withRenderedMarkdown(props: ConversationPageProps): Promise<ConversationPageProps> {
 	const messages = await Promise.all(
 		props.initialState.messages.map(async (m) => {
@@ -27,7 +31,8 @@ async function withRenderedMarkdown(props: ConversationPageProps): Promise<Conve
 				return { ...m, thinkingHtml, artifacts };
 			}
 			const html = await renderMarkdown(m.content);
-			return { ...m, contentHtml: html, thinkingHtml, artifacts };
+			const parts = m.parts ? await Promise.all(m.parts.map(renderPartHtml)) : m.parts;
+			return { ...m, contentHtml: html, thinkingHtml, artifacts, parts };
 		}),
 	);
 	return {
@@ -38,12 +43,14 @@ async function withRenderedMarkdown(props: ConversationPageProps): Promise<Conve
 
 export async function renderConversationPage(
 	props: ConversationPageProps,
-	options: { theme?: Theme } = {},
+	options: { theme?: Theme; conversations: Conversation[] },
 ): Promise<ReadableStream<Uint8Array>> {
 	const enriched = await withRenderedMarkdown(props);
 	return renderHtml(
-		<Document title={enriched.conversation.title} bodyClass="conversation" theme={options.theme}>
-			<ConversationPage {...enriched} />
+		<Document title={enriched.conversation.title} theme={options.theme}>
+			<AppShell conversations={options.conversations} activeConversationId={enriched.conversation.id}>
+				<ConversationPage {...enriched} />
+			</AppShell>
 		</Document>,
 		{
 			bootstrapModules: ['/dist/conversation.js'],

@@ -44,6 +44,23 @@ export type JsonValue = any;
 export type ToolCallRecord = { id: string; name: string; input: JsonValue };
 export type ToolResultRecord = { toolUseId: string; content: string; isError: boolean };
 
+// Ordered timeline of an assistant turn: thinking, text segments, tool
+// invocations, and their results, in the sequence the model produced them.
+// A turn like "<think> Let me search → call web_search → <think> Now I'll
+// summarize → continue" yields:
+//   [{type:'thinking'}, {type:'text'}, {type:'tool_use'}, {type:'tool_result'},
+//    {type:'thinking'}, {type:'text'}]
+export type TextPart = { type: 'text'; text: string; textHtml?: string };
+export type ThinkingPart = { type: 'thinking'; text: string; textHtml?: string };
+export type ToolUsePart = { type: 'tool_use'; id: string; name: string; input: JsonValue };
+export type ToolResultPart = {
+	type: 'tool_result';
+	toolUseId: string;
+	content: string;
+	isError: boolean;
+};
+export type MessagePart = TextPart | ThinkingPart | ToolUsePart | ToolResultPart;
+
 export type MessageRow = {
 	id: string;
 	role: 'user' | 'assistant';
@@ -59,6 +76,7 @@ export type MessageRow = {
 	artifacts?: Artifact[];
 	toolCalls?: ToolCallRecord[];
 	toolResults?: ToolResultRecord[];
+	parts?: MessagePart[];
 };
 
 export type ConversationState = {

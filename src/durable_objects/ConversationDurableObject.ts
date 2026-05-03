@@ -18,7 +18,12 @@ const PING_INTERVAL_MS = 25_000;
 const TITLE_MAX = 60;
 const MAX_TOOL_ITERATIONS = 10;
 
-import type { JsonValue, ToolCallRecord as RecordedToolCall, ToolResultRecord as RecordedToolResult } from '../types/conversation';
+import type {
+	JsonValue,
+	MessagePart,
+	ToolCallRecord as RecordedToolCall,
+	ToolResultRecord as RecordedToolResult,
+} from '../types/conversation';
 
 function parseJson<T>(s: string | null): T | null {
 	if (!s) return null;
@@ -27,6 +32,26 @@ function parseJson<T>(s: string | null): T | null {
 	} catch {
 		return null;
 	}
+}
+
+// Reconstruct an ordered parts timeline for messages persisted before the
+// `parts` column existed. We don't know the original interleaving — fall back
+// to "all text first, then all tool_use, then all tool_result". Anyone who
+// chats with the upgraded DO will get true ordering on subsequent turns.
+function buildLegacyParts(
+	content: string,
+	toolCalls: RecordedToolCall[],
+	toolResults: RecordedToolResult[],
+	thinking: string | null,
+): MessagePart[] {
+	const parts: MessagePart[] = [];
+	if (thinking) parts.push({ type: 'thinking', text: thinking });
+	if (content) parts.push({ type: 'text', text: content });
+	for (const tc of toolCalls) parts.push({ type: 'tool_use', ...tc });
+	for (const tr of toolResults) {
+		parts.push({ type: 'tool_result', toolUseId: tr.toolUseId, content: tr.content, isError: tr.isError });
+	}
+	return parts;
 }
 
 function formatLLMError(e: unknown): string {
@@ -91,7 +116,8 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 					tool_results TEXT,
 					parent_id TEXT,
 					deleted_at INTEGER,
-					artifact_ids TEXT
+					artifact_ids TEXT,
+					parts TEXT
 				)
 			`);
 			this.#sql.exec(`
@@ -128,6 +154,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 				'ALTER TABLE messages ADD COLUMN parent_id TEXT',
 				'ALTER TABLE messages ADD COLUMN deleted_at INTEGER',
 				'ALTER TABLE messages ADD COLUMN artifact_ids TEXT',
+				'ALTER TABLE messages ADD COLUMN parts TEXT',
 			]) {
 				try {
 					this.#sql.exec(stmt);
@@ -234,6 +261,26 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		const accumulatedToolCalls: RecordedToolCall[] = [];
 		const accumulatedToolResults: RecordedToolResult[] = [];
 		const accumulatedCitations: ToolCitation[] = [];
+		// Ordered timeline of the turn: text segments interleaved with tool
+		// invocations and their results in the sequence the model produced
+		// them. Mirrors the order of broadcast SSE events.
+		const parts: MessagePart[] = [];
+		const appendText = (delta: string) => {
+			const last = parts[parts.length - 1];
+			if (last && last.type === 'text') {
+				last.text += delta;
+			} else {
+				parts.push({ type: 'text', text: delta });
+			}
+		};
+		const appendThinking = (delta: string) => {
+			const last = parts[parts.length - 1];
+			if (last && last.type === 'thinking') {
+				last.text += delta;
+			} else {
+				parts.push({ type: 'thinking', text: delta });
+			}
+		};
 
 		this.#sql.exec('UPDATE messages SET started_at = ? WHERE id = ?', startedAt, assistantId);
 
@@ -274,12 +321,14 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 					if (ev.type === 'text_delta') {
 						if (!firstTokenAt) firstTokenAt = Date.now();
 						turnText += ev.delta;
+						appendText(ev.delta);
 						if (this.#inProgress && this.#inProgress.messageId === assistantId) {
 							this.#inProgress.content += ev.delta;
 						}
 						this.#broadcast('delta', { messageId: assistantId, content: ev.delta });
 					} else if (ev.type === 'thinking_delta') {
 						thinkingText += ev.delta;
+						appendThinking(ev.delta);
 						this.#broadcast('thinking_delta', { messageId: assistantId, content: ev.delta });
 					} else if (ev.type === 'tool_call') {
 						turnToolCalls.push({ id: ev.id, name: ev.name, input: ev.input });
@@ -311,6 +360,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 
 				// Execute each tool, broadcast call+result events, append result to history.
 				for (const call of turnToolCalls) {
+					parts.push({ type: 'tool_use', id: call.id, name: call.name, input: call.input });
 					this.#broadcast('tool_call', {
 						messageId: assistantId,
 						id: call.id,
@@ -328,6 +378,12 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 						isError: result.isError ?? false,
 					};
 					accumulatedToolResults.push(resultRecord);
+					parts.push({
+						type: 'tool_result',
+						toolUseId: call.id,
+						content: result.content,
+						isError: result.isError ?? false,
+					});
 					if (result.citations) accumulatedCitations.push(...result.citations);
 					if (result.artifacts) {
 						for (const a of result.artifacts) {
@@ -363,7 +419,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 
 			const finalText = this.#inProgress?.content ?? '';
 			this.#sql.exec(
-				`UPDATE messages SET content = ?, status = 'complete', first_token_at = ?, last_chunk_json = ?, usage_json = ?, provider = ?, thinking = ?, tool_calls = ?, tool_results = ? WHERE id = ?`,
+				`UPDATE messages SET content = ?, status = 'complete', first_token_at = ?, last_chunk_json = ?, usage_json = ?, provider = ?, thinking = ?, tool_calls = ?, tool_results = ?, parts = ? WHERE id = ?`,
 				finalText,
 				firstTokenAt || null,
 				lastChunk ? JSON.stringify(lastChunk) : null,
@@ -372,6 +428,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 				thinkingText || null,
 				accumulatedToolCalls.length > 0 ? JSON.stringify(accumulatedToolCalls) : null,
 				accumulatedToolResults.length > 0 ? JSON.stringify(accumulatedToolResults) : null,
+				parts.length > 0 ? JSON.stringify(parts) : null,
 				assistantId,
 			);
 			this.#inProgress = null;
@@ -471,7 +528,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	#readMessages(): MessageRow[] {
 		const rows = this.#sql
 			.exec(
-				`SELECT id, role, content, model, status, error, created_at, started_at, first_token_at, last_chunk_json, usage_json, generation_json, thinking, tool_calls, tool_results
+				`SELECT id, role, content, model, status, error, created_at, started_at, first_token_at, last_chunk_json, usage_json, generation_json, thinking, tool_calls, tool_results, parts
 				 FROM messages
 				 WHERE deleted_at IS NULL
 				 ORDER BY created_at ASC`,
@@ -492,22 +549,30 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			thinking: string | null;
 			tool_calls: string | null;
 			tool_results: string | null;
+			parts: string | null;
 		}>;
 		const artifactsByMessage = this.#readArtifactsByMessage();
-		return rows.map((r) => ({
-			id: r.id,
-			role: r.role as 'user' | 'assistant',
-			content: r.content,
-			thinking: r.thinking,
-			model: r.model,
-			status: r.status as 'complete' | 'streaming' | 'error',
-			error: r.error,
-			createdAt: r.created_at,
-			meta: this.#deriveMeta(r.started_at, r.first_token_at, r.last_chunk_json, r.usage_json, r.generation_json),
-			artifacts: artifactsByMessage.get(r.id) ?? [],
-			toolCalls: parseJson<RecordedToolCall[]>(r.tool_calls) ?? [],
-			toolResults: parseJson<RecordedToolResult[]>(r.tool_results) ?? [],
-		}));
+		return rows.map((r) => {
+			const toolCalls = parseJson<RecordedToolCall[]>(r.tool_calls) ?? [];
+			const toolResults = parseJson<RecordedToolResult[]>(r.tool_results) ?? [];
+			const parts =
+				parseJson<MessagePart[]>(r.parts) ?? buildLegacyParts(r.content, toolCalls, toolResults, r.thinking);
+			return {
+				id: r.id,
+				role: r.role as 'user' | 'assistant',
+				content: r.content,
+				thinking: r.thinking,
+				model: r.model,
+				status: r.status as 'complete' | 'streaming' | 'error',
+				error: r.error,
+				createdAt: r.created_at,
+				meta: this.#deriveMeta(r.started_at, r.first_token_at, r.last_chunk_json, r.usage_json, r.generation_json),
+				artifacts: artifactsByMessage.get(r.id) ?? [],
+				toolCalls,
+				toolResults,
+				parts,
+			};
+		});
 	}
 
 	#readArtifactsByMessage(): Map<string, Artifact[]> {

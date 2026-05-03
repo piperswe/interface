@@ -27,6 +27,7 @@
 	"dependencies": {
 		"@anthropic-ai/sdk": "^0.92.0",
 		"@openrouter/sdk": "^0.12.24",
+		"hono": "^4.12.16",
 		"katex": "^0.16.45",
 		"marked": "^14.1.4",
 		"marked-katex-extension": "^5.1.8",

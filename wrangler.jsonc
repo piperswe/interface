@@ -36,6 +36,7 @@
 		"enabled": true,
 	},
 	"upload_source_maps": true,
+	"minify": true,
 	"compatibility_flags": ["nodejs_compat"],
 	/**
 	 * Smart Placement

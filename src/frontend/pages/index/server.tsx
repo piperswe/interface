@@ -1,44 +1,22 @@
 import { Document, type Theme } from '../../Document';
+import { AppShell } from '../../components/AppShell';
 import { renderHtml } from '../../render';
 import type { Conversation } from '../../../types/conversation';
 
-function fmtRelative(ms: number): string {
-	const diff = Date.now() - ms;
-	if (diff < 60_000) return 'just now';
-	if (diff < 3_600_000) return Math.floor(diff / 60_000) + 'm ago';
-	if (diff < 86_400_000) return Math.floor(diff / 3_600_000) + 'h ago';
-	return Math.floor(diff / 86_400_000) + 'd ago';
-}
-
-export function IndexPage({ conversations }: { conversations: Conversation[] }) {
+// The standalone "/" page is now a small empty-state — the sidebar in AppShell
+// owns conversation navigation, so the main content area just invites the
+// operator to start a new chat.
+export function IndexPage() {
 	return (
-		<>
-			<header>
-				<h1>Conversations</h1>
-				<div style={{ display: 'flex', gap: '0.5rem' }}>
-					<a href="/settings" className="button" style={{ display: 'inline-flex', alignItems: 'center' }}>
-						Settings
-					</a>
-					<form action="/conversations" method="post">
-						<button type="submit">New chat</button>
-					</form>
-				</div>
-			</header>
-			{conversations.length === 0 ? (
-				<div className="empty">No conversations yet. Start one above.</div>
-			) : (
-				<ul className="conversation-list">
-					{conversations.map((c) => (
-						<li key={c.id}>
-							<a href={`/c/${c.id}`}>
-								<div className="title">{c.title}</div>
-								<div className="meta">{fmtRelative(c.updated_at)}</div>
-							</a>
-						</li>
-					))}
-				</ul>
-			)}
-		</>
+		<div className="empty-state">
+			<h1>Start a new chat</h1>
+			<p>Pick a conversation from the sidebar, or start fresh.</p>
+			<form action="/conversations" method="post">
+				<button type="submit" className="primary">
+					New chat
+				</button>
+			</form>
+		</div>
 	);
 }
 
@@ -47,8 +25,10 @@ export async function renderIndexPage(
 	options: { theme?: Theme } = {},
 ): Promise<ReadableStream<Uint8Array>> {
 	return renderHtml(
-		<Document title="Conversations" theme={options.theme}>
-			<IndexPage conversations={conversations} />
+		<Document title="Interface" theme={options.theme}>
+			<AppShell conversations={conversations}>
+				<IndexPage />
+			</AppShell>
 		</Document>,
 	);
 }

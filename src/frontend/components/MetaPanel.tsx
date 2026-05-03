@@ -8,8 +8,12 @@ export function MetaPanel({ snapshot }: { snapshot: MetaSnapshot | null }) {
 	const ttftMs = firstTokenAt && startedAt ? firstTokenAt - startedAt : 0;
 
 	return (
-		<aside className="meta-panel">
-			<h2>Request metadata</h2>
+		<details className="meta-panel">
+			<summary aria-label="Request metadata" title="Request metadata">
+				<span className="meta-panel-icon" aria-hidden="true">
+					ⓘ
+				</span>
+			</summary>
 			<dl>
 				<dt>Model</dt>
 				<dd>{generation?.model ?? lastChunk?.model ?? '—'}</dd>
@@ -36,6 +40,6 @@ export function MetaPanel({ snapshot }: { snapshot: MetaSnapshot | null }) {
 				<dt>Throughput</dt>
 				<dd>{fmtThroughput(generation?.tokensCompletion ?? undefined, generation?.generationTime ?? 0)}</dd>
 			</dl>
-		</aside>
+		</details>
 	);
 }

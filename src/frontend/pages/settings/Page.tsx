@@ -9,11 +9,8 @@ export type SettingsPageProps = {
 
 export function SettingsPage({ theme, providerKeys, mcpServers }: SettingsPageProps) {
 	return (
-		<>
-			<header>
-				<h1>Settings</h1>
-				<a href="/">All conversations</a>
-			</header>
+		<div className="settings-layout">
+			<h1 className="settings-title">Settings</h1>
 
 			<section className="settings-section" aria-labelledby="appearance">
 				<h2 id="appearance">Appearance</h2>
@@ -141,6 +138,6 @@ export function SettingsPage({ theme, providerKeys, mcpServers }: SettingsPagePr
 					</form>
 				</details>
 			</section>
-		</>
+		</div>
 	);
 }

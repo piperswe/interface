@@ -1,47 +1,51 @@
 import type { ToolCallRecord, ToolResultRecord } from '../../types/conversation';
 
-export function ToolCallList({
-	toolCalls,
-	toolResults,
+export function ToolCallCard({
+	call,
+	result,
+	defaultOpen = false,
 }: {
-	toolCalls: ToolCallRecord[];
-	toolResults: ToolResultRecord[];
+	call: ToolCallRecord;
+	result?: ToolResultRecord;
+	defaultOpen?: boolean;
 }) {
-	if (toolCalls.length === 0) return null;
-	const resultsByToolUseId = new Map<string, ToolResultRecord>();
-	for (const r of toolResults) resultsByToolUseId.set(r.toolUseId, r);
-
+	const pending = !result;
+	// Auto-expand pending tool calls (mid-run) so the operator sees what the
+	// model is doing without clicking. Already-completed cards stay collapsed
+	// unless the parent message is itself streaming.
+	const open = pending || defaultOpen;
 	return (
-		<div className="tool-calls">
-			{toolCalls.map((call) => {
-				const result = resultsByToolUseId.get(call.id);
-				return (
-					<details key={call.id} className="tool-call" data-tool-name={call.name}>
-						<summary>
-							<span className="tool-call-name">{call.name}</span>
-							{result?.isError ? <span className="tool-call-status error">error</span> : null}
-						</summary>
-						<div className="tool-call-body">
-							<div className="tool-call-input">
-								<div className="tool-call-label">Input</div>
-								<pre>
-									<code>{JSON.stringify(call.input ?? {}, null, 2)}</code>
-								</pre>
-							</div>
-							{result ? (
-								<div className="tool-call-result">
-									<div className="tool-call-label">Result</div>
-									<pre>
-										<code>{result.content}</code>
-									</pre>
-								</div>
-							) : (
-								<div className="tool-call-result pending">running…</div>
-							)}
-						</div>
-					</details>
-				);
-			})}
-		</div>
+		<details className="tool-call" data-tool-name={call.name} open={open}>
+			<summary>
+				<span className="tool-call-name">{call.name}</span>
+				{pending ? (
+					<span className="tool-call-status pending">
+						running<span className="streaming-indicator" aria-hidden="true">●</span>
+					</span>
+				) : result.isError ? (
+					<span className="tool-call-status error">error</span>
+				) : (
+					<span className="tool-call-status ok">done</span>
+				)}
+			</summary>
+			<div className="tool-call-body">
+				<div className="tool-call-input">
+					<div className="tool-call-label">Input</div>
+					<pre>
+						<code>{JSON.stringify(call.input ?? {}, null, 2)}</code>
+					</pre>
+				</div>
+				{result ? (
+					<div className="tool-call-result">
+						<div className="tool-call-label">Result</div>
+						<pre>
+							<code>{result.content}</code>
+						</pre>
+					</div>
+				) : (
+					<div className="tool-call-result pending">running…</div>
+				)}
+			</div>
+		</details>
 	);
 }
