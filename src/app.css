@@ -1267,10 +1267,50 @@ details.meta-panel dd {
 	accent-color: var(--accent);
 }
 
+.compose-options-presets {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+}
+
+.compose-options-preset {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	padding: 0.4rem 0.5rem;
+	border-radius: var(--radius-sm);
+	cursor: pointer;
+	font-size: 0.875rem;
+}
+
+.compose-options-preset:hover {
+	background: var(--surface-2);
+}
+
+.compose-options-preset input[type='radio'] {
+	min-height: 0;
+	margin: 0;
+	width: 14px;
+	height: 14px;
+	accent-color: var(--accent);
+}
+
+.compose-options-preset-label {
+	flex: 1;
+}
+
+.compose-options-preset-meta {
+	color: var(--muted-2);
+	font-size: 0.75rem;
+}
+
 .compose-options-budget {
 	display: flex;
 	gap: 0.5rem;
-	padding: 0 0.5rem;
+	padding: 0.25rem 0.5rem 0 calc(0.5rem + 14px + 0.5rem);
 }
 
 .compose-options-budget input {

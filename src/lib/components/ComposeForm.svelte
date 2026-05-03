@@ -1,3 +1,29 @@
+<script lang="ts" module>
+	// Thinking-budget presets, loosely modeled on Anthropic's published
+	// ranges for extended thinking. Picking one applies immediately;
+	// "Custom" reveals a freeform input for any value the model accepts.
+	type Preset = { id: string; label: string; budget: number | null };
+	export const THINKING_PRESETS: Preset[] = [
+		{ id: 'off', label: 'Off', budget: null },
+		{ id: 'low', label: 'Low', budget: 1024 },
+		{ id: 'medium', label: 'Medium', budget: 4096 },
+		{ id: 'high', label: 'High', budget: 16384 },
+		{ id: 'extra-high', label: 'Extra high', budget: 32768 },
+		{ id: 'max', label: 'Max', budget: 64000 },
+	];
+
+	export function presetFor(budget: number | null): Preset | null {
+		if (budget == null || budget <= 0) return THINKING_PRESETS[0];
+		return THINKING_PRESETS.find((p) => p.budget === budget) ?? null;
+	}
+
+	export function describeBudget(budget: number | null): string {
+		const matched = presetFor(budget);
+		if (matched) return matched.label;
+		return budget != null ? `${budget.toLocaleString()} tok` : 'Off';
+	}
+</script>
+
 <script lang="ts">
 	import type { ModelEntry } from '$lib/server/models/config';
 	import { sendMessage, setThinkingBudget } from '$lib/conversations.remote';
@@ -21,9 +47,23 @@
 	let formEl: HTMLFormElement | null = $state(null);
 	let optionsEl: HTMLDetailsElement | null = $state(null);
 	let selectedModel = $state(untrack(() => defaultModel));
-	let budgetInput = $state(untrack(() => thinkingBudget ?? 0));
+
+	// Track which preset row is selected. `null` means the current budget
+	// doesn't match any preset, so we show the Custom row pre-populated.
+	let activePresetId = $state(untrack(() => presetFor(thinkingBudget)?.id ?? 'custom'));
+	let customInput = $state(
+		untrack(() => (presetFor(thinkingBudget) == null && thinkingBudget != null ? thinkingBudget : 0)),
+	);
+	$effect(() => {
+		// Re-sync after a remote save invalidates and a fresh `thinkingBudget`
+		// prop comes back from the load function.
+		const matched = presetFor(thinkingBudget);
+		activePresetId = matched?.id ?? 'custom';
+		if (matched == null && thinkingBudget != null) customInput = thinkingBudget;
+	});
+
 	const currentLabel = $derived(models.find((m) => m.slug === selectedModel)?.label ?? selectedModel);
-	const budgetSummary = $derived(thinkingBudget && thinkingBudget > 0 ? `${thinkingBudget} tok` : 'off');
+	const budgetSummary = $derived(describeBudget(thinkingBudget));
 
 	function onKeyDown(e: KeyboardEvent) {
 		if (e.key !== 'Enter') return;
@@ -38,12 +78,21 @@
 		if (optionsEl) optionsEl.open = false;
 	}
 
-	async function saveBudget() {
-		const parsed = Number.parseInt(String(budgetInput), 10);
-		const budget = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+	async function applyBudget(budget: number | null) {
 		await setThinkingBudget({ conversationId, budget });
 		await invalidateAll();
-		if (optionsEl) optionsEl.open = false;
+	}
+
+	async function pickPreset(p: Preset) {
+		activePresetId = p.id;
+		await applyBudget(p.budget);
+	}
+
+	async function applyCustom() {
+		const parsed = Number.parseInt(String(customInput), 10);
+		const budget = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+		activePresetId = 'custom';
+		await applyBudget(budget);
 	}
 
 	// Close the popover when the user clicks outside of it.
@@ -128,17 +177,50 @@
 				</div>
 				<div class="compose-options-section">
 					<div class="compose-options-section-label">Thinking budget</div>
-					<div class="compose-options-budget">
-						<input
-							type="number"
-							min="0"
-							step="1024"
-							placeholder="0 = off"
-							bind:value={budgetInput}
-							aria-label="Thinking token budget"
-						/>
-						<button type="button" onclick={saveBudget}>Save</button>
-					</div>
+					<ul class="compose-options-presets">
+						{#each THINKING_PRESETS as p (p.id)}
+							<li>
+								<label class="compose-options-preset">
+									<input
+										type="radio"
+										name="thinking_preset"
+										value={p.id}
+										checked={activePresetId === p.id}
+										onchange={() => pickPreset(p)}
+									/>
+									<span class="compose-options-preset-label">{p.label}</span>
+									{#if p.budget != null}
+										<span class="compose-options-preset-meta">{p.budget.toLocaleString()} tok</span>
+									{/if}
+								</label>
+							</li>
+						{/each}
+						<li>
+							<label class="compose-options-preset">
+								<input
+									type="radio"
+									name="thinking_preset"
+									value="custom"
+									checked={activePresetId === 'custom'}
+									onchange={() => (activePresetId = 'custom')}
+								/>
+								<span class="compose-options-preset-label">Custom</span>
+							</label>
+							{#if activePresetId === 'custom'}
+								<div class="compose-options-budget">
+									<input
+										type="number"
+										min="0"
+										step="1024"
+										placeholder="0 = off"
+										bind:value={customInput}
+										aria-label="Custom thinking token budget"
+									/>
+									<button type="button" onclick={applyCustom}>Save</button>
+								</div>
+							{/if}
+						</li>
+					</ul>
 				</div>
 			</div>
 		</details>
