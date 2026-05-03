@@ -2,6 +2,13 @@ import { form, getRequestEvent } from '$app/server';
 import { error, redirect } from '@sveltejs/kit';
 import { setSetting } from '$lib/server/settings';
 import { createMcpServer, deleteMcpServer } from '$lib/server/mcp_servers';
+import {
+	createSubAgent,
+	deleteSubAgent,
+	isValidSubAgentName,
+	setSubAgentEnabled,
+	updateSubAgent,
+} from '$lib/server/sub_agents';
 
 function getEnv(): Env {
 	const event = getRequestEvent();
@@ -94,3 +101,127 @@ export const removeMcpServer = form('unchecked', async (data: { id?: unknown }) 
 	await deleteMcpServer(getEnv(), id);
 	redirect(303, '/settings');
 });
+
+function parseAllowedTools(raw: string): string[] | null {
+	const trimmed = raw.trim();
+	if (!trimmed) return null;
+	const names = trimmed
+		.split(/[\s,]+/)
+		.map((s) => s.trim())
+		.filter(Boolean);
+	return names.length > 0 ? names : null;
+}
+
+export const addSubAgent = form(
+	'unchecked',
+	async (data: {
+		name?: unknown;
+		description?: unknown;
+		system_prompt?: unknown;
+		model?: unknown;
+		max_iterations?: unknown;
+		allowed_tools?: unknown;
+	}) => {
+		const name = String(data.name ?? '').trim();
+		const description = String(data.description ?? '').trim();
+		const systemPrompt = String(data.system_prompt ?? '');
+		const modelRaw = String(data.model ?? '').trim();
+		const maxIterRaw = String(data.max_iterations ?? '').trim();
+		const allowedToolsRaw = String(data.allowed_tools ?? '');
+
+		if (!name || !isValidSubAgentName(name)) {
+			error(
+				400,
+				'Name must start with a letter and contain only lowercase letters, digits, underscores, or hyphens (max 64 chars).',
+			);
+		}
+		if (!description) error(400, 'Description is required');
+		if (!systemPrompt.trim()) error(400, 'System prompt is required');
+
+		let maxIterations: number | null = null;
+		if (maxIterRaw) {
+			const n = Number.parseInt(maxIterRaw, 10);
+			if (!Number.isFinite(n) || n < 1 || n > 50) {
+				error(400, 'max_iterations must be an integer between 1 and 50');
+			}
+			maxIterations = n;
+		}
+
+		try {
+			await createSubAgent(getEnv(), {
+				name,
+				description,
+				systemPrompt,
+				model: modelRaw || null,
+				maxIterations,
+				allowedTools: parseAllowedTools(allowedToolsRaw),
+			});
+		} catch (e) {
+			error(400, e instanceof Error ? e.message : String(e));
+		}
+		redirect(303, '/settings');
+	},
+);
+
+export const removeSubAgent = form('unchecked', async (data: { id?: unknown }) => {
+	const id = Number.parseInt(String(data.id ?? ''), 10);
+	if (!Number.isFinite(id) || id <= 0) error(400, 'Invalid id');
+	await deleteSubAgent(getEnv(), id);
+	redirect(303, '/settings');
+});
+
+export const toggleSubAgent = form(
+	'unchecked',
+	async (data: { id?: unknown; enabled?: unknown }) => {
+		const id = Number.parseInt(String(data.id ?? ''), 10);
+		if (!Number.isFinite(id) || id <= 0) error(400, 'Invalid id');
+		const enabled = String(data.enabled ?? '') === 'true';
+		await setSubAgentEnabled(getEnv(), id, enabled);
+		redirect(303, '/settings');
+	},
+);
+
+export const editSubAgent = form(
+	'unchecked',
+	async (data: {
+		id?: unknown;
+		description?: unknown;
+		system_prompt?: unknown;
+		model?: unknown;
+		max_iterations?: unknown;
+		allowed_tools?: unknown;
+	}) => {
+		const id = Number.parseInt(String(data.id ?? ''), 10);
+		if (!Number.isFinite(id) || id <= 0) error(400, 'Invalid id');
+		const description = String(data.description ?? '').trim();
+		const systemPrompt = String(data.system_prompt ?? '');
+		const modelRaw = String(data.model ?? '').trim();
+		const maxIterRaw = String(data.max_iterations ?? '').trim();
+		const allowedToolsRaw = String(data.allowed_tools ?? '');
+
+		if (!description) error(400, 'Description is required');
+		if (!systemPrompt.trim()) error(400, 'System prompt is required');
+
+		let maxIterations: number | null = null;
+		if (maxIterRaw) {
+			const n = Number.parseInt(maxIterRaw, 10);
+			if (!Number.isFinite(n) || n < 1 || n > 50) {
+				error(400, 'max_iterations must be an integer between 1 and 50');
+			}
+			maxIterations = n;
+		}
+
+		try {
+			await updateSubAgent(getEnv(), id, {
+				description,
+				systemPrompt,
+				model: modelRaw || null,
+				maxIterations,
+				allowedTools: parseAllowedTools(allowedToolsRaw),
+			});
+		} catch (e) {
+			error(400, e instanceof Error ? e.message : String(e));
+		}
+		redirect(303, '/settings');
+	},
+);

@@ -1,6 +1,13 @@
 <script lang="ts">
 	import type { PageData } from './$types';
-	import { saveSetting, addMcpServer, removeMcpServer } from '$lib/settings.remote';
+	import {
+		saveSetting,
+		addMcpServer,
+		removeMcpServer,
+		addSubAgent,
+		removeSubAgent,
+		toggleSubAgent,
+	} from '$lib/settings.remote';
 	import { page } from '$app/state';
 
 	let { data }: { data: PageData } = $props();
@@ -16,6 +23,13 @@
 	function deleteHandler(name: string) {
 		return async ({ submit }: { submit: () => Promise<unknown> }) => {
 			if (!confirm(`Delete MCP server "${name}"?`)) return;
+			await submit();
+		};
+	}
+
+	function deleteSubAgentHandler(name: string) {
+		return async ({ submit }: { submit: () => Promise<unknown> }) => {
+			if (!confirm(`Delete sub-agent "${name}"?`)) return;
 			await submit();
 		};
 	}
@@ -128,6 +142,127 @@
 						placeholder={'{"Authorization":"Bearer …"}'}
 						style="display: block; width: 100%"
 					/>
+				</label>
+				<button type="submit">Save</button>
+			</form>
+		</details>
+	</section>
+
+	<section class="settings-section" aria-labelledby="sub-agents">
+		<h2 id="sub-agents">Sub-agents</h2>
+		<p style="color: var(--muted); margin-top: 0">
+			Specialised agents the main conversation can delegate to via the built-in
+			<code>agent</code> tool. Each sub-agent runs its own LLM loop with a custom
+			system prompt and a curated subset of tools, then returns a single text
+			answer to the parent.
+		</p>
+		{#if data.subAgents.length === 0}
+			<div class="empty">No sub-agents configured.</div>
+		{:else}
+			<ul style="list-style: none; padding: 0; display: flex; flex-direction: column; gap: 0.5rem">
+				{#each data.subAgents as a (a.id)}
+					<li
+						style="border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem 0.75rem; display: flex; flex-direction: column; gap: 0.25rem"
+					>
+						<div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap">
+							<span style="font-weight: 500"><code>{a.name}</code></span>
+							<span class="badge {a.enabled ? 'ok' : 'missing'}">
+								{a.enabled ? 'enabled' : 'disabled'}
+							</span>
+							<span style="flex: 1"></span>
+							<form {...toggleSubAgent.for(a.id).enhance(async ({ submit }) => { await submit(); })}>
+								<input type="hidden" name="id" value={a.id} />
+								<input type="hidden" name="enabled" value={a.enabled ? 'false' : 'true'} />
+								<button type="submit">{a.enabled ? 'Disable' : 'Enable'}</button>
+							</form>
+							<form {...removeSubAgent.for(a.id).enhance(deleteSubAgentHandler(a.name))}>
+								<input type="hidden" name="id" value={a.id} />
+								<button type="submit">Delete</button>
+							</form>
+						</div>
+						<div style="color: var(--muted); font-size: 0.85em">{a.description}</div>
+						<div style="color: var(--muted); font-size: 0.8em">
+							{a.model ?? 'inherits parent model'}
+							· iterations: {a.maxIterations ?? 'default'}
+							· tools: {a.allowedTools ? a.allowedTools.join(', ') : 'all built-in'}
+						</div>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+		<details style="margin-top: 0.75rem">
+			<summary style="cursor: pointer; min-height: var(--tap-target); display: flex; align-items: center">
+				Add sub-agent
+			</summary>
+			<form
+				{...addSubAgent.enhance(async ({ submit }) => { await submit(); })}
+				style="display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.5rem"
+			>
+				<label>
+					Name
+					<input
+						type="text"
+						name="name"
+						required
+						placeholder="researcher"
+						pattern="[a-z][a-z0-9_-]{'{0,63}'}"
+						style="display: block; width: 100%"
+					/>
+					<small style="color: var(--muted)">
+						Lowercase letters, digits, <code>_</code> and <code>-</code>. Must start with a letter.
+					</small>
+				</label>
+				<label>
+					Description (when to invoke)
+					<input
+						type="text"
+						name="description"
+						required
+						placeholder="Use to research a topic across multiple sources and produce a citation-backed summary."
+						style="display: block; width: 100%"
+					/>
+				</label>
+				<label>
+					System prompt
+					<textarea
+						name="system_prompt"
+						rows="4"
+						required
+						placeholder="You are a research specialist. Gather facts from authoritative sources, cite each claim, and respond with a concise summary."
+						style="display: block; width: 100%"
+					></textarea>
+				</label>
+				<label>
+					Model (optional — leave blank to inherit the parent's model)
+					<input
+						type="text"
+						name="model"
+						placeholder="anthropic/claude-haiku-4.5"
+						style="display: block; width: 100%"
+					/>
+				</label>
+				<label>
+					Max iterations (optional — default 5)
+					<input
+						type="number"
+						name="max_iterations"
+						min="1"
+						max="50"
+						placeholder="5"
+						style="display: block; width: 6rem"
+					/>
+				</label>
+				<label>
+					Allowed tools (comma- or space-separated; leave blank for all built-in tools)
+					<input
+						type="text"
+						name="allowed_tools"
+						placeholder="web_search, fetch_url"
+						style="display: block; width: 100%"
+					/>
+					<small style="color: var(--muted)">
+						Sub-agents can never call the <code>agent</code> tool itself.
+					</small>
 				</label>
 				<button type="submit">Save</button>
 			</form>
