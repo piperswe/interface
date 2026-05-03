@@ -24,12 +24,10 @@ export class OpenRouterLLM implements LLM {
 	}
 
 	async *chatCompletionsStream(request: ChatRequest): AsyncIterable<ChatStreamChunk> {
-		const client = this.#client;
-		const model = this.model;
-		const stream = await client.chat.send({
+		const stream = await this.#client.chat.send({
 			chatRequest: {
 				...request,
-				model,
+				model: this.model,
 				stream: true,
 			},
 		});
