@@ -1,19 +1,25 @@
 {
-  "name": "interface",
-  "version": "0.0.0",
-  "private": true,
-  "scripts": {
-    "deploy": "wrangler deploy",
-    "dev": "wrangler dev",
-    "start": "wrangler dev",
-    "cf-typegen": "wrangler types"
-  },
-  "devDependencies": {
-    "@types/node": "^25.6.0",
-    "typescript": "^5.5.2",
-    "wrangler": "^4.87.0"
-  },
-  "dependencies": {
-    "@openrouter/sdk": "^0.12.24"
-  }
+	"name": "interface",
+	"version": "0.0.0",
+	"private": true,
+	"scripts": {
+		"build": "./build.sh",
+		"deploy": "wrangler deploy",
+		"dev": "wrangler dev",
+		"start": "wrangler dev",
+		"cf-typegen": "wrangler types"
+	},
+	"devDependencies": {
+		"@types/node": "^25.6.0",
+		"@types/react": "^19.2.14",
+		"@types/react-dom": "^19.2.3",
+		"esbuild": "^0.28.0",
+		"typescript": "^5.5.2",
+		"wrangler": "^4.87.0"
+	},
+	"dependencies": {
+		"@openrouter/sdk": "^0.12.24",
+		"react": "^19.2.5",
+		"react-dom": "^19.2.5"
+	}
 }

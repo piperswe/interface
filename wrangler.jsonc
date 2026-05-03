@@ -5,6 +5,9 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "interface",
+	"build": {
+		"command": "./build.sh",
+	},
 	"main": "src/index.ts",
 	"compatibility_date": "2026-04-22",
 	"migrations": [
@@ -40,6 +43,10 @@
 	// "ai": { "binding": "AI" },
 	"secrets": {
 		"required": ["OPENROUTER_KEY"],
+	},
+	"assets": {
+		"directory": "./dist",
+		"binding": "ASSETS",
 	},
 	/**
 	 * Environment Variables
