@@ -1,0 +1,136 @@
+src/conversations.test.ts
+  cf5597da3a2fb233 1-35
+src/index.test.ts
+  cf5597da3a2fb233 1-79
+src/durable_objects/ConversationDurableObject.ts
+  cf5597da3a2fb233 3-13,15,19-30,44-62,87-94,97-117,124-130,185-193,231-236,241,243-246,248-296,298-360,364,366-367,371-374,378-380,385-387,390-393,412-470,474-477,492-494,496,501,507-509,513-599,643-649,654
+src/llm/LLM.ts
+  cf5597da3a2fb233 1-73,78
+src/llm/OpenRouterLLM.test.ts
+  cf5597da3a2fb233 1-285
+src/frontend/markdown.test.ts
+  cf5597da3a2fb233 1-52
+src/llm/route.test.ts
+  cf5597da3a2fb233 1-42
+src/frontend/components/Artifact.tsx
+  cf5597da3a2fb233 1-22
+src/frontend/pages/conversation/Page.tsx
+  cf5597da3a2fb233 12,15,27-30,32-52
+src/index.ts
+  cf5597da3a2fb233 3,6-7,11-23,39-40,50-117,125,129,134-142,162-171
+PRD.md
+  d591a03520451044 1-319
+src/llm/AnthropicLLM.ts
+  cf5597da3a2fb233 1-202
+src/llm/OpenRouterLLM.ts
+  cf5597da3a2fb233 2-4,17-86,88-111,113-168,170-180,183
+src/frontend/Document.tsx
+  cf5597da3a2fb233 3-4,8,12-13,15,18-19,22
+src/frontend/styles.css
+  cf5597da3a2fb233 2-71,74-83,88-89,97,99-100,104,113-115,119-126,134-137,139,142,157,165-166,170-172,181,188,199,202,206,210,214,218-219,226,232,244,254-257,262,266-269,272-280,288,293-299,310,315-318,324,334,337,349-351,356,361,366,370-523,528,530,537,551,558-614
+migrations/0002_foundation.sql
+  cf5597da3a2fb233 1-66
+src/frontend/pages/conversation/server.tsx
+  cf5597da3a2fb233 1,3-4,7-43,45-46,50
+src/llm/AnthropicLLM.test.ts
+  cf5597da3a2fb233 1-206
+src/search/kagi.ts
+  cf5597da3a2fb233 1-56
+src/frontend/markdown.ts
+  cf5597da3a2fb233 2-35,62,66-79,81-91
+vitest.config.mts
+  cf5597da3a2fb233 6-26
+src/mcp_servers.ts
+  cf5597da3a2fb233 1-97
+build.sh
+  cf5597da3a2fb233 22-23
+src/frontend/pages/index/server.tsx
+  cf5597da3a2fb233 1,18-25,45-48,50
+src/frontend/markdown.artifacts.test.ts
+  cf5597da3a2fb233 1-19
+src/tools/registry.test.ts
+  cf5597da3a2fb233 1-54
+src/tools/fetch_url.test.ts
+  cf5597da3a2fb233 1-54
+src/settings.ts
+  cf5597da3a2fb233 1-68
+src/mcp_servers.test.ts
+  cf5597da3a2fb233 1-44
+tsconfig.json
+  cf5597da3a2fb233 15,39-43
+src/types/conversation.ts
+  cf5597da3a2fb233 1,8,19-46,51-53,59-61
+src/frontend/components/ToolCall.tsx
+  cf5597da3a2fb233 1-47
+wrangler.jsonc
+  cf5597da3a2fb233 52-54
+src/mcp/types.ts
+  cf5597da3a2fb233 1-35
+src/frontend/pages/settings/Page.tsx
+  cf5597da3a2fb233 1-146
+src/durable_objects/ConversationDurableObject.test.ts
+  cf5597da3a2fb233 1-41,43-95,97-114,116-160,162-198
+src/settings.test.ts
+  cf5597da3a2fb233 1-62
+src/tools/fetch_url.ts
+  cf5597da3a2fb233 1-56
+src/conversations.ts
+  cf5597da3a2fb233 7,22-24
+src/mcp/client.ts
+  cf5597da3a2fb233 1-99
+src/llm/route.ts
+  cf5597da3a2fb233 1-31
+src/mcp/client.test.ts
+  cf5597da3a2fb233 1-76
+src/env.d.ts
+  cf5597da3a2fb233 1-16
+package.json
+  cf5597da3a2fb233 7-10,17,21,24,28,30,32-33,35-36
+test/setup.ts
+  cf5597da3a2fb233 1-14
+src/search/types.ts
+  cf5597da3a2fb233 1-19
+src/frontend/components/Message.tsx
+  cf5597da3a2fb233 2,4,7-15,22-36,42-48,50
+src/frontend/pages/settings/server.tsx
+  cf5597da3a2fb233 1-11
+src/tools/registry.ts
+  cf5597da3a2fb233 1-74
+src/tools/web_search.ts
+  cf5597da3a2fb233 1-51
+src/tools/web_search.test.ts
+  cf5597da3a2fb233 1-55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "267bbd1d0a0d3003a9aadd7c8266b5960c7eb7e4",
+  "prompts": {
+    "cf5597da3a2fb233": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ea6d0d71-88b4-48e1-ac6b-9382577f59e0",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Piper McCorkle",
+      "messages": [],
+      "total_additions": 4381,
+      "total_deletions": 398,
+      "accepted_lines": 3941,
+      "overriden_lines": 4
+    },
+    "d591a03520451044": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "63e3b4b6-7417-4ac2-aba6-a0fc57f253b5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Piper McCorkle",
+      "messages": [],
+      "total_additions": 319,
+      "total_deletions": 0,
+      "accepted_lines": 319,
+      "overriden_lines": 0
+    }
+  }
+}
