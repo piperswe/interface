@@ -1,0 +1,75 @@
+src/durable_objects/ConversationDurableObject.ts
+  e8b603f22ac9b3ed 214-251
+src/index.ts
+  e8b603f22ac9b3ed 236-241
+src/frontend/pages/conversation/server.tsx
+  ddd82f46ac37de99 30-34
+src/frontend/hooks/useStreamingMarkdown.ts
+  ddd82f46ac37de99 20-22,25-28,31-34,37
+src/frontend/components/Message.tsx
+  a7f49358d1999e30 153
+src/frontend/styles.css
+  ddd82f46ac37de99 105-108,187-188,356-357,512-515,549
+  e8b603f22ac9b3ed 482-511
+  a7f49358d1999e30 516-517
+src/frontend/marked-katex-paren.ts
+  a7f49358d1999e30 1-46,48-66,68-87
+  ddd82f46ac37de99 47,67
+src/frontend/pages/conversation/Page.tsx
+  a7f49358d1999e30 1,9,31-40,50
+  e8b603f22ac9b3ed 45-49
+src/frontend/markdown.ts
+  ddd82f46ac37de99 4,45
+src/frontend/markdown.client.ts
+  ddd82f46ac37de99 10,19
+src/frontend/markdown.client.test.ts
+  ddd82f46ac37de99 41-50
+src/frontend/hooks/useConversationStream.ts
+  ddd82f46ac37de99 52-54
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "ab552dc9be2a387329d9aa42ce9ea576f4ab80df",
+  "prompts": {
+    "a7f49358d1999e30": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_210caff4bffeyXE6gEyp5iT1gO",
+        "model": "cloudflare-workers-ai/@cf/moonshotai/kimi-k2.6"
+      },
+      "human_author": "Piper McCorkle",
+      "messages": [],
+      "total_additions": 126,
+      "total_deletions": 3,
+      "accepted_lines": 101,
+      "overriden_lines": 0
+    },
+    "ddd82f46ac37de99": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019def42-8731-7598-b6bf-457cf1e1cf99",
+        "model": "qwen/qwen3.6-max-preview"
+      },
+      "human_author": "Piper McCorkle",
+      "messages": [],
+      "total_additions": 671,
+      "total_deletions": 113,
+      "accepted_lines": 599,
+      "overriden_lines": 0
+    },
+    "e8b603f22ac9b3ed": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019def58-e1db-7678-b29a-fa8cd366f0a7",
+        "model": "@cf/moonshotai/kimi-k2.6"
+      },
+      "human_author": "Piper McCorkle",
+      "messages": [],
+      "total_additions": 81,
+      "total_deletions": 0,
+      "accepted_lines": 81,
+      "overriden_lines": 0
+    }
+  }
+}
