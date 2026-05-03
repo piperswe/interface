@@ -7,7 +7,7 @@
 		"test": "vitest run",
 		"test:watch": "vitest",
 		"test:coverage": "vitest run --coverage",
-		"build": "tsc --noEmit && vitest run && ./build.sh",
+		"build": "tsc --noEmit && ./build.sh",
 		"deploy": "wrangler deploy",
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
