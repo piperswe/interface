@@ -1220,6 +1220,9 @@ details.meta-panel dd {
 	display: flex;
 	flex-direction: column;
 	gap: 1.25rem;
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
 }
 
 .settings-title {
