@@ -24,6 +24,15 @@ export function createStreamingMarkdownRunner(
 	let scheduled = 0;
 	let cancelled = false;
 
+	function pulse(): void {
+		if (scheduled || cancelled) return;
+		scheduled = requestAnimationFrame(() => {
+			scheduled = 0;
+			if (cancelled) return;
+			scan();
+		});
+	}
+
 	function scan(): void {
 		const state = getState();
 		for (const m of state.messages) {
@@ -31,12 +40,19 @@ export function createStreamingMarkdownRunner(
 			m.parts.forEach((part, i) => {
 				if (part.type !== 'text' && part.type !== 'thinking') return;
 				if (!part.text) return;
-				if (typeof part.textHtml === 'string' && part.textHtml.length > 0) return;
 				const key: CacheKey = `${m.id}:${i}`;
 				if (renderedTextByKey.get(key) === part.text) return;
 				if (inFlight.has(key)) return;
+				// Only skip server-rendered parts we haven't started tracking yet.
+				// Once we've rendered a part ourselves the cache entry is authoritative,
+				// so a stale textHtml preserved by appendDeltaPart won't block re-renders.
+				if (!renderedTextByKey.has(key) && typeof part.textHtml === 'string' && part.textHtml.length > 0) return;
 				inFlight.add(key);
-				renderPart(m.id, i, part).finally(() => inFlight.delete(key));
+				renderPart(m.id, i, part).finally(() => {
+					inFlight.delete(key);
+					// Re-scan in case streaming ended while this render was in flight.
+					pulse();
+				});
 			});
 		}
 	}
@@ -70,14 +86,7 @@ export function createStreamingMarkdownRunner(
 	}
 
 	return {
-		pulse() {
-			if (scheduled || cancelled) return;
-			scheduled = requestAnimationFrame(() => {
-				scheduled = 0;
-				if (cancelled) return;
-				scan();
-			});
-		},
+		pulse,
 		dispose() {
 			cancelled = true;
 			if (scheduled) cancelAnimationFrame(scheduled);
