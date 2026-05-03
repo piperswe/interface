@@ -1,0 +1,21 @@
+// SvelteKit's adapter-cloudflare emits `_worker.js` with only a default
+// export — the SvelteKit fetch handler. Cloudflare requires Durable Object
+// classes to be named exports of the deployed Worker script. We append a
+// re-export so wrangler picks the class up at deploy time. Idempotent: skips
+// if the export is already present.
+//
+// Path is relative to the worker file's location:
+//   .svelte-kit/cloudflare/_worker.js → ../../src/lib/server/durable_objects/...
+
+import { readFileSync, writeFileSync } from 'node:fs';
+
+const WORKER_PATH = '.svelte-kit/cloudflare/_worker.js';
+const DO_EXPORT =
+	"\nexport { default as ConversationDurableObject } from '../../src/lib/server/durable_objects/ConversationDurableObject.ts';\n";
+
+const content = readFileSync(WORKER_PATH, 'utf8');
+if (content.includes('ConversationDurableObject')) {
+	process.exit(0);
+}
+writeFileSync(WORKER_PATH, content + DO_EXPORT);
+console.log('postbuild: appended ConversationDurableObject export to _worker.js');

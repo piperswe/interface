@@ -1,0 +1,57 @@
+import type { Conversation } from '$lib/types/conversation';
+
+export type { Conversation };
+
+const SELECT_COLS = 'id, title, created_at, updated_at, thinking_budget, archived_at';
+
+export async function listConversations(env: Env): Promise<Conversation[]> {
+	const result = await env.DB.prepare(
+		`SELECT ${SELECT_COLS} FROM conversations WHERE archived_at IS NULL ORDER BY updated_at DESC LIMIT 200`,
+	).all<Conversation>();
+	return result.results ?? [];
+}
+
+export async function listArchivedConversations(env: Env): Promise<Conversation[]> {
+	const result = await env.DB.prepare(
+		`SELECT ${SELECT_COLS} FROM conversations WHERE archived_at IS NOT NULL ORDER BY archived_at DESC LIMIT 200`,
+	).all<Conversation>();
+	return result.results ?? [];
+}
+
+export async function createConversation(env: Env): Promise<string> {
+	const id = crypto.randomUUID();
+	const now = Date.now();
+	await env.DB.prepare(`INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, 'New conversation', ?, ?)`)
+		.bind(id, now, now)
+		.run();
+	return id;
+}
+
+export async function getConversation(env: Env, id: string): Promise<Conversation | null> {
+	const row = await env.DB.prepare(
+		`SELECT ${SELECT_COLS} FROM conversations WHERE id = ?`,
+	)
+		.bind(id)
+		.first<Conversation>();
+	return row ?? null;
+}
+
+export async function archiveConversation(env: Env, id: string): Promise<void> {
+	await env.DB.prepare('UPDATE conversations SET archived_at = ? WHERE id = ?')
+		.bind(Date.now(), id)
+		.run();
+}
+
+export async function unarchiveConversation(env: Env, id: string): Promise<void> {
+	await env.DB.prepare('UPDATE conversations SET archived_at = NULL WHERE id = ?')
+		.bind(id)
+		.run();
+}
+
+// Hard-delete the conversation row. The Durable Object's storage is cleared
+// separately via `stub.destroy()` — DOs in Cloudflare can't truly be removed
+// from the namespace, but `ctx.storage.deleteAll()` drops every row inside
+// them so the next time the DO wakes it's empty.
+export async function deleteConversation(env: Env, id: string): Promise<void> {
+	await env.DB.prepare('DELETE FROM conversations WHERE id = ?').bind(id).run();
+}
