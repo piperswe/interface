@@ -49,7 +49,9 @@ function appendDeltaPart(
 ): MessagePart[] {
 	const last = parts[parts.length - 1];
 	if (last && last.type === kind) {
-		return [...parts.slice(0, -1), { type: kind, text: last.text + delta, textHtml: undefined }];
+		// Preserve existing textHtml to avoid flickering to raw text while
+		// useStreamingMarkdown re-renders for the updated text.
+		return [...parts.slice(0, -1), { type: kind, text: last.text + delta, textHtml: (last as { textHtml?: string }).textHtml }];
 	}
 	return [...parts, { type: kind, text: delta }];
 }

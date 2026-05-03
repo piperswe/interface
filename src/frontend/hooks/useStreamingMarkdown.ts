@@ -17,19 +17,24 @@ type CacheKey = `${string}:${number}`; // messageId:partIndex
 export function useStreamingMarkdown(state: ConversationState, setState: Setter): void {
 	const renderedTextByKey = useRef<Map<CacheKey, string>>(new Map());
 	const inFlight = useRef<Set<CacheKey>>(new Set());
-	const pending = useRef(false);
+	const rAF = useRef(0);
+	const stateRef = useRef(state);
+	stateRef.current = state;
 
 	useEffect(() => {
-		if (pending.current) return;
-		pending.current = true;
-		const handle = requestAnimationFrame(() => {
-			pending.current = false;
+		// Already scheduled — the pending rAF will use the freshest stateRef.
+		if (rAF.current) return;
+		rAF.current = requestAnimationFrame(() => {
+			rAF.current = 0;
 			scheduleRender();
 		});
-		return () => cancelAnimationFrame(handle);
+		return () => {
+			cancelAnimationFrame(rAF.current);
+			rAF.current = 0;
+		};
 
 		function scheduleRender(): void {
-			for (const m of state.messages) {
+			for (const m of stateRef.current.messages) {
 				if (m.role !== 'assistant' || !m.parts) continue;
 				m.parts.forEach((part, i) => {
 					if (part.type !== 'text' && part.type !== 'thinking') return;

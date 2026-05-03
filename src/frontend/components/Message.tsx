@@ -150,7 +150,7 @@ export function Message({ message }: { message: MessageRow }) {
 	// Fallback content path (legacy / streaming pre-first-token / user messages):
 	// pre-rendered markdown HTML if present, else plain text. Used when the
 	// `parts` timeline is empty.
-	const showHtml = isAssistant && typeof message.contentHtml === 'string' && message.contentHtml.length > 0;
+	const showHtml = typeof message.contentHtml === 'string' && message.contentHtml.length > 0;
 	return (
 		<div className="message" data-message-id={message.id} data-role={message.role} data-status={message.status}>
 			<div className="role">

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { Conversation, ConversationState } from '../../../types/conversation';
 import type { ModelEntry } from '../../../models/config';
 import { ComposeForm } from '../../components/ComposeForm';
@@ -6,6 +6,7 @@ import { Message } from '../../components/Message';
 import { useConversationStream } from '../../hooks/useConversationStream';
 import { useStickyScroll } from '../../hooks/useStickyScroll';
 import { useStreamingMarkdown } from '../../hooks/useStreamingMarkdown';
+import { fmtCost } from '../../formatters';
 
 export type ConversationPageProps = {
 	conversation: Conversation;
@@ -27,10 +28,26 @@ export function ConversationPage({ conversation, models, initialState, thinkingB
 	const lastModel =
 		state.messages.findLast?.((m) => m.role === 'assistant' && m.model)?.model ?? models[0]?.slug ?? '';
 
+	const totalCost = useMemo(() => {
+		let sum = 0;
+		for (const m of state.messages) {
+			if (m.role !== 'assistant' || !m.meta) continue;
+			const cost = m.meta.generation?.totalCost ?? m.meta.usage?.cost;
+			if (typeof cost === 'number') sum += cost;
+		}
+		return sum;
+	}, [state.messages]);
+
 	return (
 		<div className="conversation-layout">
 			<div className="conversation-header">
 				<h1 className="conversation-title">{conversation.title}</h1>
+				<form action={`/c/${conversation.id}/regenerate-title`} method="post" className="title-action">
+					<button type="submit" title="Regenerate title" disabled={busy} className="title-action-button">
+						↻
+					</button>
+				</form>
+				{totalCost > 0 ? <span className="conversation-cost">Cost: {fmtCost(totalCost)}</span> : null}
 				<details className="thinking-budget">
 					<summary>
 						Thinking budget: {thinkingBudget && thinkingBudget > 0 ? `${thinkingBudget} tokens` : 'off'}

@@ -7,6 +7,7 @@
 
 import { Marked } from 'marked';
 import markedKatex from 'marked-katex-extension';
+import { markedKatexParen } from './marked-katex-paren';
 
 const marked = new Marked({
 	gfm: true,
@@ -15,6 +16,7 @@ const marked = new Marked({
 });
 
 marked.use(markedKatex({ throwOnError: false, nonStandard: true }));
+marked.use(markedKatexParen({ throwOnError: false }));
 
 export async function renderMarkdownClient(src: string): Promise<string> {
 	if (!src) return '';

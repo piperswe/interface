@@ -1,6 +1,7 @@
 import { Marked } from 'marked';
 import markedShiki from 'marked-shiki';
 import markedKatex from 'marked-katex-extension';
+import { markedKatexParen } from './marked-katex-paren';
 import { createHighlighter, type Highlighter, type BundledLanguage } from 'shiki';
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
 
@@ -41,6 +42,7 @@ const marked = new Marked({
 });
 
 marked.use(markedKatex({ throwOnError: false, nonStandard: true }));
+marked.use(markedKatexParen({ throwOnError: false }));
 
 marked.use(
 	markedShiki({

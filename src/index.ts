@@ -233,6 +233,14 @@ app.post('/c/:id/messages', async (c) => {
 	return c.redirect(`/c/${conversationId}`, 303);
 });
 
+app.post('/c/:id/regenerate-title', async (c) => {
+	const conversationId = c.req.param('id');
+	if (!CONVERSATION_ID_PATTERN.test(conversationId)) return c.notFound();
+	const stub = c.env.CONVERSATION_DURABLE_OBJECT.getByName(conversationId);
+	await stub.regenerateTitle(conversationId);
+	return c.redirect(`/c/${conversationId}`, 303);
+});
+
 app.post('/c/:id/thinking-budget', async (c) => {
 	const conversationId = c.req.param('id');
 	if (!CONVERSATION_ID_PATTERN.test(conversationId)) return c.notFound();

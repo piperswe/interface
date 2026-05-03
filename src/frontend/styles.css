@@ -102,6 +102,10 @@ body,
 	height: 100%;
 }
 
+body {
+	overflow: hidden;
+}
+
 button,
 input,
 select,
@@ -180,8 +184,8 @@ textarea:focus {
 .app-shell {
 	display: grid;
 	grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
-	min-height: 100vh;
-	min-height: 100dvh;
+	height: 100%;
+	overflow: hidden;
 }
 
 .sidebar-toggle {
@@ -349,8 +353,8 @@ textarea:focus {
 	display: flex;
 	flex-direction: column;
 	min-width: 0;
-	min-height: 100vh;
-	min-height: 100dvh;
+	height: 100%;
+	overflow: hidden;
 }
 
 .app-main-header {
@@ -475,6 +479,42 @@ textarea:focus {
 	white-space: nowrap;
 }
 
+.title-action {
+	margin: 0;
+	padding: 0;
+	flex-shrink: 0;
+}
+
+.title-action-button {
+	min-height: 28px;
+	min-width: 28px;
+	padding: 0.15rem 0.35rem;
+	font-size: 0.9rem;
+	line-height: 1;
+	background: transparent;
+	border: 1px solid transparent;
+	border-radius: var(--radius-sm);
+	color: var(--muted-2);
+	cursor: pointer;
+	transition: background 120ms ease, color 120ms ease;
+}
+
+.title-action-button:hover:not([disabled]) {
+	background: var(--surface-2);
+	color: var(--fg);
+}
+
+.title-action-button[disabled] {
+	opacity: 0.4;
+	cursor: not-allowed;
+}
+
+.conversation-cost {
+	font-size: 0.85rem;
+	color: var(--muted);
+	font-variant-numeric: tabular-nums;
+}
+
 .thinking-budget {
 	font-size: 0.85rem;
 	color: var(--muted);
@@ -506,6 +546,7 @@ textarea:focus {
 
 .conversation-scroll {
 	flex: 1;
+	min-height: 0;
 	overflow-y: auto;
 	padding: 1.25rem var(--side-gap);
 	scroll-behavior: auto;

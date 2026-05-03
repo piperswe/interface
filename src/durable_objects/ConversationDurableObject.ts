@@ -211,6 +211,44 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		return { status: 'started' };
 	}
 
+	async regenerateTitle(conversationId: string): Promise<void> {
+		const history = this.#sql
+			.exec(
+				"SELECT role, content FROM messages WHERE status = 'complete' AND deleted_at IS NULL ORDER BY created_at ASC",
+			)
+			.toArray() as unknown as Array<{ role: string; content: string }>;
+		const transcript = history
+			.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+			.join('\n\n');
+		const collapsed = transcript.replace(/\s+/g, ' ').trim();
+		try {
+			const llm = routeLLM(this.env, TITLE_MODEL);
+			let title = '';
+			for await (const ev of llm.chat({
+				messages: [
+					{
+						role: 'system',
+						content:
+							'You are a title generator. Given a conversation transcript, generate a short, clear, descriptive title (2-6 words) that summarises the overall topic or intent. Reply with the title only — no quotes, no explanation.',
+					},
+					{ role: 'user', content: collapsed.slice(0, 4000) },
+				],
+				maxTokens: 30,
+				temperature: 0.5,
+			})) {
+				if (ev.type === 'text_delta') title += ev.delta;
+				if (ev.type === 'error') throw new Error(ev.message);
+			}
+			title = title.trim().replace(/^"|"$/g, '').slice(0, TITLE_MAX);
+			if (!title) throw new Error('empty title from LLM');
+			await this.env.DB.prepare('UPDATE conversations SET title = ? WHERE id = ?').bind(title, conversationId).run();
+		} catch (e) {
+			const fallback = collapsed.length <= TITLE_MAX ? collapsed : collapsed.slice(0, TITLE_MAX).trimEnd() + '…';
+			await this.env.DB.prepare('UPDATE conversations SET title = ? WHERE id = ?').bind(fallback, conversationId).run();
+		}
+		this.#broadcast('refresh', {});
+	}
+
 	async setThinkingBudget(conversationId: string, budget: number | null): Promise<void> {
 		// Per-conversation thinking token budget. AnthropicLLM honors this when
 		// the model supports extended thinking; OpenRouterLLM ignores it.

@@ -27,7 +27,11 @@ async function withRenderedMarkdown(props: ConversationPageProps): Promise<Conve
 					)
 				: m.artifacts;
 			const thinkingHtml = m.thinking ? await renderMarkdown(m.thinking) : null;
-			if (m.role !== 'assistant' || m.status !== 'complete') {
+			if (m.role === 'user') {
+				const html = await renderMarkdown(m.content);
+				return { ...m, contentHtml: html, thinkingHtml, artifacts };
+			}
+			if (m.status !== 'complete') {
 				return { ...m, thinkingHtml, artifacts };
 			}
 			const html = await renderMarkdown(m.content);

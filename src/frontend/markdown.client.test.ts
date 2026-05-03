@@ -38,6 +38,16 @@ describe('renderMarkdownClient', () => {
 		expect(html).toContain('katex-display');
 	});
 
+	it('renders inline LaTeX with \\( \\) delimiters', async () => {
+		const html = await renderMarkdownClient('Pythagoras: \\(a^2 + b^2 = c^2\\).');
+		expect(html).toContain('katex');
+	});
+
+	it('renders block LaTeX with \\[ \\] delimiters', async () => {
+		const html = await renderMarkdownClient('\\[\\int_0^1 x\\,dx\\]');
+		expect(html).toContain('katex-display');
+	});
+
 	it('preserves GFM tables', async () => {
 		const html = await renderMarkdownClient('| a | b |\n|---|---|\n| 1 | 2 |');
 		expect(html).toContain('<table');
