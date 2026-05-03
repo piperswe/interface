@@ -1,0 +1,27 @@
+src/frontend/pages/index/meta.ts
+  7b136ee425649309 1-75
+src/frontend/pages/index/formatters.ts
+  7b136ee425649309 1-18
+src/frontend/pages/index/client.ts
+  7b136ee425649309 2-11,19-23,30-33,41-42,44,47,53,56,59,61,63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "b9f871717d1c5851fea70cce0fbc049ba98394a5",
+  "prompts": {
+    "7b136ee425649309": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2dcf0f1-18c1-40cc-9e27-46d4fc3f2405",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Piper McCorkle",
+      "messages": [],
+      "total_additions": 189,
+      "total_deletions": 61,
+      "accepted_lines": 158,
+      "overriden_lines": 0
+    }
+  }
+}
