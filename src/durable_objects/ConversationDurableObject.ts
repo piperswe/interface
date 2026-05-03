@@ -2,25 +2,9 @@ import { DurableObject } from 'cloudflare:workers';
 import { OpenRouter } from '@openrouter/sdk';
 import type { ChatMessages, ChatStreamChunk, ChatUsage, GenerationResponseData } from '@openrouter/sdk/esm/models';
 import { OpenRouterLLM } from '../llm/OpenRouterLLM';
-import type { MetaSnapshot } from '../frontend/meta';
+import type { AddMessageResult, ConversationState, MessageRow, MetaSnapshot } from '../types/conversation';
 
-export type MessageRow = {
-	id: string;
-	role: 'user' | 'assistant';
-	content: string;
-	model: string | null;
-	status: 'complete' | 'streaming' | 'error';
-	error: string | null;
-	createdAt: number;
-	meta: MetaSnapshot | null;
-};
-
-export type ConversationState = {
-	messages: MessageRow[];
-	inProgress: { messageId: string; content: string } | null;
-};
-
-export type AddMessageResult = { status: 'started' } | { status: 'busy' } | { status: 'invalid'; reason: string };
+export type { AddMessageResult, ConversationState, MessageRow, MetaSnapshot };
 
 const PING_INTERVAL_MS = 25_000;
 const TITLE_MAX = 60;

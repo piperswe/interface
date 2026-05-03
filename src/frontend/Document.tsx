@@ -1,14 +1,12 @@
 import type { ReactNode } from 'react';
 
-export type LayoutProps = {
+export type DocumentProps = {
 	title: string;
 	bodyClass?: string;
-	bodyAttrs?: Record<string, string>;
-	scriptSrc?: string;
 	children: ReactNode;
 };
 
-export function Layout({ title, bodyClass, bodyAttrs, scriptSrc, children }: LayoutProps) {
+export function Document({ title, bodyClass, children }: DocumentProps) {
 	return (
 		<html lang="en">
 			<head>
@@ -17,9 +15,8 @@ export function Layout({ title, bodyClass, bodyAttrs, scriptSrc, children }: Lay
 				<title>{title}</title>
 				<link rel="stylesheet" href="/dist/styles.css" />
 			</head>
-			<body className={bodyClass} {...bodyAttrs}>
-				{children}
-				{scriptSrc ? <script src={scriptSrc}></script> : null}
+			<body className={bodyClass}>
+				<div id="root">{children}</div>
 			</body>
 		</html>
 	);

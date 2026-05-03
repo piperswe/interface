@@ -49,7 +49,7 @@ export default {
 				return new Response(
 					await renderConversationPage({
 						conversation,
-						state,
+						initialState: state,
 						models: modelOptions,
 					}),
 					{ headers: { 'Content-Type': 'text/html; charset=utf-8' } },

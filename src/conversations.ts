@@ -1,9 +1,6 @@
-export type Conversation = {
-	id: string;
-	title: string;
-	created_at: number;
-	updated_at: number;
-};
+import type { Conversation } from './types/conversation';
+
+export type { Conversation };
 
 export async function listConversations(env: Env): Promise<Conversation[]> {
 	const result = await env.DB.prepare(

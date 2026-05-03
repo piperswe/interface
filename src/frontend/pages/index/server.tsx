@@ -1,6 +1,6 @@
-import { renderToReadableStream } from 'react-dom/server';
-import { Layout } from '../../Layout';
-import type { Conversation } from '../../../conversations';
+import { Document } from '../../Document';
+import { renderHtml } from '../../render';
+import type { Conversation } from '../../../types/conversation';
 
 function fmtRelative(ms: number): string {
 	const diff = Date.now() - ms;
@@ -12,7 +12,7 @@ function fmtRelative(ms: number): string {
 
 export function IndexPage({ conversations }: { conversations: Conversation[] }) {
 	return (
-		<Layout title="Conversations">
+		<>
 			<header>
 				<h1>Conversations</h1>
 				<form action="/conversations" method="post">
@@ -33,11 +33,14 @@ export function IndexPage({ conversations }: { conversations: Conversation[] }) 
 					))}
 				</ul>
 			)}
-		</Layout>
+		</>
 	);
 }
 
-export async function renderIndexPage(conversations: Conversation[]): Promise<ReadableStream> {
-	const el = <IndexPage conversations={conversations} />;
-	return await renderToReadableStream(el);
+export async function renderIndexPage(conversations: Conversation[]): Promise<ReadableStream<Uint8Array>> {
+	return renderHtml(
+		<Document title="Conversations">
+			<IndexPage conversations={conversations} />
+		</Document>,
+	);
 }

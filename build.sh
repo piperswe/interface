@@ -5,12 +5,17 @@ set -euxo pipefail
 rm -rf dist
 mkdir -p dist
 
-pages=(conversation)
-
-for page in "${pages[@]}"; do
+for entry in src/frontend/pages/*/client.tsx; do
+	[ -e "$entry" ] || continue
+	page=$(basename "$(dirname "$entry")")
 	./node_modules/.bin/esbuild \
-		src/frontend/pages/$page/client.ts \
-		--bundle --minify --sourcemap --outfile=dist/$page.js
+		"$entry" \
+		--bundle --minify --sourcemap \
+		--format=esm --target=es2022 \
+		--jsx=automatic --jsx-import-source=react \
+		--define:process.env.NODE_ENV='"production"' \
+		--legal-comments=none \
+		--outfile="dist/$page.js"
 done
 
 cp src/frontend/styles.css dist/styles.css
