@@ -7,6 +7,8 @@ export default defineConfig({
 		alias: {
 			$lib: path.resolve(__dirname, 'src/lib'),
 			'$app/server': path.resolve(__dirname, 'test/shims/app-server.ts'),
+			// See vite.config.ts — sidestep fetch-ponyfill's node-fetch chain.
+			'fetch-ponyfill': path.resolve(__dirname, 'src/lib/server/ynab/fetch-ponyfill-shim.cjs'),
 		},
 	},
 	// @openrouter/sdk ships sourceMappingURL comments without the `.map` files;

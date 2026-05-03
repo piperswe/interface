@@ -41,8 +41,9 @@
 	"minify": true,
 	"placement": { "mode": "smart" },
 	// Required secrets are listed below. Optional provider keys
-	// (ANTHROPIC_KEY, OPENAI_KEY, GOOGLE_KEY, DEEPSEEK_KEY, KAGI_KEY) are
-	// declared in src/app.d.ts and resolved via routeLLM / settings.
+	// (ANTHROPIC_KEY, OPENAI_KEY, GOOGLE_KEY, DEEPSEEK_KEY, KAGI_KEY,
+	// YNAB_TOKEN) are declared in src/app.d.ts and resolved via routeLLM /
+	// settings / per-tool factories.
 	"secrets": {
 		"required": ["OPENROUTER_KEY"],
 	},
