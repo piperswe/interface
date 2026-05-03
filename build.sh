@@ -19,3 +19,5 @@ for entry in src/frontend/pages/*/client.tsx; do
 done
 
 cp src/frontend/styles.css dist/styles.css
+cp node_modules/katex/dist/katex.min.css dist/katex.min.css
+cp -R node_modules/katex/dist/fonts dist/fonts

@@ -4,7 +4,7 @@ export type { Conversation };
 
 export async function listConversations(env: Env): Promise<Conversation[]> {
 	const result = await env.DB.prepare(
-		`SELECT id, title, created_at, updated_at FROM conversations ORDER BY updated_at DESC LIMIT 200`,
+		`SELECT id, title, created_at, updated_at, thinking_budget FROM conversations ORDER BY updated_at DESC LIMIT 200`,
 	).all<Conversation>();
 	return result.results ?? [];
 }
@@ -19,7 +19,9 @@ export async function createConversation(env: Env): Promise<string> {
 }
 
 export async function getConversation(env: Env, id: string): Promise<Conversation | null> {
-	const row = await env.DB.prepare(`SELECT id, title, created_at, updated_at FROM conversations WHERE id = ?`)
+	const row = await env.DB.prepare(
+		`SELECT id, title, created_at, updated_at, thinking_budget FROM conversations WHERE id = ?`,
+	)
 		.bind(id)
 		.first<Conversation>();
 	return row ?? null;

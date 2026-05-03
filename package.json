@@ -4,24 +4,35 @@
 	"private": true,
 	"scripts": {
 		"typecheck": "tsc --noEmit",
-		"build": "tsc --noEmit && ./build.sh",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"test:coverage": "vitest run --coverage",
+		"build": "tsc --noEmit && vitest run && ./build.sh",
 		"deploy": "wrangler deploy",
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
 		"cf-typegen": "wrangler types"
 	},
 	"devDependencies": {
+		"@cloudflare/vitest-pool-workers": "^0.15.2",
 		"@types/node": "^25.6.0",
 		"@types/react": "^19.2.14",
 		"@types/react-dom": "^19.2.3",
+		"@vitest/coverage-istanbul": "^4.1.5",
 		"esbuild": "^0.28.0",
 		"typescript": "^5.5.2",
+		"vitest": "^4.1.5",
 		"wrangler": "^4.87.0"
 	},
 	"dependencies": {
+		"@anthropic-ai/sdk": "^0.92.0",
 		"@openrouter/sdk": "^0.12.24",
+		"katex": "^0.16.45",
 		"marked": "^14.1.4",
+		"marked-katex-extension": "^5.1.8",
+		"marked-shiki": "^1.2.1",
 		"react": "^19.2.5",
-		"react-dom": "^19.2.5"
+		"react-dom": "^19.2.5",
+		"shiki": "^4.0.2"
 	}
 }

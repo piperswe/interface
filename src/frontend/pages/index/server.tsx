@@ -1,4 +1,4 @@
-import { Document } from '../../Document';
+import { Document, type Theme } from '../../Document';
 import { renderHtml } from '../../render';
 import type { Conversation } from '../../../types/conversation';
 
@@ -15,9 +15,14 @@ export function IndexPage({ conversations }: { conversations: Conversation[] }) 
 		<>
 			<header>
 				<h1>Conversations</h1>
-				<form action="/conversations" method="post">
-					<button type="submit">New chat</button>
-				</form>
+				<div style={{ display: 'flex', gap: '0.5rem' }}>
+					<a href="/settings" className="button" style={{ display: 'inline-flex', alignItems: 'center' }}>
+						Settings
+					</a>
+					<form action="/conversations" method="post">
+						<button type="submit">New chat</button>
+					</form>
+				</div>
 			</header>
 			{conversations.length === 0 ? (
 				<div className="empty">No conversations yet. Start one above.</div>
@@ -37,9 +42,12 @@ export function IndexPage({ conversations }: { conversations: Conversation[] }) 
 	);
 }
 
-export async function renderIndexPage(conversations: Conversation[]): Promise<ReadableStream<Uint8Array>> {
+export async function renderIndexPage(
+	conversations: Conversation[],
+	options: { theme?: Theme } = {},
+): Promise<ReadableStream<Uint8Array>> {
 	return renderHtml(
-		<Document title="Conversations">
+		<Document title="Conversations" theme={options.theme}>
 			<IndexPage conversations={conversations} />
 		</Document>,
 	);

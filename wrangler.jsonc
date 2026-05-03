@@ -49,6 +49,9 @@
 	 * https://developers.cloudflare.com/workers/runtime-apis/bindings/
 	 */
 	// "ai": { "binding": "AI" },
+	// Required secrets are listed below. Optional provider keys
+	// (ANTHROPIC_KEY, OPENAI_KEY, GOOGLE_KEY, DEEPSEEK_KEY, KAGI_KEY) are
+	// declared in src/env.d.ts and resolved via routeLLM / settings.
 	"secrets": {
 		"required": ["OPENROUTER_KEY"],
 	},
@@ -56,6 +59,12 @@
 		"directory": "./dist",
 		"binding": "ASSETS",
 	},
+	"routes": [
+		{
+			"pattern": "interface.piperswe.me",
+			"custom_domain": true,
+		},
+	],
 	/**
 	 * Environment Variables
 	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables

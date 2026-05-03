@@ -1,13 +1,33 @@
 import { DurableObject } from 'cloudflare:workers';
 import { OpenRouter } from '@openrouter/sdk';
-import type { ChatMessages, ChatStreamChunk, ChatUsage, GenerationResponseData } from '@openrouter/sdk/esm/models';
-import { OpenRouterLLM } from '../llm/OpenRouterLLM';
-import type { AddMessageResult, ConversationState, MessageRow, MetaSnapshot } from '../types/conversation';
+import type { ChatStreamChunk, ChatUsage, GenerationResponseData } from '@openrouter/sdk/models';
+import { routeLLM } from '../llm/route';
+import type { ChatRequest, ContentBlock, Message, StreamEvent, ToolDefinition, Usage } from '../llm/LLM';
+import { ToolRegistry } from '../tools/registry';
+import type { ToolCitation } from '../tools/registry';
+import { fetchUrlTool } from '../tools/fetch_url';
+import { createWebSearchTool } from '../tools/web_search';
+import { KagiSearchBackend } from '../search/kagi';
+import { McpHttpClient } from '../mcp/client';
+import { listMcpServers } from '../mcp_servers';
+import type { AddMessageResult, Artifact, ArtifactType, ConversationState, MessageRow, MetaSnapshot } from '../types/conversation';
 
-export type { AddMessageResult, ConversationState, MessageRow, MetaSnapshot };
+export type { AddMessageResult, Artifact, ArtifactType, ConversationState, MessageRow, MetaSnapshot };
 
 const PING_INTERVAL_MS = 25_000;
 const TITLE_MAX = 60;
+const MAX_TOOL_ITERATIONS = 10;
+
+import type { JsonValue, ToolCallRecord as RecordedToolCall, ToolResultRecord as RecordedToolResult } from '../types/conversation';
+
+function parseJson<T>(s: string | null): T | null {
+	if (!s) return null;
+	try {
+		return JSON.parse(s) as T;
+	} catch {
+		return null;
+	}
+}
 
 function formatLLMError(e: unknown): string {
 	if (e instanceof Error && e.message) return e.message.slice(0, 500);
@@ -21,8 +41,26 @@ function formatLLMError(e: unknown): string {
 	return String(e).slice(0, 500);
 }
 
+function usageToOpenRouter(usage: Usage): ChatUsage {
+	return {
+		promptTokens: usage.inputTokens,
+		completionTokens: usage.outputTokens,
+		totalTokens: usage.totalTokens ?? usage.inputTokens + usage.outputTokens,
+		...(usage.cacheReadInputTokens != null || usage.cacheCreationInputTokens != null
+			? {
+					promptTokensDetails: {
+						...(usage.cacheReadInputTokens != null ? { cachedTokens: usage.cacheReadInputTokens } : {}),
+						...(usage.cacheCreationInputTokens != null ? { cacheWriteTokens: usage.cacheCreationInputTokens } : {}),
+					},
+				}
+			: {}),
+		...(usage.thinkingTokens != null
+			? { completionTokensDetails: { reasoningTokens: usage.thinkingTokens } }
+			: {}),
+	};
+}
+
 export default class ConversationDurableObject extends DurableObject<Env> {
-	#client: OpenRouter;
 	#sql: SqlStorage;
 	#subscribers = new Set<ReadableStreamDefaultController<Uint8Array>>();
 	#inProgress: { messageId: string; content: string } | null = null;
@@ -31,11 +69,6 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
-		this.#client = new OpenRouter({
-			apiKey: env.OPENROUTER_KEY,
-			httpReferer: 'https://github.com/piperswe/interface',
-			appTitle: 'Interface',
-		});
 		this.#sql = ctx.storage.sql;
 		ctx.blockConcurrencyWhile(async () => {
 			this.#sql.exec(`
@@ -51,16 +84,50 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 					first_token_at INTEGER,
 					last_chunk_json TEXT,
 					usage_json TEXT,
-					generation_json TEXT
+					generation_json TEXT,
+					provider TEXT,
+					thinking TEXT,
+					tool_calls TEXT,
+					tool_results TEXT,
+					parent_id TEXT,
+					deleted_at INTEGER,
+					artifact_ids TEXT
 				)
 			`);
-			// Idempotent ALTERs for existing DOs created before the telemetry columns existed.
+			this.#sql.exec(`
+				CREATE TABLE IF NOT EXISTS artifacts (
+					id TEXT PRIMARY KEY,
+					message_id TEXT NOT NULL,
+					type TEXT NOT NULL,
+					name TEXT,
+					language TEXT,
+					version INTEGER NOT NULL DEFAULT 1,
+					content TEXT NOT NULL,
+					created_at INTEGER NOT NULL
+				)
+			`);
+			for (const stmt of ['ALTER TABLE artifacts ADD COLUMN language TEXT']) {
+				try {
+					this.#sql.exec(stmt);
+				} catch {
+					// column already exists
+				}
+			}
+			this.#sql.exec(`CREATE INDEX IF NOT EXISTS idx_artifacts_message ON artifacts(message_id)`);
+			// Idempotent ALTERs for existing DOs that pre-date these columns.
 			for (const stmt of [
 				'ALTER TABLE messages ADD COLUMN started_at INTEGER',
 				'ALTER TABLE messages ADD COLUMN first_token_at INTEGER',
 				'ALTER TABLE messages ADD COLUMN last_chunk_json TEXT',
 				'ALTER TABLE messages ADD COLUMN usage_json TEXT',
 				'ALTER TABLE messages ADD COLUMN generation_json TEXT',
+				'ALTER TABLE messages ADD COLUMN provider TEXT',
+				'ALTER TABLE messages ADD COLUMN thinking TEXT',
+				'ALTER TABLE messages ADD COLUMN tool_calls TEXT',
+				'ALTER TABLE messages ADD COLUMN tool_results TEXT',
+				'ALTER TABLE messages ADD COLUMN parent_id TEXT',
+				'ALTER TABLE messages ADD COLUMN deleted_at INTEGER',
+				'ALTER TABLE messages ADD COLUMN artifact_ids TEXT',
 			]) {
 				try {
 					this.#sql.exec(stmt);
@@ -115,6 +182,15 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		return { status: 'started' };
 	}
 
+	async setThinkingBudget(conversationId: string, budget: number | null): Promise<void> {
+		// Per-conversation thinking token budget. AnthropicLLM honors this when
+		// the model supports extended thinking; OpenRouterLLM ignores it.
+		const value = budget != null && budget > 0 ? Math.floor(budget) : null;
+		await this.env.DB.prepare('UPDATE conversations SET thinking_budget = ? WHERE id = ?')
+			.bind(value, conversationId)
+			.run();
+	}
+
 	async subscribe(): Promise<ReadableStream<Uint8Array>> {
 		let storedController: ReadableStreamDefaultController<Uint8Array> | null = null;
 		const self = this;
@@ -152,50 +228,169 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		let firstTokenAt = 0;
 		let lastChunk: ChatStreamChunk | null = null;
 		let usage: ChatUsage | null = null;
+		let thinkingText = '';
+		let lastGenerationId: string | null = null;
+
+		const accumulatedToolCalls: RecordedToolCall[] = [];
+		const accumulatedToolResults: RecordedToolResult[] = [];
+		const accumulatedCitations: ToolCitation[] = [];
 
 		this.#sql.exec('UPDATE messages SET started_at = ? WHERE id = ?', startedAt, assistantId);
 
 		try {
-			const llm = new OpenRouterLLM(this.#client, model, 'openrouter');
+			const llm = routeLLM(this.env, model);
 			const history = this.#sql
-				.exec("SELECT role, content FROM messages WHERE id != ? AND status = 'complete' ORDER BY created_at ASC", assistantId)
+				.exec(
+					"SELECT role, content FROM messages WHERE id != ? AND status = 'complete' AND deleted_at IS NULL ORDER BY created_at ASC",
+					assistantId,
+				)
 				.toArray() as unknown as Array<{ role: string; content: string }>;
-			const messages: ChatMessages[] = history.map((m) =>
-				m.role === 'assistant' ? { role: 'assistant' as const, content: m.content } : { role: 'user' as const, content: m.content },
-			);
+			const messages: Message[] = history.map((m) => ({
+				role: m.role === 'assistant' ? 'assistant' : 'user',
+				content: m.content,
+			}));
 
-			const stream = llm.chatCompletionsStream({ messages });
-			for await (const chunk of stream) {
-				lastChunk = chunk;
-				if (chunk?.usage) usage = chunk.usage;
-				const delta = chunk?.choices?.[0]?.delta?.content ?? '';
-				if (!delta) continue;
-				if (!firstTokenAt) firstTokenAt = Date.now();
-				if (this.#inProgress && this.#inProgress.messageId === assistantId) {
-					this.#inProgress.content += delta;
+			const convoRow = await this.env.DB.prepare('SELECT thinking_budget FROM conversations WHERE id = ?')
+				.bind(conversationId)
+				.first<{ thinking_budget: number | null }>();
+			const thinkingBudget = convoRow?.thinking_budget ?? null;
+			const thinking: ChatRequest['thinking'] | undefined =
+				thinkingBudget && thinkingBudget > 0 ? { type: 'enabled', budgetTokens: thinkingBudget } : undefined;
+
+			const registry = await this.#buildToolRegistry();
+			const tools: ToolDefinition[] | undefined =
+				registry.definitions().length > 0 ? registry.definitions() : undefined;
+
+			for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+				const turnToolCalls: RecordedToolCall[] = [];
+				let turnText = '';
+				let providerError: string | null = null;
+
+				for await (const ev of llm.chat({
+					messages,
+					...(tools ? { tools } : {}),
+					...(thinking ? { thinking } : {}),
+				})) {
+					if (ev.type === 'text_delta') {
+						if (!firstTokenAt) firstTokenAt = Date.now();
+						turnText += ev.delta;
+						if (this.#inProgress && this.#inProgress.messageId === assistantId) {
+							this.#inProgress.content += ev.delta;
+						}
+						this.#broadcast('delta', { messageId: assistantId, content: ev.delta });
+					} else if (ev.type === 'thinking_delta') {
+						thinkingText += ev.delta;
+						this.#broadcast('thinking_delta', { messageId: assistantId, content: ev.delta });
+					} else if (ev.type === 'tool_call') {
+						turnToolCalls.push({ id: ev.id, name: ev.name, input: ev.input });
+					} else if (ev.type === 'usage') {
+						usage = usageToOpenRouter(ev.usage);
+					} else if (ev.type === 'done') {
+						if (ev.raw && typeof ev.raw === 'object' && 'choices' in ev.raw) {
+							lastChunk = ev.raw as ChatStreamChunk;
+							if (lastChunk.id) lastGenerationId = lastChunk.id;
+						}
+					} else if (ev.type === 'error') {
+						providerError = ev.message;
+					}
 				}
-				this.#broadcast('delta', { messageId: assistantId, content: delta });
+
+				if (providerError) throw new Error(providerError);
+
+				if (turnToolCalls.length === 0) break;
+
+				accumulatedToolCalls.push(...turnToolCalls);
+
+				// Build the assistant message that triggered these tool calls.
+				const assistantBlocks: ContentBlock[] = [];
+				if (turnText) assistantBlocks.push({ type: 'text', text: turnText });
+				for (const tc of turnToolCalls) {
+					assistantBlocks.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.input });
+				}
+				messages.push({ role: 'assistant', content: assistantBlocks });
+
+				// Execute each tool, broadcast call+result events, append result to history.
+				for (const call of turnToolCalls) {
+					this.#broadcast('tool_call', {
+						messageId: assistantId,
+						id: call.id,
+						name: call.name,
+						input: call.input,
+					});
+					const result = await registry.execute(
+						{ env: this.env, conversationId, assistantMessageId: assistantId },
+						call.name,
+						call.input,
+					);
+					const resultRecord: RecordedToolResult = {
+						toolUseId: call.id,
+						content: result.content,
+						isError: result.isError ?? false,
+					};
+					accumulatedToolResults.push(resultRecord);
+					if (result.citations) accumulatedCitations.push(...result.citations);
+					if (result.artifacts) {
+						for (const a of result.artifacts) {
+							this.addArtifact({
+								messageId: assistantId,
+								type: a.type,
+								name: a.name ?? null,
+								language: a.language ?? null,
+								content: a.content,
+							});
+						}
+					}
+					this.#broadcast('tool_result', {
+						messageId: assistantId,
+						toolUseId: call.id,
+						content: result.content,
+						isError: result.isError ?? false,
+					});
+
+					messages.push({
+						role: 'tool',
+						content: [
+							{
+								type: 'tool_result',
+								toolUseId: call.id,
+								content: result.content,
+								...(result.isError ? { isError: true } : {}),
+							},
+						],
+					});
+				}
 			}
 
-			const final = this.#inProgress?.content ?? '';
+			const finalText = this.#inProgress?.content ?? '';
 			this.#sql.exec(
-				"UPDATE messages SET content = ?, status = 'complete', first_token_at = ?, last_chunk_json = ?, usage_json = ? WHERE id = ?",
-				final,
+				`UPDATE messages SET content = ?, status = 'complete', first_token_at = ?, last_chunk_json = ?, usage_json = ?, provider = ?, thinking = ?, tool_calls = ?, tool_results = ? WHERE id = ?`,
+				finalText,
 				firstTokenAt || null,
 				lastChunk ? JSON.stringify(lastChunk) : null,
 				usage ? JSON.stringify(usage) : null,
+				llm.providerID,
+				thinkingText || null,
+				accumulatedToolCalls.length > 0 ? JSON.stringify(accumulatedToolCalls) : null,
+				accumulatedToolResults.length > 0 ? JSON.stringify(accumulatedToolResults) : null,
 				assistantId,
 			);
 			this.#inProgress = null;
-			await this.env.DB.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').bind(Date.now(), conversationId).run();
+			await this.env.DB.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?')
+				.bind(Date.now(), conversationId)
+				.run();
 			this.#broadcast('meta', {
 				messageId: assistantId,
 				snapshot: { startedAt, firstTokenAt, lastChunk, usage, generation: null },
 			});
+			if (accumulatedCitations.length > 0) {
+				this.#broadcast('citations', { messageId: assistantId, citations: accumulatedCitations });
+			}
 			this.#broadcast('refresh', {});
 
-			if (lastChunk?.id) {
-				this.ctx.waitUntil(this.#fetchGenerationStats(assistantId, lastChunk.id, startedAt, firstTokenAt, lastChunk, usage));
+			if (lastGenerationId && llm.providerID === 'openrouter') {
+				this.ctx.waitUntil(
+					this.#fetchGenerationStats(assistantId, lastGenerationId, startedAt, firstTokenAt, lastChunk, usage),
+				);
 			}
 		} catch (e) {
 			const msg = formatLLMError(e);
@@ -214,10 +409,72 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		}
 	}
 
+	async #buildToolRegistry(): Promise<ToolRegistry> {
+		const registry = new ToolRegistry();
+		registry.register(fetchUrlTool);
+		if (this.env.KAGI_KEY) {
+			registry.register(createWebSearchTool(new KagiSearchBackend(this.env.KAGI_KEY)));
+		}
+		// Register HTTP/SSE MCP tools. Stdio transport waits for Phase 0.6 (Sandbox).
+		try {
+			const servers = await listMcpServers(this.env);
+			for (const server of servers) {
+				if (!server.enabled) continue;
+				if ((server.transport === 'http' || server.transport === 'sse') && server.url) {
+					await this.#registerMcpServerTools(registry, server.id, server.name, server.url, server.authJson);
+				}
+			}
+		} catch {
+			// Tool registry build is best-effort — MCP enumeration failures must not
+			// block the user's chat turn. Server failures surface per-call instead.
+		}
+		return registry;
+	}
+
+	async #registerMcpServerTools(
+		registry: ToolRegistry,
+		serverId: number,
+		serverName: string,
+		url: string,
+		authJson: string | null,
+	): Promise<void> {
+		try {
+			const client = new McpHttpClient({ url, authJson });
+			const tools = await client.listTools();
+			for (const tool of tools) {
+				const namespacedName = `mcp_${serverId}_${tool.name}`;
+				registry.register({
+					definition: {
+						name: namespacedName,
+						description: tool.description ?? `${serverName}: ${tool.name}`,
+						inputSchema: tool.inputSchema ?? { type: 'object' },
+					},
+					async execute(_ctx, input) {
+						const callClient = new McpHttpClient({ url, authJson });
+						try {
+							const result = await callClient.callTool(tool.name, input);
+							const text = result.content
+								.map((c) => (c.type === 'text' ? c.text : `[${c.type}]`))
+								.join('\n');
+							return { content: text, ...(result.isError ? { isError: true } : {}) };
+						} catch (e) {
+							return { content: e instanceof Error ? e.message : String(e), isError: true };
+						}
+					},
+				});
+			}
+		} catch {
+			// Server unreachable during enumeration — skip.
+		}
+	}
+
 	#readMessages(): MessageRow[] {
 		const rows = this.#sql
 			.exec(
-				`SELECT id, role, content, model, status, error, created_at, started_at, first_token_at, last_chunk_json, usage_json, generation_json FROM messages ORDER BY created_at ASC`,
+				`SELECT id, role, content, model, status, error, created_at, started_at, first_token_at, last_chunk_json, usage_json, generation_json, thinking, tool_calls, tool_results
+				 FROM messages
+				 WHERE deleted_at IS NULL
+				 ORDER BY created_at ASC`,
 			)
 			.toArray() as unknown as Array<{
 			id: string;
@@ -232,17 +489,112 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			last_chunk_json: string | null;
 			usage_json: string | null;
 			generation_json: string | null;
+			thinking: string | null;
+			tool_calls: string | null;
+			tool_results: string | null;
 		}>;
+		const artifactsByMessage = this.#readArtifactsByMessage();
 		return rows.map((r) => ({
 			id: r.id,
 			role: r.role as 'user' | 'assistant',
 			content: r.content,
+			thinking: r.thinking,
 			model: r.model,
 			status: r.status as 'complete' | 'streaming' | 'error',
 			error: r.error,
 			createdAt: r.created_at,
 			meta: this.#deriveMeta(r.started_at, r.first_token_at, r.last_chunk_json, r.usage_json, r.generation_json),
+			artifacts: artifactsByMessage.get(r.id) ?? [],
+			toolCalls: parseJson<RecordedToolCall[]>(r.tool_calls) ?? [],
+			toolResults: parseJson<RecordedToolResult[]>(r.tool_results) ?? [],
 		}));
+	}
+
+	#readArtifactsByMessage(): Map<string, Artifact[]> {
+		const rows = this.#sql
+			.exec(
+				`SELECT id, message_id, type, name, language, version, content, created_at FROM artifacts ORDER BY created_at ASC`,
+			)
+			.toArray() as unknown as Array<{
+			id: string;
+			message_id: string;
+			type: string;
+			name: string | null;
+			language: string | null;
+			version: number;
+			content: string;
+			created_at: number;
+		}>;
+		const map = new Map<string, Artifact[]>();
+		for (const r of rows) {
+			const list = map.get(r.message_id) ?? [];
+			list.push({
+				id: r.id,
+				messageId: r.message_id,
+				type: r.type as ArtifactType,
+				name: r.name,
+				language: r.language,
+				version: r.version,
+				content: r.content,
+				createdAt: r.created_at,
+			});
+			map.set(r.message_id, list);
+		}
+		return map;
+	}
+
+	async addArtifact(input: {
+		messageId: string;
+		type: ArtifactType;
+		name?: string | null;
+		language?: string | null;
+		content: string;
+	}): Promise<Artifact> {
+		const id = crypto.randomUUID();
+		const now = Date.now();
+		const versionRow = this.#sql
+			.exec('SELECT MAX(version) AS v FROM artifacts WHERE message_id = ?', input.messageId)
+			.toArray() as unknown as Array<{ v: number | null }>;
+		const version = (versionRow[0]?.v ?? 0) + 1;
+		this.#sql.exec(
+			`INSERT INTO artifacts (id, message_id, type, name, language, version, content, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			id,
+			input.messageId,
+			input.type,
+			input.name ?? null,
+			input.language ?? null,
+			version,
+			input.content,
+			now,
+		);
+		// Update artifact_ids on the parent message.
+		const existing = this.#sql
+			.exec('SELECT artifact_ids FROM messages WHERE id = ?', input.messageId)
+			.toArray() as unknown as Array<{ artifact_ids: string | null }>;
+		let ids: string[] = [];
+		if (existing[0]?.artifact_ids) {
+			try {
+				ids = JSON.parse(existing[0].artifact_ids) as string[];
+			} catch {
+				ids = [];
+			}
+		}
+		ids.push(id);
+		this.#sql.exec('UPDATE messages SET artifact_ids = ? WHERE id = ?', JSON.stringify(ids), input.messageId);
+
+		const artifact: Artifact = {
+			id,
+			messageId: input.messageId,
+			type: input.type,
+			name: input.name ?? null,
+			language: input.language ?? null,
+			version,
+			content: input.content,
+			createdAt: now,
+		};
+		this.#broadcast('artifact', { artifact });
+		return artifact;
 	}
 
 	#deriveMeta(
@@ -288,13 +640,18 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		lastChunk: ChatStreamChunk | null,
 		usage: ChatUsage | null,
 	): Promise<void> {
-		// Generation stats are not always available immediately after the stream completes.
-		// Retry with backoff: 1s, 2s, 4s, 8s, 16s.
+		// Generation stats are not always available immediately after the stream
+		// completes. Retry with backoff.
+		const client = new OpenRouter({
+			apiKey: this.env.OPENROUTER_KEY,
+			httpReferer: 'https://github.com/piperswe/interface',
+			appTitle: 'Interface',
+		});
 		const delays = [1000, 2000, 4000, 8000, 16000];
 		for (const delay of delays) {
 			await new Promise((resolve) => setTimeout(resolve, delay));
 			try {
-				const response = await this.#client.generations.getGeneration({ id: generationId });
+				const response = await client.generations.getGeneration({ id: generationId });
 				const generation = response.data;
 				if (!generation) continue;
 				this.#sql.exec('UPDATE messages SET generation_json = ? WHERE id = ?', JSON.stringify(generation), assistantId);
