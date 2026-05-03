@@ -32,6 +32,14 @@
 
 	const now = Date.now();
 	const grouped = $derived(groupByBand(conversations, now));
+
+	// Collapse the mobile drawer once the user picks a conversation (or hits
+	// Settings) so the conversation is visible immediately. Desktop hides
+	// the toggle in CSS, so this is a no-op there.
+	function closeDrawer() {
+		const toggle = document.getElementById('sidebar-toggle') as HTMLInputElement | null;
+		if (toggle) toggle.checked = false;
+	}
 </script>
 
 <div class="app-shell">
@@ -39,8 +47,9 @@
 	<label for="sidebar-toggle" class="sidebar-overlay" aria-hidden="true"></label>
 	<aside class="sidebar" aria-label="Conversations">
 		<div class="sidebar-header">
-			<a href="/" class="sidebar-brand">Interface</a>
+			<a href="/" class="sidebar-brand" onclick={closeDrawer}>Interface</a>
 			<form {...createNewConversation.enhance(async ({ submit }) => {
+				closeDrawer();
 				await submit();
 			})} class="sidebar-new-chat">
 				<button type="submit" aria-label="New chat" title="New chat">New chat</button>
@@ -66,6 +75,7 @@
 											href={`/c/${c.id}`}
 											class="sidebar-item{active ? ' active' : ''}"
 											aria-current={active ? 'page' : undefined}
+											onclick={closeDrawer}
 										>
 											<span class="sidebar-item-title">{c.title}</span>
 											<span class="sidebar-item-meta">{fmtRelative(c.updated_at, now)}</span>
@@ -79,7 +89,7 @@
 			{/if}
 		</nav>
 		<div class="sidebar-footer">
-			<a href="/settings" class="sidebar-footer-link">Settings</a>
+			<a href="/settings" class="sidebar-footer-link" onclick={closeDrawer}>Settings</a>
 		</div>
 	</aside>
 	<main class="app-main">
