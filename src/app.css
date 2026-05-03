@@ -433,14 +433,6 @@ textarea:focus {
 	.sidebar-toggle-button {
 		display: inline-flex;
 	}
-	/* Leave room on the leading edge of each page's first row so the
-	   floating hamburger doesn't overlap the title or content. */
-	.conversation-header {
-		padding-left: calc(40px + 1rem);
-	}
-	.settings-title {
-		padding-left: calc(40px + 0.5rem);
-	}
 }
 
 /* ===== Empty / index landing ===== */
@@ -1312,4 +1304,19 @@ html[data-theme='dark'] .badge.ok {
 
 html[data-theme='dark'] .badge.missing {
 	color: #ec9292;
+}
+
+/* ===== Mobile header overrides ===== */
+/* Placed at the end of the file so the longhand `padding-left` rule wins
+   over the shorthand `padding` on each base header rule. */
+@media (max-width: 768px) {
+	.conversation-header {
+		padding-left: calc(40px + 1rem);
+	}
+	.settings-layout {
+		padding-top: calc(0.5rem + 40px + 0.5rem);
+	}
+	.empty-state {
+		padding-top: calc(var(--side-gap) + 40px);
+	}
 }
