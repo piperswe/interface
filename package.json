@@ -12,5 +12,8 @@
     "@types/node": "^25.6.0",
     "typescript": "^5.5.2",
     "wrangler": "^4.87.0"
+  },
+  "dependencies": {
+    "@openrouter/sdk": "^0.12.24"
   }
 }

@@ -21,6 +21,12 @@ export default {
 		// the remote Durable Object instance.
 		const greeting = await stub.sayHello('world');
 
-		return new Response(greeting);
+		return new Response(greeting, {
+			headers: {
+				'Content-Type': 'text/event-stream',
+				'Cache-Control': 'no-cache',
+				Connection: 'keep-alive',
+			},
+		});
 	},
 } satisfies ExportedHandler<Env>;
