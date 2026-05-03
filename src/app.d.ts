@@ -35,6 +35,7 @@ declare global {
 			GOOGLE_KEY?: string;
 			DEEPSEEK_KEY?: string;
 			KAGI_KEY?: string;
+			YNAB_TOKEN?: string;
 		}
 	}
 }

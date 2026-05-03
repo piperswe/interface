@@ -9,7 +9,7 @@ import {
 	getUserBio,
 } from '$lib/server/settings';
 import { listSubAgents } from '$lib/server/sub_agents';
-import { serializeModelList } from '$lib/server/models/config';
+import { DEFAULT_MODEL_LIST } from '$lib/server/models/config';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ platform }) => {
@@ -30,7 +30,8 @@ export const load: PageServerLoad = async ({ platform }) => {
 		subAgents,
 		contextCompactionThreshold: threshold,
 		contextCompactionSummaryTokens: summaryTokens,
-		modelListRaw: serializeModelList(modelList),
+		modelList,
+		defaultModelList: DEFAULT_MODEL_LIST,
 		systemPrompt: systemPrompt ?? '',
 		userBio: userBio ?? '',
 	};
