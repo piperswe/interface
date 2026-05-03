@@ -8,14 +8,16 @@ import {
 	getSystemPrompt,
 	getUserBio,
 } from '$lib/server/settings';
+import { listSubAgents } from '$lib/server/sub_agents';
 import { DEFAULT_MODEL_LIST } from '$lib/server/models/config';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ platform }) => {
 	if (!platform) error(500, 'Cloudflare platform bindings unavailable');
 	const env = platform.env;
-	const [mcpServers, threshold, summaryTokens, modelList, systemPrompt, userBio] = await Promise.all([
+	const [mcpServers, subAgents, threshold, summaryTokens, modelList, systemPrompt, userBio] = await Promise.all([
 		listMcpServers(env),
+		listSubAgents(env),
 		getContextCompactionThreshold(env),
 		getContextCompactionSummaryTokens(env),
 		getModelList(env),
@@ -25,6 +27,7 @@ export const load: PageServerLoad = async ({ platform }) => {
 	return {
 		providerKeys: describeProviderKeys(env),
 		mcpServers,
+		subAgents,
 		contextCompactionThreshold: threshold,
 		contextCompactionSummaryTokens: summaryTokens,
 		modelList,

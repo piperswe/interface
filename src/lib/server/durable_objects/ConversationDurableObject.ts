@@ -12,7 +12,10 @@ import { createYnabTools } from '../tools/ynab';
 import { KagiSearchBackend } from '../search/kagi';
 import { McpHttpClient } from '../mcp/client';
 import { listMcpServers } from '../mcp_servers';
-import { getSystemPrompt, getUserBio } from '../settings';
+import { listSubAgents } from '../sub_agents';
+import { createAgentTool } from '../tools/agent';
+import { createGetModelsTool } from '../tools/get_models';
+import { getModelList, getSystemPrompt, getUserBio } from '../settings';
 import type { AddMessageResult, Artifact, ArtifactType, ConversationState, MessageRow, MetaSnapshot } from '$lib/types/conversation';
 
 export type { AddMessageResult, Artifact, ArtifactType, ConversationState, MessageRow, MetaSnapshot };
@@ -431,7 +434,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 				? `${effectiveSystemPrompt}\n\nUser bio:\n${userBio}`
 				: effectiveSystemPrompt;
 
-			const registry = await this.#buildToolRegistry();
+			const registry = await this.#buildToolRegistry(model);
 			const tools: ToolDefinition[] | undefined =
 				registry.definitions().length > 0 ? registry.definitions() : undefined;
 
@@ -597,7 +600,10 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		}
 	}
 
-	async #buildToolRegistry(): Promise<ToolRegistry> {
+	// Base registry — built-in tools + MCP. Used directly for the parent
+	// loop (extended below with the `agent` tool) and re-built fresh per
+	// sub-agent invocation as the inner tool set.
+	async #buildBaseToolRegistry(): Promise<ToolRegistry> {
 		const registry = new ToolRegistry();
 		registry.register(fetchUrlTool);
 		if (this.env.KAGI_KEY) {
@@ -620,6 +626,32 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		} catch {
 			// Tool registry build is best-effort — MCP enumeration failures must not
 			// block the user's chat turn. Server failures surface per-call instead.
+		}
+		return registry;
+	}
+
+	async #buildToolRegistry(model: string): Promise<ToolRegistry> {
+		const registry = await this.#buildBaseToolRegistry();
+		try {
+			const [subAgents, availableModels] = await Promise.all([
+				listSubAgents(this.env),
+				getModelList(this.env),
+			]);
+			const enabledSubAgents = subAgents.filter((sa) => sa.enabled);
+			if (enabledSubAgents.length > 0) {
+				registry.register(createGetModelsTool({ currentModel: model, availableModels }));
+				const agentTool = createAgentTool(
+					{
+						buildInnerToolRegistry: () => this.#buildBaseToolRegistry(),
+						defaultModel: model,
+						availableModelSlugs: availableModels.map((m) => m.slug),
+					},
+					subAgents,
+				);
+				if (agentTool) registry.register(agentTool);
+			}
+		} catch {
+			// Sub-agent / model enumeration failures must not block the chat turn.
 		}
 		return registry;
 	}
