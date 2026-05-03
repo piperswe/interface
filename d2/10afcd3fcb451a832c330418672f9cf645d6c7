@@ -1,0 +1,29 @@
+src/frontend/pages/settings/Page.tsx
+  8a94bada18c0cb6f 11-12,15,147-182
+src/durable_objects/ConversationDurableObject.ts
+  8a94bada18c0cb6f 14,365-374,379-383,395
+src/index.ts
+  8a94bada18c0cb6f 17-18,25,110,117-118,129-130
+src/settings.ts
+  8a94bada18c0cb6f 60-69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "d210afcd3fcb451a832c330418672f9cf645d6c7",
+  "prompts": {
+    "8a94bada18c0cb6f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "20c04b22-27a7-464f-bf08-d1f3029d704c",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Piper McCorkle",
+      "messages": [],
+      "total_additions": 74,
+      "total_deletions": 6,
+      "accepted_lines": 74,
+      "overriden_lines": 0
+    }
+  }
+}
