@@ -19,8 +19,20 @@
 	// structural change — it must NOT clobber an in-progress stream.
 	const initialState = $derived(data.initialState);
 	let convState: ConversationState = $state(untrack(() => data.initialState));
+	let currentConversationId = $state(untrack(() => data.conversation.id));
 	let scrollEl: HTMLDivElement | null = $state(null);
 	let stickToBottom = $state(true);
+
+	// Reset local state when navigating between conversations (e.g. "New chat").
+	// SvelteKit reuses the component instance for /c/[id] → /c/[id], so
+	// convState must be re-seeded or it would show the previous conversation's messages.
+	$effect(() => {
+		const id = data.conversation.id;
+		if (id !== currentConversationId) {
+			currentConversationId = id;
+			convState = untrack(() => data.initialState);
+		}
+	});
 
 	$effect(() => {
 		const server = initialState;
