@@ -13,7 +13,8 @@ import { McpHttpClient } from '../mcp/client';
 import { listMcpServers } from '../mcp_servers';
 import { listSubAgents } from '../sub_agents';
 import { createAgentTool } from '../tools/agent';
-import { getSystemPrompt, getUserBio } from '../settings';
+import { createGetModelsTool } from '../tools/get_models';
+import { getModelList, getSystemPrompt, getUserBio } from '../settings';
 import type { AddMessageResult, Artifact, ArtifactType, ConversationState, MessageRow, MetaSnapshot } from '$lib/types/conversation';
 
 export type { AddMessageResult, Artifact, ArtifactType, ConversationState, MessageRow, MetaSnapshot };
@@ -626,17 +627,25 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	async #buildToolRegistry(model: string): Promise<ToolRegistry> {
 		const registry = await this.#buildBaseToolRegistry();
 		try {
-			const subAgents = await listSubAgents(this.env);
-			const agentTool = createAgentTool(
-				{
-					buildInnerToolRegistry: () => this.#buildBaseToolRegistry(),
-					defaultModel: model,
-				},
-				subAgents,
-			);
-			if (agentTool) registry.register(agentTool);
+			const [subAgents, availableModels] = await Promise.all([
+				listSubAgents(this.env),
+				getModelList(this.env),
+			]);
+			const enabledSubAgents = subAgents.filter((sa) => sa.enabled);
+			if (enabledSubAgents.length > 0) {
+				registry.register(createGetModelsTool({ currentModel: model, availableModels }));
+				const agentTool = createAgentTool(
+					{
+						buildInnerToolRegistry: () => this.#buildBaseToolRegistry(),
+						defaultModel: model,
+						availableModelSlugs: availableModels.map((m) => m.slug),
+					},
+					subAgents,
+				);
+				if (agentTool) registry.register(agentTool);
+			}
 		} catch {
-			// Sub-agent enumeration failures must not block the chat turn.
+			// Sub-agent / model enumeration failures must not block the chat turn.
 		}
 		return registry;
 	}

@@ -21,9 +21,14 @@ export type AgentToolDeps = {
 	// builder used for the parent loop, minus the `agent` tool itself
 	// (filtered by the agent tool's executor before passing to the LLM).
 	buildInnerToolRegistry(): Promise<ToolRegistry>;
-	// Default model when a sub-agent doesn't specify one — the parent
-	// conversation's model.
+	// Default model when neither the call site nor the sub-agent
+	// configuration specifies one — the parent conversation's model.
 	defaultModel: string;
+	// Slugs of the operator-curated model list. Used to validate the
+	// `model` argument the parent agent passes when delegating; an empty
+	// list means "anything goes" (we still trust the parent agent's
+	// choice when the operator hasn't curated a list).
+	availableModelSlugs?: string[];
 	// User-id scoping. Single-user mode passes 1; multi-user passes the
 	// session user.
 	userId?: number;
@@ -41,6 +46,16 @@ export function createAgentTool(deps: AgentToolDeps, subAgents: SubAgentRow[]): 
 		lines.push(`- \`${sa.name}\`: ${sa.description}`);
 	}
 
+	const modelSlugs = deps.availableModelSlugs ?? [];
+	const modelProperty: Record<string, unknown> = {
+		type: 'string',
+		description:
+			'Model slug to run the sub-agent on. REQUIRED — confirm with the user before delegating; do not guess. Use the `get_models` tool to see the user\'s available models and the model the parent is currently running on.',
+	};
+	if (modelSlugs.length > 0) {
+		modelProperty.enum = modelSlugs;
+	}
+
 	const inputSchema = {
 		type: 'object',
 		properties: {
@@ -54,8 +69,9 @@ export function createAgentTool(deps: AgentToolDeps, subAgents: SubAgentRow[]): 
 				description:
 					'A self-contained brief for the sub-agent: what to do, why, and what form the answer should take. The sub-agent has no view of the parent conversation, so include all context it needs to act.',
 			},
+			model: modelProperty,
 		},
-		required: ['subagent_type', 'prompt'],
+		required: ['subagent_type', 'prompt', 'model'],
 	} as const;
 
 	return {
@@ -64,17 +80,33 @@ export function createAgentTool(deps: AgentToolDeps, subAgents: SubAgentRow[]): 
 			description: [
 				'Delegate a self-contained task to a specialised sub-agent. The sub-agent runs its own LLM loop with a custom system prompt and a curated tool subset, then returns its final answer as a single block of text. Use when a task benefits from a focused persona or a different tool scope, or when offloading multi-step work that would clutter the main thread.',
 				'',
+				'IMPORTANT: Always ask the user which model the sub-agent should run on before invoking this tool, unless they have already specified one in this conversation. Use `get_models` to enumerate the user\'s curated model list and the model you (the parent) are currently running on, then ask the user to pick one.',
+				'',
 				lines.join('\n'),
 			].join('\n'),
 			inputSchema,
 		},
 		async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
-			const args = (input ?? {}) as { subagent_type?: string; prompt?: string };
+			const args = (input ?? {}) as { subagent_type?: string; prompt?: string; model?: string };
 			if (!args.subagent_type || typeof args.subagent_type !== 'string') {
 				return { content: 'Missing required parameter: subagent_type', isError: true };
 			}
 			if (!args.prompt || typeof args.prompt !== 'string') {
 				return { content: 'Missing required parameter: prompt', isError: true };
+			}
+			if (!args.model || typeof args.model !== 'string' || !args.model.trim()) {
+				return {
+					content:
+						'Missing required parameter: model. Ask the user which model the sub-agent should run on (use `get_models` to see options) and try again.',
+					isError: true,
+				};
+			}
+			const requestedModel = args.model.trim();
+			if (modelSlugs.length > 0 && !modelSlugs.includes(requestedModel)) {
+				return {
+					content: `Model "${requestedModel}" is not in the user's curated model list. Available: ${modelSlugs.join(', ')}.`,
+					isError: true,
+				};
 			}
 			const subAgent = await getSubAgentByName(ctx.env, args.subagent_type, deps.userId ?? 1);
 			if (!subAgent) {
@@ -96,7 +128,10 @@ export function createAgentTool(deps: AgentToolDeps, subAgents: SubAgentRow[]): 
 				.filter((d) => d.name !== AGENT_TOOL_NAME)
 				.filter((d) => (allowed ? allowed.includes(d.name) : true));
 
-			const model = subAgent.model && subAgent.model.trim() ? subAgent.model : deps.defaultModel;
+			// Model precedence: caller arg > sub-agent config > parent default.
+			// The caller arg is required by the schema, so it's almost always
+			// what runs; the fallbacks remain for defensive correctness.
+			const model = requestedModel || (subAgent.model && subAgent.model.trim() ? subAgent.model : deps.defaultModel);
 			const llm = (deps.routeLLM ?? defaultRouteLLM)(ctx.env, model);
 
 			const messages: Message[] = [{ role: 'user', content: args.prompt }];

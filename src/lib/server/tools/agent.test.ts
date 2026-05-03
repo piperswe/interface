@@ -110,7 +110,7 @@ describe('createAgentTool', () => {
 			},
 			list,
 		)!;
-		const result = await tool.execute(ctx, { subagent_type: 'r', prompt: 'do the thing' });
+		const result = await tool.execute(ctx, { subagent_type: 'r', prompt: 'do the thing', model: 'fake-model' });
 		expect(result.isError).toBeFalsy();
 		expect(result.content).toBe('[r] final answer');
 		expect(llm.calls[0].systemPrompt).toBe('You are r.');
@@ -138,7 +138,7 @@ describe('createAgentTool', () => {
 			},
 			list,
 		)!;
-		const result = await tool.execute(ctx, { subagent_type: 'r', prompt: 'use echo' });
+		const result = await tool.execute(ctx, { subagent_type: 'r', prompt: 'use echo', model: 'fake-model' });
 		expect(result.isError).toBeFalsy();
 		expect(result.content).toBe('[r] I called echo and got a result.');
 		// Second turn must include the tool_result feeding back.
@@ -169,7 +169,7 @@ describe('createAgentTool', () => {
 			},
 			list,
 		)!;
-		const result = await tool.execute(ctx, { subagent_type: 'r', prompt: 'try to recurse' });
+		const result = await tool.execute(ctx, { subagent_type: 'r', prompt: 'try to recurse', model: 'fake-model' });
 		expect(result.content).toBe('[r] Got it.');
 		const turn2 = llm.calls[1];
 		const toolResultMsg = turn2.messages.find((m) => m.role === 'tool');
@@ -209,7 +209,7 @@ describe('createAgentTool', () => {
 			},
 			list,
 		)!;
-		const result = await tool.execute(ctx, { subagent_type: 'r', prompt: 'run banned' });
+		const result = await tool.execute(ctx, { subagent_type: 'r', prompt: 'run banned', model: 'fake-model' });
 		expect(result.content).toBe('[r] noted');
 		// First-turn tools list passed to the LLM must only include `echo`.
 		const turn1 = llm.calls[0];
@@ -230,7 +230,7 @@ describe('createAgentTool', () => {
 			},
 			list,
 		)!;
-		const result = await tool.execute(ctx, { subagent_type: 'unknown', prompt: 'x' });
+		const result = await tool.execute(ctx, { subagent_type: 'unknown', prompt: 'x', model: 'fake-model' });
 		expect(result.isError).toBe(true);
 		expect(result.content).toContain('Unknown sub-agent');
 	});
@@ -252,7 +252,7 @@ describe('createAgentTool', () => {
 			},
 			list,
 		)!;
-		const result = await tool.execute(ctx, { subagent_type: 'r', prompt: 'loop' });
+		const result = await tool.execute(ctx, { subagent_type: 'r', prompt: 'loop', model: 'fake-model' });
 		expect(result.isError).toBe(true);
 		expect(result.content).toContain('exhausted');
 	});
@@ -269,12 +269,12 @@ describe('createAgentTool', () => {
 			},
 			list,
 		)!;
-		const result = await tool.execute(ctx, { subagent_type: 'r', prompt: 'x' });
+		const result = await tool.execute(ctx, { subagent_type: 'r', prompt: 'x', model: 'fake-model' });
 		expect(result.isError).toBe(true);
 		expect(result.content).toContain('boom');
 	});
 
-	it('uses the parent default model when the sub-agent has none', async () => {
+	it('runs the sub-agent on the model the caller supplied', async () => {
 		await createSubAgent(env, { name: 'r', description: 'd', systemPrompt: 'sp' });
 		const list = await (await import('../sub_agents')).listSubAgents(env);
 		const seen: string[] = [];
@@ -290,12 +290,12 @@ describe('createAgentTool', () => {
 			},
 			list,
 		)!;
-		await tool.execute(ctx, { subagent_type: 'r', prompt: 'x' });
-		expect(seen).toEqual(['parent-model']);
+		await tool.execute(ctx, { subagent_type: 'r', prompt: 'x', model: 'caller-chosen' });
+		expect(seen).toEqual(['caller-chosen']);
 	});
 
-	it('uses the sub-agent override model when set', async () => {
-		await createSubAgent(env, { name: 'r', description: 'd', systemPrompt: 'sp', model: 'override-model' });
+	it('caller model overrides the sub-agent configured model', async () => {
+		await createSubAgent(env, { name: 'r', description: 'd', systemPrompt: 'sp', model: 'configured-model' });
 		const list = await (await import('../sub_agents')).listSubAgents(env);
 		const seen: string[] = [];
 		const llm = new ScriptedLLM([[{ type: 'text_delta', delta: 'ok' }, { type: 'done' }]]);
@@ -310,7 +310,77 @@ describe('createAgentTool', () => {
 			},
 			list,
 		)!;
-		await tool.execute(ctx, { subagent_type: 'r', prompt: 'x' });
-		expect(seen).toEqual(['override-model']);
+		await tool.execute(ctx, { subagent_type: 'r', prompt: 'x', model: 'caller-chosen' });
+		expect(seen).toEqual(['caller-chosen']);
+	});
+
+	it('returns an error when the caller omits the model argument', async () => {
+		await createSubAgent(env, { name: 'r', description: 'd', systemPrompt: 'sp' });
+		const list = await (await import('../sub_agents')).listSubAgents(env);
+		const tool = createAgentTool(
+			{
+				buildInnerToolRegistry: async () => new ToolRegistry(),
+				defaultModel: 'parent-model',
+				routeLLM: () => new ScriptedLLM([]),
+			},
+			list,
+		)!;
+		const result = await tool.execute(ctx, { subagent_type: 'r', prompt: 'x' });
+		expect(result.isError).toBe(true);
+		expect(result.content).toContain('Missing required parameter: model');
+	});
+
+	it('rejects models outside the operator-curated list when one is configured', async () => {
+		await createSubAgent(env, { name: 'r', description: 'd', systemPrompt: 'sp' });
+		const list = await (await import('../sub_agents')).listSubAgents(env);
+		const tool = createAgentTool(
+			{
+				buildInnerToolRegistry: async () => new ToolRegistry(),
+				defaultModel: 'parent-model',
+				availableModelSlugs: ['model-a', 'model-b'],
+				routeLLM: () => new ScriptedLLM([]),
+			},
+			list,
+		)!;
+		const result = await tool.execute(ctx, {
+			subagent_type: 'r',
+			prompt: 'x',
+			model: 'model-c',
+		});
+		expect(result.isError).toBe(true);
+		expect(result.content).toContain('not in the user');
+	});
+
+	it('exposes the curated model slugs via the input schema enum', async () => {
+		await createSubAgent(env, { name: 'r', description: 'd', systemPrompt: 'sp' });
+		const list = await (await import('../sub_agents')).listSubAgents(env);
+		const tool = createAgentTool(
+			{
+				buildInnerToolRegistry: async () => new ToolRegistry(),
+				defaultModel: 'parent-model',
+				availableModelSlugs: ['model-a', 'model-b'],
+			},
+			list,
+		)!;
+		const schema = tool.definition.inputSchema as {
+			properties: { model: { enum?: string[] } };
+			required: string[];
+		};
+		expect(schema.properties.model.enum).toEqual(['model-a', 'model-b']);
+		expect(schema.required).toContain('model');
+	});
+
+	it('omits the enum when no curated list is configured (any slug allowed)', async () => {
+		await createSubAgent(env, { name: 'r', description: 'd', systemPrompt: 'sp' });
+		const list = await (await import('../sub_agents')).listSubAgents(env);
+		const tool = createAgentTool(
+			{
+				buildInnerToolRegistry: async () => new ToolRegistry(),
+				defaultModel: 'parent-model',
+			},
+			list,
+		)!;
+		const schema = tool.definition.inputSchema as { properties: { model: { enum?: string[] } } };
+		expect(schema.properties.model.enum).toBeUndefined();
 	});
 });
