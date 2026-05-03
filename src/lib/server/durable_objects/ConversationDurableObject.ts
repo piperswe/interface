@@ -429,10 +429,12 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			const thinking: ChatRequest['thinking'] | undefined =
 				thinkingBudget && thinkingBudget > 0 ? { type: 'enabled', budgetTokens: thinkingBudget } : undefined;
 
+			const COMPATIBILITY_NOTE =
+				'Your output is rendered in a UI that uses KaTeX for math typesetting. Dollar signs ($) are treated as LaTeX math delimiters, so be careful with dollar signs in non-math contexts (e.g. prices, currency). To include a literal dollar sign, escape it as \\$.';
 			const effectiveSystemPrompt = rawSystemPrompt ?? DEFAULT_SYSTEM_PROMPT;
 			const systemPrompt = userBio
-				? `${effectiveSystemPrompt}\n\nUser bio:\n${userBio}`
-				: effectiveSystemPrompt;
+				? `${effectiveSystemPrompt}\n\n${COMPATIBILITY_NOTE}\n\nUser bio:\n${userBio}`
+				: `${effectiveSystemPrompt}\n\n${COMPATIBILITY_NOTE}`;
 
 			const registry = await this.#buildToolRegistry(model);
 			const tools: ToolDefinition[] | undefined =
