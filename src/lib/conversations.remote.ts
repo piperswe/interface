@@ -1,0 +1,66 @@
+import { command, form, getRequestEvent } from '$app/server';
+import { error, redirect } from '@sveltejs/kit';
+import { createConversation } from '$lib/server/conversations';
+import { getConversationStub } from '$lib/server/durable_objects';
+import { CONVERSATION_ID_PATTERN } from '$lib/conversation-id';
+
+function getEnv(): Env {
+	const event = getRequestEvent();
+	if (!event.platform) error(500, 'Cloudflare platform bindings unavailable');
+	return event.platform.env;
+}
+
+function stubFor(id: string) {
+	if (!CONVERSATION_ID_PATTERN.test(id)) error(400, `invalid conversation id: ${id}`);
+	return getConversationStub(getEnv(), id);
+}
+
+// Form: start a new conversation. Progressively-enhanced — works without JS,
+// posting through a 303 redirect; enhanced clients get the same redirect
+// without a full page reload. Bound to "New chat" buttons throughout the app.
+export const createNewConversation = form(async () => {
+	const env = getEnv();
+	const id = await createConversation(env);
+	redirect(303, `/c/${id}`);
+});
+
+// Form: send a user message into a conversation. Per-conversation instance via
+// `.for(conversationId)` — that namespaces the form so result/pending state
+// doesn't bleed between concurrent forms.
+export const sendMessage = form(
+	'unchecked',
+	async (data: { conversationId?: unknown; content?: unknown; model?: unknown }) => {
+		const conversationId = String(data.conversationId ?? '');
+		const content = String(data.content ?? '');
+		const model = String(data.model ?? '');
+		const stub = stubFor(conversationId);
+		const result = await stub.addUserMessage(conversationId, content, model);
+		if (result.status === 'busy') {
+			error(409, 'Conversation busy: a generation is already in progress');
+		}
+		if (result.status === 'invalid') {
+			error(400, `Invalid: ${result.reason}`);
+		}
+		return { ok: true as const };
+	},
+);
+
+// Command: regenerate the conversation title (LLM round-trip on the DO).
+// Triggered by the "↻" button next to the title. Returns once the title is
+// persisted; the SSE stream's `refresh` event reloads the page client-side.
+export const regenerateTitle = command('unchecked', async (conversationId: string) => {
+	const stub = stubFor(conversationId);
+	await stub.regenerateTitle(conversationId);
+	return { ok: true as const };
+});
+
+// Command: set the per-conversation thinking-token budget. `null` disables
+// extended thinking; positive integers cap it.
+export const setThinkingBudget = command(
+	'unchecked',
+	async (input: { conversationId: string; budget: number | null }) => {
+		const stub = stubFor(input.conversationId);
+		await stub.setThinkingBudget(input.conversationId, input.budget);
+		return { ok: true as const };
+	},
+);

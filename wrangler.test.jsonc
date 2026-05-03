@@ -1,0 +1,40 @@
+/**
+ * Wrangler config used exclusively by `vitest-pool-workers`. Points main at
+ * a stub Worker entry that re-exports the Durable Object and 404s for HTTP
+ * traffic — tests don't need the SvelteKit handler, just the DO + D1 bindings.
+ */
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "interface-test",
+	"main": "test/worker-entry.ts",
+	"compatibility_date": "2026-04-22",
+	"compatibility_flags": ["nodejs_compat"],
+	"migrations": [
+		{
+			"new_sqlite_classes": ["ConversationDurableObject"],
+			"tag": "v1",
+		},
+	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"class_name": "ConversationDurableObject",
+				"name": "CONVERSATION_DURABLE_OBJECT",
+			},
+		],
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "interface-test",
+			"database_id": "00000000-0000-0000-0000-000000000000",
+			"migrations_dir": "migrations",
+		},
+	],
+	// Seed an OPENROUTER_KEY so `describeProviderKeys` reports it as
+	// configured. Tests that hit OpenRouter mock the SDK; the value is never
+	// sent over the wire.
+	"vars": {
+		"OPENROUTER_KEY": "test-key",
+	},
+}

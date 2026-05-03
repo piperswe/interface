@@ -1,15 +1,17 @@
 /**
- * For more details on how to configure Wrangler, refer to:
+ * Wrangler configuration. The Worker entry is the SvelteKit cloudflare
+ * adapter's output (`.svelte-kit/cloudflare/_worker.js`); a postbuild step
+ * (`scripts/postbuild.mjs`) appends a `ConversationDurableObject` re-export
+ * so wrangler picks the DO class up at deploy time. See AGENTS.md.
+ *
  * https://developers.cloudflare.com/workers/wrangler/configuration/
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "interface",
-	"build": {
-		"command": "./build.sh",
-	},
-	"main": "src/index.ts",
+	"main": ".svelte-kit/cloudflare/_worker.js",
 	"compatibility_date": "2026-04-22",
+	"compatibility_flags": ["nodejs_compat"],
 	"migrations": [
 		{
 			"new_sqlite_classes": ["ConversationDurableObject"],
@@ -37,27 +39,15 @@
 	},
 	"upload_source_maps": true,
 	"minify": true,
-	"compatibility_flags": ["nodejs_compat"],
-	/**
-	 * Smart Placement
-	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
-	 */
 	"placement": { "mode": "smart" },
-	/**
-	 * Bindings
-	 * Bindings allow your Worker to interact with resources on the Cloudflare Developer Platform, including
-	 * databases, object storage, AI inference, real-time communication and more.
-	 * https://developers.cloudflare.com/workers/runtime-apis/bindings/
-	 */
-	// "ai": { "binding": "AI" },
 	// Required secrets are listed below. Optional provider keys
 	// (ANTHROPIC_KEY, OPENAI_KEY, GOOGLE_KEY, DEEPSEEK_KEY, KAGI_KEY) are
-	// declared in src/env.d.ts and resolved via routeLLM / settings.
+	// declared in src/app.d.ts and resolved via routeLLM / settings.
 	"secrets": {
 		"required": ["OPENROUTER_KEY"],
 	},
 	"assets": {
-		"directory": "./dist",
+		"directory": ".svelte-kit/cloudflare",
 		"binding": "ASSETS",
 	},
 	"routes": [
@@ -66,21 +56,4 @@
 			"custom_domain": true,
 		},
 	],
-	/**
-	 * Environment Variables
-	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
-	 * Note: Use secrets to store sensitive data.
-	 * https://developers.cloudflare.com/workers/configuration/secrets/
-	 */
-	// "vars": {  "MY_VARIABLE": "production_value" }
-	/**
-	 * Static Assets
-	 * https://developers.cloudflare.com/workers/static-assets/binding/
-	 */
-	// "assets": {  "directory": "./public/",  "binding": "ASSETS" }
-	/**
-	 * Service Bindings (communicate between multiple Workers)
-	 * https://developers.cloudflare.com/workers/wrangler/configuration/#service-bindings
-	 */
-	// "services": [  {   "binding": "MY_SERVICE",   "service": "my-service"  } ]
 }
