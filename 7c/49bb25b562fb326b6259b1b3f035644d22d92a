@@ -1,0 +1,38 @@
+src/frontend/styles.css
+  e77b25b81f6bb151 1223-1225
+.claude/settings.json
+  1107425798f0e65c 1-16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "7c49bb25b562fb326b6259b1b3f035644d22d92a",
+  "prompts": {
+    "1107425798f0e65c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b4c9c09-891b-4b8a-b303-6dfa40ccea89",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Piper McCorkle",
+      "messages": [],
+      "total_additions": 16,
+      "total_deletions": 0,
+      "accepted_lines": 16,
+      "overriden_lines": 0
+    },
+    "e77b25b81f6bb151": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019def67-7118-7399-a5d0-b2b6921f4ae2",
+        "model": "@cf/moonshotai/kimi-k2.6"
+      },
+      "human_author": "Piper McCorkle",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 0,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    }
+  }
+}
