@@ -1,0 +1,25 @@
+src/durable_objects/ChatDurableObject.ts
+  546434328ffdbf09 40,42
+src/llm/LLM.ts
+  546434328ffdbf09 2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "00d755752d894b0d7d1d9b70d11e48e8059e405d",
+  "prompts": {
+    "546434328ffdbf09": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "29fc6c37-07f8-4756-a0a0-79c36145eb00",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Piper McCorkle",
+      "messages": [],
+      "total_additions": 3397,
+      "total_deletions": 315,
+      "accepted_lines": 11,
+      "overriden_lines": 88
+    }
+  }
+}
