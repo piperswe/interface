@@ -1,64 +1,10 @@
 <script lang="ts" module>
-	import type { MessagePart, ToolResultPart } from '$lib/types/conversation';
-
-	type Bundle = { kind: 'bundle'; key: string; parts: { part: MessagePart; index: number }[]; hasActive: boolean; mixed: boolean };
-	type Standalone = { kind: 'standalone'; part: MessagePart; index: number };
-	type Group = Bundle | Standalone;
-
-	const isOutput = (part: MessagePart) => part.type === 'text' || part.type === 'info';
-
-	export function buildResultsMap(parts: MessagePart[]): Map<string, ToolResultPart> {
-		const m = new Map<string, ToolResultPart>();
-		for (const p of parts) if (p.type === 'tool_result') m.set(p.toolUseId, p);
-		return m;
-	}
-
-	// Group consecutive non-output parts (thinking, tool_use, tool_result)
-	// into a single collapsible bundle. Text/info stay standalone. Mirrors
-	// the React `renderParts` logic from the previous implementation.
-	export function groupParts(parts: MessagePart[], streaming: boolean, results: Map<string, ToolResultPart>): Group[] {
-		const groups: Group[] = [];
-		let bundle: { part: MessagePart; index: number }[] = [];
-
-		const flush = () => {
-			if (bundle.length === 0) return;
-			if (bundle.length === 1) {
-				groups.push({ kind: 'standalone', part: bundle[0].part, index: bundle[0].index });
-			} else {
-				const hasActive = bundle.some(({ part, index }) => {
-					if (part.type === 'thinking') return streaming && index === parts.length - 1;
-					if (part.type === 'tool_use') return streaming && !results.get(part.id);
-					return false;
-				});
-				const mixed = bundle.some((b) => b.part.type === 'tool_use');
-				groups.push({
-					kind: 'bundle',
-					key: `bundle-${bundle[0].index}-${bundle[bundle.length - 1].index}`,
-					parts: bundle,
-					hasActive,
-					mixed,
-				});
-			}
-			bundle = [];
-		};
-
-		for (let i = 0; i < parts.length; i++) {
-			const part = parts[i];
-			if (isOutput(part)) {
-				flush();
-				if (part.type === 'text' && !part.text) continue;
-				groups.push({ kind: 'standalone', part, index: i });
-			} else {
-				bundle.push({ part, index: i });
-			}
-		}
-		flush();
-		return groups;
-	}
+	import { buildResultsMap, groupParts } from './parts';
+	export { buildResultsMap, groupParts };
 </script>
 
 <script lang="ts">
-	import type { MessageRow } from '$lib/types/conversation';
+	import type { MessagePart, MessageRow } from '$lib/types/conversation';
 	import Artifact from './Artifact.svelte';
 	import MetaPanel from './MetaPanel.svelte';
 	import ToolCall from './ToolCall.svelte';

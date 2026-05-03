@@ -13,22 +13,22 @@ import type {
 	ToolResultRecord,
 } from '$lib/types/conversation';
 
-type SyncEvent = {
+export type SyncEvent = {
 	lastMessageId: string;
 	lastMessageStatus: 'complete' | 'streaming' | 'error';
 	lastMessageContent: string;
 	lastMessageParts?: MessagePart[] | null;
 	lastMessageThinking?: string | null;
 };
-type DeltaEvent = { messageId: string; content: string };
-type ThinkingDeltaEvent = { messageId: string; content: string };
-type ToolCallEvent = { messageId: string; id: string; name: string; input: JsonValue };
-type ToolResultEvent = ToolResultRecord & { messageId: string };
-type ArtifactEvent = { artifact: Artifact };
-type MetaEvent = { messageId: string; snapshot: MetaSnapshot };
-type PartEvent = { messageId: string; part: MessagePart };
+export type DeltaEvent = { messageId: string; content: string };
+export type ThinkingDeltaEvent = { messageId: string; content: string };
+export type ToolCallEvent = { messageId: string; id: string; name: string; input: JsonValue };
+export type ToolResultEvent = ToolResultRecord & { messageId: string };
+export type ArtifactEvent = { artifact: Artifact };
+export type MetaEvent = { messageId: string; snapshot: MetaSnapshot };
+export type PartEvent = { messageId: string; part: MessagePart };
 
-function patchMessage(
+export function patchMessage(
 	state: ConversationState,
 	id: string,
 	patch: (m: MessageRow) => MessageRow,
@@ -43,7 +43,7 @@ function patchMessage(
 	return { ...state, messages };
 }
 
-function appendDeltaPart(parts: MessagePart[], kind: 'text' | 'thinking', delta: string): MessagePart[] {
+export function appendDeltaPart(parts: MessagePart[], kind: 'text' | 'thinking', delta: string): MessagePart[] {
 	const last = parts[parts.length - 1];
 	if (last && last.type === kind) {
 		// Preserve existing textHtml so the UI doesn't flicker to raw text
@@ -56,7 +56,7 @@ function appendDeltaPart(parts: MessagePart[], kind: 'text' | 'thinking', delta:
 	return [...parts, { type: kind, text: delta }];
 }
 
-function applyDelta(state: ConversationState, ev: DeltaEvent): ConversationState {
+export function applyDelta(state: ConversationState, ev: DeltaEvent): ConversationState {
 	return patchMessage(state, ev.messageId, (m) => ({
 		...m,
 		content: m.content + ev.content,
@@ -64,7 +64,7 @@ function applyDelta(state: ConversationState, ev: DeltaEvent): ConversationState
 	}));
 }
 
-function applyThinkingDelta(state: ConversationState, ev: ThinkingDeltaEvent): ConversationState {
+export function applyThinkingDelta(state: ConversationState, ev: ThinkingDeltaEvent): ConversationState {
 	return patchMessage(state, ev.messageId, (m) => ({
 		...m,
 		thinking: (m.thinking ?? '') + ev.content,
@@ -72,7 +72,7 @@ function applyThinkingDelta(state: ConversationState, ev: ThinkingDeltaEvent): C
 	}));
 }
 
-function applyToolCall(state: ConversationState, ev: ToolCallEvent): ConversationState {
+export function applyToolCall(state: ConversationState, ev: ToolCallEvent): ConversationState {
 	return patchMessage(state, ev.messageId, (m) => {
 		const existing = m.toolCalls ?? [];
 		if (existing.some((tc) => tc.id === ev.id)) return m;
@@ -86,7 +86,7 @@ function applyToolCall(state: ConversationState, ev: ToolCallEvent): Conversatio
 	});
 }
 
-function applyToolResult(state: ConversationState, ev: ToolResultEvent): ConversationState {
+export function applyToolResult(state: ConversationState, ev: ToolResultEvent): ConversationState {
 	return patchMessage(state, ev.messageId, (m) => {
 		const existing = m.toolResults ?? [];
 		if (existing.some((r) => r.toolUseId === ev.toolUseId)) return m;
@@ -105,7 +105,7 @@ function applyToolResult(state: ConversationState, ev: ToolResultEvent): Convers
 	});
 }
 
-function applyArtifact(state: ConversationState, ev: ArtifactEvent): ConversationState {
+export function applyArtifact(state: ConversationState, ev: ArtifactEvent): ConversationState {
 	return patchMessage(state, ev.artifact.messageId, (m) => {
 		const existing = m.artifacts ?? [];
 		if (existing.some((a) => a.id === ev.artifact.id)) return m;
@@ -113,7 +113,7 @@ function applyArtifact(state: ConversationState, ev: ArtifactEvent): Conversatio
 	});
 }
 
-function applySync(state: ConversationState, ev: SyncEvent): ConversationState | 'reload' {
+export function applySync(state: ConversationState, ev: SyncEvent): ConversationState | 'reload' {
 	const target = state.messages.find((m) => m.id === ev.lastMessageId);
 	if (!target || target.status !== ev.lastMessageStatus) return 'reload';
 	if (ev.lastMessageStatus !== 'streaming') return state;
@@ -134,11 +134,11 @@ function applySync(state: ConversationState, ev: SyncEvent): ConversationState |
 	return { ...state, messages };
 }
 
-function applyMeta(state: ConversationState, ev: MetaEvent): ConversationState {
+export function applyMeta(state: ConversationState, ev: MetaEvent): ConversationState {
 	return patchMessage(state, ev.messageId, (m) => ({ ...m, meta: ev.snapshot }));
 }
 
-function applyPart(state: ConversationState, ev: PartEvent): ConversationState {
+export function applyPart(state: ConversationState, ev: PartEvent): ConversationState {
 	return patchMessage(state, ev.messageId, (m) => ({
 		...m,
 		parts: [...(m.parts ?? []), ev.part],

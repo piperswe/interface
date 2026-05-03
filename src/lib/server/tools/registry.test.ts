@@ -51,4 +51,22 @@ describe('ToolRegistry', () => {
 		const names = registry.definitions().map((d) => d.name);
 		expect(names.sort()).toEqual(['boom', 'echo']);
 	});
+
+	it('serialises non-Error throw values when execute() throws', async () => {
+		const oddThrow: Tool = {
+			definition: { name: 'odd', description: '', inputSchema: { type: 'object' } },
+			async execute() {
+				throw 'string-thrown';
+			},
+		};
+		const registry = new ToolRegistry().register(oddThrow);
+		const result = await registry.execute(ctx, 'odd', {});
+		expect(result.isError).toBe(true);
+		expect(result.content).toBe('string-thrown');
+	});
+
+	it('register() returns the registry for chaining', () => {
+		const registry = new ToolRegistry();
+		expect(registry.register(echoTool)).toBe(registry);
+	});
 });

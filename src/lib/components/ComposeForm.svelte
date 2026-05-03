@@ -1,27 +1,7 @@
 <script lang="ts" module>
-	// Thinking-budget presets, loosely modeled on Anthropic's published
-	// ranges for extended thinking. Picking one applies immediately;
-	// "Custom" reveals a freeform input for any value the model accepts.
-	type Preset = { id: string; label: string; budget: number | null };
-	export const THINKING_PRESETS: Preset[] = [
-		{ id: 'off', label: 'Off', budget: null },
-		{ id: 'low', label: 'Low', budget: 1024 },
-		{ id: 'medium', label: 'Medium', budget: 4096 },
-		{ id: 'high', label: 'High', budget: 16384 },
-		{ id: 'extra-high', label: 'Extra high', budget: 32768 },
-		{ id: 'max', label: 'Max', budget: 64000 },
-	];
-
-	export function presetFor(budget: number | null): Preset | null {
-		if (budget == null || budget <= 0) return THINKING_PRESETS[0];
-		return THINKING_PRESETS.find((p) => p.budget === budget) ?? null;
-	}
-
-	export function describeBudget(budget: number | null): string {
-		const matched = presetFor(budget);
-		if (matched) return matched.label;
-		return budget != null ? `${budget.toLocaleString()} tok` : 'Off';
-	}
+	import { THINKING_PRESETS, describeBudget, presetFor } from './thinking-presets';
+	export { THINKING_PRESETS, describeBudget, presetFor };
+	export type { Preset } from './thinking-presets';
 </script>
 
 <script lang="ts">
@@ -29,6 +9,7 @@
 	import { sendMessage, setThinkingBudget } from '$lib/conversations.remote';
 	import { invalidateAll } from '$app/navigation';
 	import { untrack } from 'svelte';
+	import type { Preset } from './thinking-presets';
 
 	let {
 		conversationId,

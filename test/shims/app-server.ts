@@ -1,19 +1,47 @@
-// `$app/server` is provided by SvelteKit at runtime — vitest needs a stub so
-// modules importing remote-function helpers can be evaluated in unit tests
-// without a full SvelteKit environment. Tests that exercise remote functions
-// directly are not run here; the helpers go through the SvelteKit dev server.
-export const query = (..._args: unknown[]): never => {
-	throw new Error('query() is unavailable in this test environment');
-};
-export const command = (..._args: unknown[]): never => {
-	throw new Error('command() is unavailable in this test environment');
-};
-export const form = (..._args: unknown[]): never => {
-	throw new Error('form() is unavailable in this test environment');
-};
-export const prerender = (..._args: unknown[]): never => {
-	throw new Error('prerender() is unavailable in this test environment');
-};
-export const getRequestEvent = (): never => {
-	throw new Error('getRequestEvent() is unavailable in this test environment');
-};
+// `$app/server` shim used by vitest. SvelteKit's runtime helpers wrap a
+// user function in a transport-aware adapter; for unit tests we strip the
+// wrapper so the user function is callable directly. Tests inject a mock
+// request event via `setMockRequestEvent` so handlers can pull
+// `platform.env`.
+
+type AnyFn = (...args: unknown[]) => unknown;
+
+function unwrap(args: unknown[]): AnyFn {
+	// `form(fn)` / `command(fn)` / `query(fn)` — single-argument form.
+	if (args.length === 1 && typeof args[0] === 'function') {
+		return args[0] as AnyFn;
+	}
+	// `form(validate, fn)` / `command(validate, fn)` / `query(schema, fn)`.
+	return args[1] as AnyFn;
+}
+
+// Form helpers attach `.for(key)` for per-key instances. Tests rarely care,
+// so we return a callable function that also exposes `.for()` returning the
+// same handler.
+function attachFormHelpers(fn: AnyFn): AnyFn & { for: (key: unknown) => AnyFn } {
+	const wrapped = ((...args: unknown[]) => fn(...args)) as AnyFn & { for: (key: unknown) => AnyFn };
+	wrapped.for = () => wrapped;
+	return wrapped;
+}
+
+export const form = (...args: unknown[]) => attachFormHelpers(unwrap(args));
+export const command = (...args: unknown[]) => unwrap(args);
+export const query = (...args: unknown[]) => unwrap(args);
+export const prerender = (...args: unknown[]) => unwrap(args);
+
+let mockRequestEvent: unknown = null;
+
+export function setMockRequestEvent(event: unknown): void {
+	mockRequestEvent = event;
+}
+
+export function clearMockRequestEvent(): void {
+	mockRequestEvent = null;
+}
+
+export function getRequestEvent(): unknown {
+	if (mockRequestEvent === null) {
+		throw new Error('getRequestEvent() called without setMockRequestEvent() in tests');
+	}
+	return mockRequestEvent;
+}

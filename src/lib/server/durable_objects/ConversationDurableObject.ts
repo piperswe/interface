@@ -19,7 +19,7 @@ export type { AddMessageResult, Artifact, ArtifactType, ConversationState, Messa
 const PING_INTERVAL_MS = 25_000;
 const TITLE_MAX = 60;
 const MAX_TOOL_ITERATIONS = 10;
-const TITLE_MODEL = 'google/gemma-4-31b-it:free';
+const TITLE_MODEL = 'deepseek/deepseek-v4-flash';
 
 import type {
 	JsonValue,

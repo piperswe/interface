@@ -5,8 +5,8 @@
 	import Message from '$lib/components/Message.svelte';
 	import ComposeForm from '$lib/components/ComposeForm.svelte';
 	import { fmtCost } from '$lib/formatters';
-	import { attachConversationStream } from '$lib/conversation-stream.svelte';
-	import { createStreamingMarkdownRunner } from '$lib/streaming-markdown.svelte';
+	import { attachConversationStream } from '$lib/conversation-stream';
+	import { createStreamingMarkdownRunner } from '$lib/streaming-markdown';
 	import { archive, destroy, regenerateTitle } from '$lib/conversations.remote';
 	import type { PageData } from './$types';
 

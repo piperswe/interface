@@ -73,4 +73,51 @@ describe('McpHttpClient', () => {
 		const init = fetchSpy.mock.calls[0][1] as RequestInit;
 		expect((init.headers as Record<string, string>)['X-Api-Key']).toBe('secret');
 	});
+
+	it('throws when the HTTP response is non-2xx', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('err', { status: 500 }));
+		const client = new McpHttpClient({ url: 'https://mcp.test/jsonrpc' });
+		await expect(client.listTools()).rejects.toThrow(/MCP HTTP 500/);
+	});
+
+	it('listTools returns [] when the response result has no tools field', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			jsonResponse({ jsonrpc: '2.0', id: 1, result: {} }),
+		);
+		const client = new McpHttpClient({ url: 'https://mcp.test/jsonrpc' });
+		expect(await client.listTools()).toEqual([]);
+	});
+
+	it('callTool returns an error sentinel when the result is missing', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			jsonResponse({ jsonrpc: '2.0', id: 1, result: undefined }),
+		);
+		const client = new McpHttpClient({ url: 'https://mcp.test/jsonrpc' });
+		const result = await client.callTool('ping', {});
+		expect(result.isError).toBe(true);
+	});
+
+	it('ignores invalid auth_json gracefully', async () => {
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			jsonResponse({ jsonrpc: '2.0', id: 1, result: { tools: [] } }),
+		);
+		const client = new McpHttpClient({
+			url: 'https://mcp.test/jsonrpc',
+			authJson: 'not-json',
+		});
+		await client.listTools();
+		const init = fetchSpy.mock.calls[0][1] as RequestInit;
+		const headers = init.headers as Record<string, string>;
+		// No custom header should be attached.
+		expect(headers['X-Api-Key']).toBeUndefined();
+		expect(headers['Authorization']).toBeUndefined();
+	});
+
+	it('rejects an SSE stream that ends without a JSON-RPC frame', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			new Response(': comment\n\n', { status: 200, headers: { 'content-type': 'text/event-stream' } }),
+		);
+		const client = new McpHttpClient({ url: 'https://mcp.test/jsonrpc' });
+		await expect(client.listTools()).rejects.toThrow(/SSE stream ended/);
+	});
 });

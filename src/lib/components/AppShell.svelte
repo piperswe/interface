@@ -1,18 +1,7 @@
 <script lang="ts" module>
 	import type { Conversation } from '$lib/types/conversation';
-	import { recencyBand, type RecencyBand } from '$lib/formatters';
-
-	const BAND_ORDER: RecencyBand[] = ['today', 'this-week', 'earlier'];
-
-	export function groupByBand(conversations: Conversation[], now: number): Map<RecencyBand, Conversation[]> {
-		const groups = new Map<RecencyBand, Conversation[]>();
-		for (const band of BAND_ORDER) groups.set(band, []);
-		for (const c of conversations) {
-			const band = recencyBand(c.updated_at, now);
-			groups.get(band)!.push(c);
-		}
-		return groups;
-	}
+	import { BAND_ORDER, groupByBand } from './sidebar';
+	export { groupByBand, BAND_ORDER };
 </script>
 
 <script lang="ts">

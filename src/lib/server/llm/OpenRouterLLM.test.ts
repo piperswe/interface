@@ -282,4 +282,98 @@ describe('OpenRouterLLM', () => {
 		);
 		expect(observedRequest!.messages[0].content).toBe('ab');
 	});
+
+	it('passes temperature and maxTokens to the SDK request', async () => {
+		let observed: { temperature?: number; maxTokens?: number } | null = null;
+		const client = {
+			chat: {
+				send: async (req: { chatRequest: typeof observed }) => {
+					observed = req.chatRequest;
+					return (async function* () {
+						yield chunk({}, { finishReason: 'stop' });
+					})();
+				},
+			},
+		} as unknown as OpenRouter;
+		const llm = new OpenRouterLLM(client, 'm', 'openrouter');
+		await collect(llm.chat({ messages: [], temperature: 0.42, maxTokens: 256 }));
+		expect(observed!.temperature).toBe(0.42);
+		expect(observed!.maxTokens).toBe(256);
+	});
+
+	it('emits a usage event when usage is sent without a choices payload', async () => {
+		const client = fakeClient([
+			{
+				id: 'gen-1',
+				object: 'chat.completion.chunk',
+				created: 0,
+				model: 'm',
+				choices: [],
+				usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+			} as unknown as ChatStreamChunk,
+		]);
+		const llm = new OpenRouterLLM(client, 'm', 'openrouter');
+		const events = await collect(llm.chat({ messages: [] }));
+		expect(events).toContainEqual({
+			type: 'usage',
+			usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+		});
+	});
+
+	it('falls back to {_raw: ...} when tool call arguments fail to parse as JSON', async () => {
+		const client = fakeClient([
+			chunk({
+				toolCalls: [
+					{
+						index: 0,
+						id: 'call_1',
+						type: 'function',
+						function: { name: 'web_search', arguments: '{not json' },
+					},
+				],
+			}),
+			chunk({}, { finishReason: 'tool_calls' }),
+		]);
+		const llm = new OpenRouterLLM(client, 'm', 'openrouter');
+		const events = await collect(llm.chat({ messages: [] }));
+		const finalCall = events.find((e) => e.type === 'tool_call');
+		expect((finalCall as { input: unknown }).input).toEqual({ _raw: '{not json' });
+	});
+
+	it('serializes non-Error throw values as strings', async () => {
+		const client = {
+			chat: {
+				send: async () => {
+					throw { code: 42 };
+				},
+			},
+		} as unknown as OpenRouter;
+		const llm = new OpenRouterLLM(client, 'm', 'openrouter');
+		const events = await collect(llm.chat({ messages: [] }));
+		expect((events[0] as { message: string }).message).toContain('42');
+	});
+
+	it('omits content from assistant messages with no text but a tool_use block', async () => {
+		let observed: { messages: Array<{ content: unknown; toolCalls?: unknown[] }> } | null = null;
+		const client = {
+			chat: {
+				send: async (req: { chatRequest: typeof observed }) => {
+					observed = req.chatRequest;
+					return (async function* () {
+						yield chunk({}, { finishReason: 'stop' });
+					})();
+				},
+			},
+		} as unknown as OpenRouter;
+		const llm = new OpenRouterLLM(client, 'm', 'openrouter');
+		await collect(
+			llm.chat({
+				messages: [
+					{ role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'x', input: {} }] },
+				],
+			}),
+		);
+		expect(observed!.messages[0].content).toBeNull();
+		expect(observed!.messages[0].toolCalls).toBeDefined();
+	});
 });

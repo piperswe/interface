@@ -179,6 +179,129 @@ describe('AnthropicLLM', () => {
 		expect(events).toEqual([{ type: 'error', message: 'boom' }]);
 	});
 
+	it('returns the system prompt as a plain string when no cache control is set', async () => {
+		const capture: { params?: { system?: unknown } } = {};
+		const llm = new AnthropicLLM(
+			fakeAnthropic([{ type: 'message_stop' } as unknown as MessageStreamEvent], capture),
+			'claude-sonnet-4-5',
+		);
+		await collect(llm.chat({ messages: [], systemPrompt: 'plain prompt' }));
+		expect(capture.params?.system).toBe('plain prompt');
+	});
+
+	it('omits the system field entirely when no system prompt is provided', async () => {
+		const capture: { params?: { system?: unknown } } = {};
+		const llm = new AnthropicLLM(
+			fakeAnthropic([{ type: 'message_stop' } as unknown as MessageStreamEvent], capture),
+			'claude-sonnet-4-5',
+		);
+		await collect(llm.chat({ messages: [] }));
+		expect(capture.params?.system).toBeUndefined();
+	});
+
+	it('passes tools and tags the last one with cache_control when ephemeral', async () => {
+		const capture: { params?: { tools?: Array<{ name: string; cache_control?: unknown }> } } = {};
+		const llm = new AnthropicLLM(
+			fakeAnthropic([{ type: 'message_stop' } as unknown as MessageStreamEvent], capture),
+			'claude-sonnet-4-5',
+		);
+		await collect(
+			llm.chat({
+				messages: [],
+				tools: [
+					{ name: 'a', description: 'A', inputSchema: { type: 'object' } },
+					{ name: 'b', description: 'B', inputSchema: { type: 'object' } },
+				],
+				cacheControl: { type: 'ephemeral' },
+			}),
+		);
+		const tools = capture.params?.tools ?? [];
+		expect(tools).toHaveLength(2);
+		expect(tools[0].cache_control).toBeUndefined();
+		expect(tools[1].cache_control).toEqual({ type: 'ephemeral' });
+	});
+
+	it('forwards image, thinking, and tool_use/tool_result blocks to anthropic shape', async () => {
+		const capture: { params?: { messages?: Array<{ content: Array<Record<string, unknown>> }> } } = {};
+		const llm = new AnthropicLLM(
+			fakeAnthropic([{ type: 'message_stop' } as unknown as MessageStreamEvent], capture),
+			'claude-sonnet-4-5',
+		);
+		await collect(
+			llm.chat({
+				messages: [
+					{ role: 'user', content: [{ type: 'image', mimeType: 'image/jpeg', data: 'AAA' }] },
+					{ role: 'assistant', content: [{ type: 'thinking', text: 'planning' }] },
+					{ role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'x', input: { a: 1 } }] },
+					{ role: 'tool', content: [{ type: 'tool_result', toolUseId: 't1', content: 'ok' }] },
+					{ role: 'tool', content: [{ type: 'tool_result', toolUseId: 't2', content: 'fail', isError: true }] },
+				],
+			}),
+		);
+		const blocks = capture.params?.messages?.flatMap((m) => m.content) ?? [];
+		const types = blocks.map((b) => b.type);
+		expect(types).toContain('image');
+		expect(types).toContain('thinking');
+		expect(types).toContain('tool_use');
+		expect(types).toContain('tool_result');
+		const errResult = blocks.find((b) => b.type === 'tool_result' && b.tool_use_id === 't2');
+		expect(errResult?.is_error).toBe(true);
+	});
+
+	it('ignores unknown block types instead of crashing', async () => {
+		const capture: { params?: { messages?: Array<{ content: unknown[] }> } } = {};
+		const llm = new AnthropicLLM(
+			fakeAnthropic([{ type: 'message_stop' } as unknown as MessageStreamEvent], capture),
+			'claude-sonnet-4-5',
+		);
+		await collect(
+			llm.chat({
+				messages: [
+					{
+						role: 'user',
+						content: [
+							{ type: 'text', text: 'kept' },
+							{ type: 'file', mimeType: 'application/pdf', data: 'AAA' },
+						],
+					},
+				],
+			}),
+		);
+		const blocks = (capture.params?.messages?.[0].content ?? []) as Array<{ type: string }>;
+		expect(blocks.map((b) => b.type)).toEqual(['text']);
+	});
+
+	it('reports errors thrown mid-stream', async () => {
+		const broken = {
+			messages: {
+				stream() {
+					return (async function* () {
+						yield messageStartEvent();
+						throw new Error('mid-stream boom');
+					})();
+				},
+			},
+		} as unknown as Anthropic;
+		const llm = new AnthropicLLM(broken, 'claude-sonnet-4-5');
+		const events = await collect(llm.chat({ messages: [] }));
+		const err = events.find((e) => e.type === 'error');
+		expect(err).toEqual({ type: 'error', message: 'mid-stream boom' });
+	});
+
+	it('serializes non-Error throw values', async () => {
+		const broken = {
+			messages: {
+				stream() {
+					throw { weird: 'object' };
+				},
+			},
+		} as unknown as Anthropic;
+		const llm = new AnthropicLLM(broken, 'claude-sonnet-4-5');
+		const events = await collect(llm.chat({ messages: [] }));
+		const err = events.find((e) => e.type === 'error');
+		expect((err as { message: string }).message).toContain('weird');
+	});
+
 	it('flattens text-only content blocks correctly', async () => {
 		const capture: { params?: { messages?: Array<{ role: string; content: unknown }> } } = {};
 		const llm = new AnthropicLLM(
