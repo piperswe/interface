@@ -91,7 +91,19 @@ function usageToOpenRouter(usage: Usage): ChatUsage {
 export default class ConversationDurableObject extends DurableObject<Env> {
 	#sql: SqlStorage;
 	#subscribers = new Set<ReadableStreamDefaultController<Uint8Array>>();
-	#inProgress: { messageId: string; content: string } | null = null;
+	// Live mirror of the assistant message currently being generated. Holds
+	// the running text/thinking/parts so a client that subscribes (or
+	// reloads) mid-stream gets a complete snapshot — the SQL row's
+	// `content` / `thinking` / `parts` columns are only persisted at
+	// end-of-turn, so we can't rely on them mid-flight.
+	#inProgress:
+		| {
+				messageId: string;
+				content: string;
+				thinking: string;
+				parts: MessagePart[];
+		  }
+		| null = null;
 	#pingInterval: ReturnType<typeof setInterval> | null = null;
 	#encoder = new TextEncoder();
 
@@ -172,10 +184,18 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	getState(): ConversationState {
 		const messages = this.#readMessages();
 		if (this.#inProgress) {
-			const inProgressId = this.#inProgress.messageId;
-			const partial = this.#inProgress.content;
-			const merged = messages.map((m) => (m.id === inProgressId ? { ...m, content: partial } : m));
-			return { messages: merged, inProgress: { ...this.#inProgress } };
+			const ip = this.#inProgress;
+			const merged = messages.map((m) =>
+				m.id === ip.messageId
+					? {
+							...m,
+							content: ip.content,
+							thinking: ip.thinking || m.thinking,
+							parts: ip.parts.length > 0 ? ip.parts.slice() : m.parts,
+						}
+					: m,
+			);
+			return { messages: merged, inProgress: { messageId: ip.messageId, content: ip.content } };
 		}
 		return { messages, inProgress: null };
 	}
@@ -203,7 +223,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			now + 1,
 		);
 
-		this.#inProgress = { messageId: assistantId, content: '' };
+		this.#inProgress = { messageId: assistantId, content: '', thinking: '', parts: [] };
 
 		await this.#touchConversation(conversationId, trimmed);
 		this.#broadcast('refresh', {});
@@ -303,11 +323,21 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		const messages = this.#readMessages();
 		const last = messages[messages.length - 1];
 		if (!last) return;
-		const content = this.#inProgress && this.#inProgress.messageId === last.id ? this.#inProgress.content : last.content;
+		const isInProgress = this.#inProgress?.messageId === last.id;
+		const content = isInProgress ? this.#inProgress!.content : last.content;
+		// Send the live timeline along with content so a subscriber that
+		// reconnects mid-stream can replace its (possibly empty) parts list
+		// with the server-side truth before any subsequent deltas arrive.
+		// Without this, the first delta after reconnect would seed `parts`
+		// from scratch and the renderer would drop the SSR'd content.
+		const parts = isInProgress ? this.#inProgress!.parts.slice() : (last.parts ?? null);
+		const thinking = isInProgress ? this.#inProgress!.thinking : (last.thinking ?? null);
 		this.#enqueueTo(controller, 'sync', {
 			lastMessageId: last.id,
 			lastMessageStatus: last.status,
 			lastMessageContent: content,
+			lastMessageParts: parts,
+			lastMessageThinking: thinking,
 		});
 	}
 
@@ -316,16 +346,15 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		let firstTokenAt = 0;
 		let lastChunk: ChatStreamChunk | null = null;
 		let usage: ChatUsage | null = null;
-		let thinkingText = '';
 		let lastGenerationId: string | null = null;
 
 		const accumulatedToolCalls: RecordedToolCall[] = [];
 		const accumulatedToolResults: RecordedToolResult[] = [];
 		const accumulatedCitations: ToolCitation[] = [];
-		// Ordered timeline of the turn: text segments interleaved with tool
-		// invocations and their results in the sequence the model produced
-		// them. Mirrors the order of broadcast SSE events.
-		const parts: MessagePart[] = [];
+		// Live mirror of the turn lives on `this.#inProgress.parts` so a
+		// resubscribing client can pick up the timeline as it stands. We
+		// alias it locally for readability.
+		const parts = this.#inProgress!.parts;
 		const appendText = (delta: string) => {
 			const last = parts[parts.length - 1];
 			if (last && last.type === 'text') {
@@ -425,7 +454,9 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 						}
 						this.#broadcast('delta', { messageId: assistantId, content: ev.delta });
 					} else if (ev.type === 'thinking_delta') {
-						thinkingText += ev.delta;
+						if (this.#inProgress && this.#inProgress.messageId === assistantId) {
+							this.#inProgress.thinking += ev.delta;
+						}
 						appendThinking(ev.delta);
 						this.#broadcast('thinking_delta', { messageId: assistantId, content: ev.delta });
 					} else if (ev.type === 'tool_call') {
@@ -516,6 +547,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			}
 
 			const finalText = this.#inProgress?.content ?? '';
+			const finalThinking = this.#inProgress?.thinking ?? '';
 			this.#sql.exec(
 				`UPDATE messages SET content = ?, status = 'complete', first_token_at = ?, last_chunk_json = ?, usage_json = ?, provider = ?, thinking = ?, tool_calls = ?, tool_results = ?, parts = ? WHERE id = ?`,
 				finalText,
@@ -523,7 +555,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 				lastChunk ? JSON.stringify(lastChunk) : null,
 				usage ? JSON.stringify(usage) : null,
 				llm.providerID,
-				thinkingText || null,
+				finalThinking || null,
 				accumulatedToolCalls.length > 0 ? JSON.stringify(accumulatedToolCalls) : null,
 				accumulatedToolResults.length > 0 ? JSON.stringify(accumulatedToolResults) : null,
 				parts.length > 0 ? JSON.stringify(parts) : null,

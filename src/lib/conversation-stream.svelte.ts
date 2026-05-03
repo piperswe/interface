@@ -17,6 +17,8 @@ type SyncEvent = {
 	lastMessageId: string;
 	lastMessageStatus: 'complete' | 'streaming' | 'error';
 	lastMessageContent: string;
+	lastMessageParts?: MessagePart[] | null;
+	lastMessageThinking?: string | null;
 };
 type DeltaEvent = { messageId: string; content: string };
 type ThinkingDeltaEvent = { messageId: string; content: string };
@@ -115,9 +117,20 @@ function applySync(state: ConversationState, ev: SyncEvent): ConversationState |
 	const target = state.messages.find((m) => m.id === ev.lastMessageId);
 	if (!target || target.status !== ev.lastMessageStatus) return 'reload';
 	if (ev.lastMessageStatus !== 'streaming') return state;
-	const messages = state.messages.map((m) =>
-		m.id === ev.lastMessageId ? { ...m, content: ev.lastMessageContent } : m,
-	);
+	const messages = state.messages.map((m) => {
+		if (m.id !== ev.lastMessageId) return m;
+		const next = { ...m, content: ev.lastMessageContent };
+		// `parts`/`thinking` are sent for in-flight assistant messages so
+		// reconnecting clients pick up the timeline as the server has it.
+		// Older servers omit them — fall back to the existing values.
+		if (ev.lastMessageParts !== undefined) {
+			next.parts = ev.lastMessageParts ?? [];
+		}
+		if (ev.lastMessageThinking !== undefined) {
+			next.thinking = ev.lastMessageThinking;
+		}
+		return next;
+	});
 	return { ...state, messages };
 }
 
