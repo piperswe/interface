@@ -1,36 +1,14 @@
 import { renderIndexPage } from './frontend/pages/index/server';
+import { renderConversationPage } from './frontend/pages/conversation/server';
+import { fetchTopModels, FALLBACK_MODEL } from './openrouter/models';
+import { listConversations, createConversation, getConversation } from './conversations';
 
-export { default as ChatDurableObject } from './durable_objects/ChatDurableObject';
+export { default as ConversationDurableObject } from './durable_objects/ConversationDurableObject';
 
-type OpenRouterFrontendModel = {
-	slug: string;
-	short_name?: string;
-	name?: string;
-	is_hidden?: boolean;
-	is_disabled?: boolean;
-};
+const CONVERSATION_PATH = /^\/c\/([0-9a-f-]{36})(?:\/(messages|events))?$/;
 
-const FALLBACK_MODEL = { slug: 'openai/gpt-5.5', label: 'GPT-5.5' };
-
-function escapeHtml(value: string): string {
-	return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
-}
-
-async function fetchTopModels(limit: number): Promise<Array<{ slug: string; label: string }>> {
-	try {
-		const response = await fetch('https://openrouter.ai/api/frontend/models/find?order=top-weekly', {
-			headers: { Accept: 'application/json' },
-		});
-		if (!response.ok) throw new Error(`Status ${response.status}`);
-		const body = (await response.json()) as { data?: { models?: OpenRouterFrontendModel[] } };
-		const models = body.data?.models ?? [];
-		return models
-			.filter((m) => m && m.slug && !m.is_hidden && !m.is_disabled)
-			.slice(0, limit)
-			.map((m) => ({ slug: m.slug, label: m.short_name || m.name || m.slug }));
-	} catch {
-		return [FALLBACK_MODEL];
-	}
+function redirect(location: string): Response {
+	return new Response(null, { status: 303, headers: { Location: location } });
 }
 
 export default {
@@ -42,28 +20,68 @@ export default {
 			return env.ASSETS.fetch(new Request(url));
 		}
 
-		if (url.pathname === '/api/hello') {
-			const question = url.searchParams.get('q');
-			if (!question) {
-				return new Response('Missing q parameter', { status: 400 });
-			}
-			const model = url.searchParams.get('model') ?? undefined;
-			const stub = env.CHAT_DURABLE_OBJECT.getByName('foo');
-			const stream = await stub.ask(question, model);
-			return new Response(stream, {
-				headers: {
-					'Content-Type': 'text/event-stream',
-					'Cache-Control': 'no-cache',
-					Connection: 'keep-alive',
-				},
+		if (url.pathname === '/' || url.pathname === '/index.html') {
+			const conversations = await listConversations(env);
+			return new Response(await renderIndexPage(conversations), {
+				headers: { 'Content-Type': 'text/html; charset=utf-8' },
 			});
 		}
 
-		if (url.pathname === '/' || url.pathname === '/index.html') {
-			const models = await fetchTopModels(20);
-			return new Response(await renderIndexPage(models.map((m) => m.slug)), {
-				headers: { 'Content-Type': 'text/html; charset=utf-8' },
-			});
+		if (url.pathname === '/conversations' && request.method === 'POST') {
+			const id = await createConversation(env);
+			return redirect(`/c/${id}`);
+		}
+
+		const match = url.pathname.match(CONVERSATION_PATH);
+		if (match) {
+			const conversationId = match[1];
+			const action = match[2];
+
+			if (!action && request.method === 'GET') {
+				const stub = env.CONVERSATION_DURABLE_OBJECT.getByName(conversationId);
+				const [state, models, conversation] = await Promise.all([
+					stub.getState(),
+					fetchTopModels(20),
+					getConversation(env, conversationId),
+				]);
+				if (!conversation) return new Response('Not Found', { status: 404 });
+				const modelOptions = models.length > 0 ? models : [FALLBACK_MODEL];
+				return new Response(
+					await renderConversationPage({
+						conversation,
+						state,
+						models: modelOptions,
+					}),
+					{ headers: { 'Content-Type': 'text/html; charset=utf-8' } },
+				);
+			}
+
+			if (action === 'messages' && request.method === 'POST') {
+				const form = await request.formData();
+				const content = String(form.get('content') ?? '');
+				const model = String(form.get('model') ?? '');
+				const stub = env.CONVERSATION_DURABLE_OBJECT.getByName(conversationId);
+				const result = await stub.addUserMessage(conversationId, content, model);
+				if (result.status === 'busy') {
+					return new Response('Conversation busy: a generation is already in progress', { status: 409 });
+				}
+				if (result.status === 'invalid') {
+					return new Response(`Invalid: ${result.reason}`, { status: 400 });
+				}
+				return redirect(`/c/${conversationId}`);
+			}
+
+			if (action === 'events' && request.method === 'GET') {
+				const stub = env.CONVERSATION_DURABLE_OBJECT.getByName(conversationId);
+				const stream = await stub.subscribe();
+				return new Response(stream, {
+					headers: {
+						'Content-Type': 'text/event-stream',
+						'Cache-Control': 'no-cache',
+						Connection: 'keep-alive',
+					},
+				});
+			}
 		}
 
 		return new Response('Not Found', { status: 404 });

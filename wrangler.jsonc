@@ -12,18 +12,26 @@
 	"compatibility_date": "2026-04-22",
 	"migrations": [
 		{
-			"new_sqlite_classes": ["ChatDurableObject"],
+			"new_sqlite_classes": ["ConversationDurableObject"],
 			"tag": "v1",
 		},
 	],
 	"durable_objects": {
 		"bindings": [
 			{
-				"class_name": "ChatDurableObject",
-				"name": "CHAT_DURABLE_OBJECT",
+				"class_name": "ConversationDurableObject",
+				"name": "CONVERSATION_DURABLE_OBJECT",
 			},
 		],
 	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "interface",
+			"database_id": "45f097c8-b921-4034-b580-c1ac47e0b2db",
+			"migrations_dir": "migrations",
+		},
+	],
 	"observability": {
 		"enabled": true,
 	},

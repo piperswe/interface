@@ -1,4 +1,4 @@
-import type { ChatStreamChunk, ChatUsage } from '@openrouter/sdk/esm/models';
+import type { ChatStreamChunk, ChatUsage, GenerationResponseData } from '@openrouter/sdk/esm/models';
 import { fmtCost, fmtMs, fmtNumber, fmtThroughput } from './formatters';
 
 export interface MetaSnapshot {
@@ -6,6 +6,7 @@ export interface MetaSnapshot {
 	firstTokenAt: number;
 	lastChunk: ChatStreamChunk | null;
 	usage: ChatUsage | null;
+	generation: GenerationResponseData | null;
 }
 
 export interface MetaPanel {
@@ -52,22 +53,23 @@ export function createMetaPanel(container: HTMLElement): MetaPanel {
 		hide() {
 			container.style.display = 'none';
 		},
-		render({ startedAt, firstTokenAt, lastChunk, usage }: MetaSnapshot) {
-			const totalMs = Date.now() - startedAt;
-			const ttftMs = firstTokenAt ? firstTokenAt - startedAt : 0;
+		render({ startedAt, firstTokenAt, lastChunk, usage, generation }: MetaSnapshot) {
+			const ttftMs = firstTokenAt && startedAt ? firstTokenAt - startedAt : 0;
 
-			fields.model.textContent = lastChunk?.model ?? '—';
+			fields.model.textContent = generation?.model ?? lastChunk?.model ?? '—';
 			fields.id.textContent = lastChunk?.id ?? '—';
 			fields.serviceTier.textContent = lastChunk?.serviceTier ?? '—';
-			fields.promptTokens.textContent = fmtNumber(usage?.promptTokens);
-			fields.completionTokens.textContent = fmtNumber(usage?.completionTokens);
+			fields.promptTokens.textContent = fmtNumber(generation?.tokensPrompt ?? usage?.promptTokens);
+			fields.completionTokens.textContent = fmtNumber(generation?.tokensCompletion ?? usage?.completionTokens);
 			fields.totalTokens.textContent = fmtNumber(usage?.totalTokens);
-			fields.cachedTokens.textContent = fmtNumber(usage?.promptTokensDetails?.cachedTokens);
-			fields.reasoningTokens.textContent = fmtNumber(usage?.completionTokensDetails?.reasoningTokens);
-			fields.cost.textContent = fmtCost(usage?.cost);
+			fields.cachedTokens.textContent = fmtNumber(generation?.nativeTokensCached ?? usage?.promptTokensDetails?.cachedTokens);
+			fields.reasoningTokens.textContent = fmtNumber(
+				generation?.nativeTokensReasoning ?? usage?.completionTokensDetails?.reasoningTokens,
+			);
+			fields.cost.textContent = fmtCost(generation?.totalCost ?? usage?.cost);
 			fields.ttft.textContent = fmtMs(ttftMs);
-			fields.total.textContent = fmtMs(totalMs);
-			fields.throughput.textContent = fmtThroughput(usage?.completionTokens, totalMs);
+			fields.total.textContent = fmtMs(generation?.latency ?? 0);
+			fields.throughput.textContent = fmtThroughput(generation?.tokensCompletion ?? undefined, generation?.generationTime ?? 0);
 
 			container.style.display = 'block';
 		},

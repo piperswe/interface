@@ -1,50 +1,43 @@
 import { renderToReadableStream } from 'react-dom/server';
+import { Layout } from '../../Layout';
+import type { Conversation } from '../../../conversations';
 
-const css = `
-	body {font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
-	form {display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
-	select {padding: 0.5rem; font-size: 1rem; }
-	input {flex: 1; min-width: 12rem; padding: 0.5rem; font-size: 1rem; }
-	button {padding: 0.5rem 1rem; font-size: 1rem; cursor: pointer; }
-	#output {white-space: pre-wrap; border: 1px solid #ccc; padding: 1rem; min-height: 8rem; border-radius: 6px; }
-	#meta {margin-top: 1rem; border: 1px solid #ddd; border-radius: 6px; padding: 0.75rem 1rem; background: #fafafa; font-size: 0.9rem; display: none; }
-	#meta h2 {margin: 0 0 0.5rem; font-size: 1rem; }
-	#meta dl {display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; margin: 0; }
-	#meta dt {color: #666; }
-	#meta dd {margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
-`;
+function fmtRelative(ms: number): string {
+	const diff = Date.now() - ms;
+	if (diff < 60_000) return 'just now';
+	if (diff < 3_600_000) return Math.floor(diff / 60_000) + 'm ago';
+	if (diff < 86_400_000) return Math.floor(diff / 3_600_000) + 'h ago';
+	return Math.floor(diff / 86_400_000) + 'd ago';
+}
 
-export function IndexPage({ models }: { models: string[] }) {
+export function IndexPage({ conversations }: { conversations: Conversation[] }) {
 	return (
-		<html lang="en">
-			<head>
-				<meta charSet="utf-8" />
-				<title>Chat</title>
-				<style>{css}</style>
-			</head>
-			<body>
-				<h1>Chat</h1>
-				<form id="form">
-					<select id="model" name="model">
-						$
-						{models.map((model) => (
-							<option value={model}>{model}</option>
-						))}
-					</select>
-					<input id="question" type="text" placeholder="Ask a question..." autoComplete="off" required />
-					<button id="go" type="submit">
-						Ask
-					</button>
+		<Layout title="Conversations">
+			<header>
+				<h1>Conversations</h1>
+				<form action="/conversations" method="post">
+					<button type="submit">New chat</button>
 				</form>
-				<div id="output"></div>
-				<div id="meta"></div>
-				<script src="/dist/index.js"></script>
-			</body>
-		</html>
+			</header>
+			{conversations.length === 0 ? (
+				<div className="empty">No conversations yet. Start one above.</div>
+			) : (
+				<ul className="conversation-list">
+					{conversations.map((c) => (
+						<li key={c.id}>
+							<a href={`/c/${c.id}`}>
+								<div className="title">{c.title}</div>
+								<div className="meta">{fmtRelative(c.updated_at)}</div>
+							</a>
+						</li>
+					))}
+				</ul>
+			)}
+		</Layout>
 	);
 }
 
-export async function renderIndexPage(models: string[]): Promise<ReadableStream> {
-	const el = <IndexPage models={models} />;
+export async function renderIndexPage(conversations: Conversation[]): Promise<ReadableStream> {
+	const el = <IndexPage conversations={conversations} />;
 	return await renderToReadableStream(el);
 }
