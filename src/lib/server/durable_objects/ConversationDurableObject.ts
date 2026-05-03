@@ -8,6 +8,7 @@ import { ToolRegistry } from '../tools/registry';
 import type { ToolCitation } from '../tools/registry';
 import { fetchUrlTool } from '../tools/fetch_url';
 import { createWebSearchTool } from '../tools/web_search';
+import { createYnabTools } from '../tools/ynab';
 import { KagiSearchBackend } from '../search/kagi';
 import { McpHttpClient } from '../mcp/client';
 import { listMcpServers } from '../mcp_servers';
@@ -601,6 +602,11 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		registry.register(fetchUrlTool);
 		if (this.env.KAGI_KEY) {
 			registry.register(createWebSearchTool(new KagiSearchBackend(this.env.KAGI_KEY)));
+		}
+		if (this.env.YNAB_TOKEN) {
+			for (const tool of createYnabTools(this.env.YNAB_TOKEN)) {
+				registry.register(tool);
+			}
 		}
 		// Register HTTP/SSE MCP tools. Stdio transport waits for Phase 0.6 (Sandbox).
 		try {
