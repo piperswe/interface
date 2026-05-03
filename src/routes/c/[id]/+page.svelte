@@ -7,7 +7,7 @@
 	import { fmtCost } from '$lib/formatters';
 	import { attachConversationStream } from '$lib/conversation-stream.svelte';
 	import { createStreamingMarkdownRunner } from '$lib/streaming-markdown.svelte';
-	import { regenerateTitle } from '$lib/conversations.remote';
+	import { archive, destroy, regenerateTitle } from '$lib/conversations.remote';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -110,8 +110,31 @@
 			disabled={busy}
 			class="title-action-button"
 			onclick={onRegenerate}
+			aria-label="Regenerate title"
 		>↻</button>
 		{#if totalCost > 0}<span class="conversation-cost">Cost: {fmtCost(totalCost)}</span>{/if}
+		<details class="conversation-menu">
+			<summary class="title-action-button" aria-label="Conversation actions" title="More actions">⋯</summary>
+			<div class="conversation-menu-panel" role="menu">
+				<form
+					{...archive.for(data.conversation.id).enhance(async ({ submit }) => {
+						await submit();
+					})}
+				>
+					<input type="hidden" name="conversationId" value={data.conversation.id} />
+					<button type="submit" class="conversation-menu-item" role="menuitem">Archive</button>
+				</form>
+				<form
+					{...destroy.for(data.conversation.id).enhance(async ({ submit }) => {
+						if (!confirm(`Delete "${data.conversation.title}"? This cannot be undone.`)) return;
+						await submit();
+					})}
+				>
+					<input type="hidden" name="conversationId" value={data.conversation.id} />
+					<button type="submit" class="conversation-menu-item danger" role="menuitem">Delete</button>
+				</form>
+			</div>
+		</details>
 	</div>
 	<div bind:this={scrollEl} class="conversation-scroll">
 		<div class="conversation-column">

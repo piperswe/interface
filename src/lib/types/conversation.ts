@@ -6,6 +6,7 @@ export type Conversation = {
 	created_at: number;
 	updated_at: number;
 	thinking_budget?: number | null;
+	archived_at?: number | null;
 };
 
 export interface MetaSnapshot {

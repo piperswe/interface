@@ -1,6 +1,11 @@
 import { command, form, getRequestEvent } from '$app/server';
 import { error, redirect } from '@sveltejs/kit';
-import { createConversation } from '$lib/server/conversations';
+import {
+	archiveConversation,
+	createConversation,
+	deleteConversation,
+	unarchiveConversation,
+} from '$lib/server/conversations';
 import { getConversationStub } from '$lib/server/durable_objects';
 import { CONVERSATION_ID_PATTERN } from '$lib/conversation-id';
 
@@ -64,3 +69,36 @@ export const setThinkingBudget = command(
 		return { ok: true as const };
 	},
 );
+
+// Form: archive a conversation. Soft-delete only — the row stays in D1 and
+// the DO storage is untouched, so unarchive restores everything.
+export const archive = form('unchecked', async (data: { conversationId?: unknown }) => {
+	const id = String(data.conversationId ?? '');
+	if (!CONVERSATION_ID_PATTERN.test(id)) error(400, `invalid conversation id: ${id}`);
+	await archiveConversation(getEnv(), id);
+	redirect(303, '/');
+});
+
+// Form: unarchive a conversation. Reverses `archive`.
+export const unarchive = form('unchecked', async (data: { conversationId?: unknown }) => {
+	const id = String(data.conversationId ?? '');
+	if (!CONVERSATION_ID_PATTERN.test(id)) error(400, `invalid conversation id: ${id}`);
+	await unarchiveConversation(getEnv(), id);
+	redirect(303, `/c/${id}`);
+});
+
+// Form: hard-delete a conversation. Drops the D1 row AND wipes the Durable
+// Object's SQLite storage. Cloudflare doesn't let us remove the DO id from
+// the namespace, but `destroy()` empties it so the next resolution returns a
+// blank instance. Caller is expected to confirm before invoking.
+export const destroy = form('unchecked', async (data: { conversationId?: unknown }) => {
+	const id = String(data.conversationId ?? '');
+	if (!CONVERSATION_ID_PATTERN.test(id)) error(400, `invalid conversation id: ${id}`);
+	const env = getEnv();
+	// Wipe the DO first so a request that races the DB delete doesn't see
+	// stale messages. If destroy() throws, the row stays — the operator can
+	// retry.
+	await getConversationStub(env, id).destroy();
+	await deleteConversation(env, id);
+	redirect(303, '/');
+});

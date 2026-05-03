@@ -89,6 +89,7 @@
 			{/if}
 		</nav>
 		<div class="sidebar-footer">
+			<a href="/archive" class="sidebar-footer-link" onclick={closeDrawer}>Archive</a>
 			<a href="/settings" class="sidebar-footer-link" onclick={closeDrawer}>Settings</a>
 		</div>
 	</aside>

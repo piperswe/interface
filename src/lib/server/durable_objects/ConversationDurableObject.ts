@@ -259,6 +259,26 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			.run();
 	}
 
+	// Wipe all DO storage. Cloudflare doesn't expose a "delete this DO from
+	// the namespace" API, but `ctx.storage.deleteAll()` drops every row in
+	// the SQLite store, so the next time something resolves this DO id it'll
+	// be a fresh, empty instance. Pair with `deleteConversation()` in D1 to
+	// fully evict a conversation. Closes any live SSE subscribers first so
+	// they don't keep streaming on an already-vanished conversation.
+	async destroy(): Promise<void> {
+		this.#inProgress = null;
+		for (const controller of this.#subscribers) {
+			try {
+				controller.close();
+			} catch {
+				/* ignore */
+			}
+		}
+		this.#subscribers.clear();
+		this.#stopPingIfEmpty();
+		await this.ctx.storage.deleteAll();
+	}
+
 	async subscribe(): Promise<ReadableStream<Uint8Array>> {
 		let storedController: ReadableStreamDefaultController<Uint8Array> | null = null;
 		const self = this;
