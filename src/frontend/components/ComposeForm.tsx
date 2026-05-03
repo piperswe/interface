@@ -1,5 +1,5 @@
 import { useRef, type FormEvent, type KeyboardEvent } from 'react';
-import type { ModelEntry } from '../../openrouter/models';
+import type { ModelEntry } from '../../models/config';
 
 export type ComposeFormProps = {
 	conversationId: string;

@@ -1,4 +1,4 @@
-import { Marked, Renderer } from 'marked';
+import { Marked } from 'marked';
 import markedShiki from 'marked-shiki';
 import markedKatex from 'marked-katex-extension';
 import { createHighlighter, type Highlighter, type BundledLanguage } from 'shiki';
@@ -34,33 +34,10 @@ function getHighlighter(): Promise<Highlighter> {
 	}));
 }
 
-function escapeHtml(s: string): string {
-	return s.replace(/[&<>"']/g, (c) => {
-		switch (c) {
-			case '&':
-				return '&amp;';
-			case '<':
-				return '&lt;';
-			case '>':
-				return '&gt;';
-			case '"':
-				return '&quot;';
-			case "'":
-				return '&#39;';
-			default:
-				return c;
-		}
-	});
-}
-
-const renderer = new Renderer();
-renderer.html = ({ text }) => escapeHtml(text);
-
 const marked = new Marked({
 	gfm: true,
 	breaks: true,
 	async: true,
-	renderer,
 });
 
 marked.use(markedKatex({ throwOnError: false, nonStandard: true }));

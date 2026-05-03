@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import type { Conversation, ConversationState } from '../../../types/conversation';
-import type { ModelEntry } from '../../../openrouter/models';
+import type { ModelEntry } from '../../../models/config';
 import { ComposeForm } from '../../components/ComposeForm';
 import { Message } from '../../components/Message';
 import { useConversationStream } from '../../hooks/useConversationStream';
@@ -12,6 +12,7 @@ export type ConversationPageProps = {
 	models: ModelEntry[];
 	initialState: ConversationState;
 	thinkingBudget?: number | null;
+	conversations: Conversation[];
 };
 
 export function ConversationPage({ conversation, models, initialState, thinkingBudget }: ConversationPageProps) {

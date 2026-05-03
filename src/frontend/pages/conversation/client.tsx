@@ -1,4 +1,5 @@
 import { hydrateRoot } from 'react-dom/client';
+import { AppShell } from '../../components/AppShell';
 import { ConversationPage, type ConversationPageProps } from './Page';
 
 declare global {
@@ -10,4 +11,10 @@ declare global {
 const root = document.getElementById('root');
 if (!root) throw new Error('#root not found');
 
-hydrateRoot(root, <ConversationPage {...window.__PROPS__} />);
+const props = window.__PROPS__;
+hydrateRoot(
+	root,
+	<AppShell conversations={props.conversations} activeConversationId={props.conversation.id}>
+		<ConversationPage {...props} />
+	</AppShell>,
+);

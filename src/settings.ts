@@ -39,6 +39,33 @@ export async function listSettings(env: Env, userId: number = SINGLE_USER_ID): P
 	return result.results ?? [];
 }
 
+// ---- Context compaction helpers ---------------------------------------------------------
+
+export async function getContextCompactionThreshold(env: Env, userId: number = SINGLE_USER_ID): Promise<number> {
+	const raw = await getSetting(env, 'context_compaction_threshold', userId);
+	if (raw == null) return 80;
+	const n = Number.parseInt(raw, 10);
+	if (!Number.isFinite(n)) return 80;
+	return Math.max(0, Math.min(100, n));
+}
+
+export async function getContextCompactionSummaryTokens(env: Env, userId: number = SINGLE_USER_ID): Promise<number> {
+	const raw = await getSetting(env, 'context_compaction_summary_tokens', userId);
+	if (raw == null) return 16_384;
+	const n = Number.parseInt(raw, 10);
+	if (!Number.isFinite(n)) return 16_384;
+	return Math.max(256, n);
+}
+
+// ---- Model list helpers ----------------------------------------------------------------
+
+import { parseModelList, type ModelEntry } from './models/config';
+
+export async function getModelList(env: Env, userId: number = SINGLE_USER_ID): Promise<ModelEntry[]> {
+	const raw = await getSetting(env, 'model_list', userId);
+	return parseModelList(raw);
+}
+
 // Provider keys are stored in Worker secrets (per Phase 0a Open Question 5
 // default — envelope encryption deferred to Phase 6 multi-user). The Settings
 // UI surfaces only "configured / not configured" status; actual key edits

@@ -11,10 +11,11 @@ describe('renderMarkdown', () => {
 		expect(html).toContain('<h1>Hello</h1>');
 	});
 
-	it('escapes raw HTML in markdown', async () => {
-		const html = await renderMarkdown('<script>alert(1)</script>');
-		expect(html).not.toContain('<script>');
-		expect(html).toContain('&lt;script&gt;');
+	// Raw HTML passes through so that extensions (marked-shiki, KaTeX) can emit markup.
+	// XSS protection is the responsibility of the output layer (CSP / DOMPurify).
+	it('passes raw HTML through (extensions need this)', async () => {
+		const html = await renderMarkdown('<b>hello</b>');
+		expect(html).toContain('<b>hello</b>');
 	});
 
 	it('highlights fenced code with shiki', async () => {

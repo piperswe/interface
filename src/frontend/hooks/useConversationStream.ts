@@ -23,6 +23,7 @@ type ToolCallEvent = { messageId: string; id: string; name: string; input: JsonV
 type ToolResultEvent = ToolResultRecord & { messageId: string };
 type ArtifactEvent = { artifact: Artifact };
 type MetaEvent = { messageId: string; snapshot: MetaSnapshot };
+type PartEvent = { messageId: string; part: MessagePart };
 
 // Patch a single message in state.messages by id. Returns the previous state
 // unchanged if no message matches — keeps React from re-rendering on stray
@@ -121,6 +122,13 @@ function applyMeta(state: ConversationState, ev: MetaEvent): ConversationState {
 	return patchMessage(state, ev.messageId, (m) => ({ ...m, meta: ev.snapshot }));
 }
 
+function applyPart(state: ConversationState, ev: PartEvent): ConversationState {
+	return patchMessage(state, ev.messageId, (m) => ({
+		...m,
+		parts: [...(m.parts ?? []), ev.part],
+	}));
+}
+
 export function useConversationStream(conversationId: string, setState: Setter): void {
 	useEffect(() => {
 		const es = new EventSource(`/c/${conversationId}/events`);
@@ -155,6 +163,7 @@ export function useConversationStream(conversationId: string, setState: Setter):
 		const onToolResult = handle<ToolResultEvent>(applyToolResult);
 		const onArtifact = handle<ArtifactEvent>(applyArtifact);
 		const onMeta = handle<MetaEvent>(applyMeta);
+		const onPart = handle<PartEvent>(applyPart);
 
 		const onRefresh = () => {
 			location.reload();
@@ -167,6 +176,7 @@ export function useConversationStream(conversationId: string, setState: Setter):
 		es.addEventListener('tool_result', onToolResult);
 		es.addEventListener('artifact', onArtifact);
 		es.addEventListener('meta', onMeta);
+		es.addEventListener('part', onPart);
 		es.addEventListener('refresh', onRefresh);
 
 		return () => {
@@ -177,6 +187,7 @@ export function useConversationStream(conversationId: string, setState: Setter):
 			es.removeEventListener('tool_result', onToolResult);
 			es.removeEventListener('artifact', onArtifact);
 			es.removeEventListener('meta', onMeta);
+			es.removeEventListener('part', onPart);
 			es.removeEventListener('refresh', onRefresh);
 			es.close();
 		};

@@ -601,6 +601,32 @@ textarea:focus {
 	50% { opacity: 1; }
 }
 
+/* Message-body spinner: a small rotating arc shown on the last assistant
+ * message while we wait for the first text/token/tool call to arrive. */
+.message-spinner {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	margin-top: 0.25rem;
+	color: var(--muted);
+	font-size: 0.85rem;
+	font-style: italic;
+}
+
+.spinner {
+	display: inline-block;
+	width: 1.1rem;
+	height: 1.1rem;
+	border: 2px solid var(--border);
+	border-top-color: var(--accent);
+	border-radius: 50%;
+	animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+	to { transform: rotate(360deg); }
+}
+
 /* ===== Markdown content ===== */
 .content p {
 	margin: 0.55em 0;
@@ -836,6 +862,97 @@ details.thinking .thinking-body p:last-child {
 	overflow-x: auto;
 	margin: 0;
 	font-size: 0.85em;
+}
+
+/* Nested (inside a bundle) — slightly indented, no outer border. */
+.nested {
+	border: none;
+	margin-left: 0.5rem;
+}
+
+.nested summary {
+	padding-left: 0.5rem;
+}
+
+/* Nested thinking — reduce left padding since it's already indented. */
+details.thinking.nested {
+	padding-left: 0.35rem;
+}
+
+/* ===== Work bundle: consecutive non-output parts bundled together ===== */
+.work-bundle {
+	border: 1px solid var(--border-soft);
+	border-radius: var(--radius-sm);
+	background: var(--surface);
+	font-size: 0.88em;
+	margin: 0.25rem 0;
+}
+
+.work-bundle summary {
+	cursor: pointer;
+	list-style: none;
+	padding: 0.4rem 0.65rem;
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+	color: var(--muted);
+	user-select: none;
+}
+
+.work-bundle summary::-webkit-details-marker,
+.work-bundle summary::marker {
+	display: none;
+	content: '';
+}
+
+.work-bundle summary::before {
+	content: '▸';
+	font-size: 0.7em;
+	color: var(--muted-2);
+	transition: transform 100ms ease;
+	display: inline-block;
+}
+
+.work-bundle[open] summary::before {
+	transform: rotate(90deg);
+}
+
+.work-bundle summary:hover {
+	color: var(--fg);
+}
+
+.work-bundle-label {
+	font-weight: 500;
+	font-size: 0.78rem;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+.work-bundle-body {
+	display: flex;
+	flex-direction: column;
+	gap: 0.3rem;
+	padding: 0.3rem 0.5rem;
+}
+
+/* ===== Info parts (context compaction notices) ===== */
+.info-part {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	padding: 0.5rem 0.75rem;
+	border-radius: var(--radius-sm);
+	border-left: 3px solid var(--accent);
+	background: var(--accent-soft);
+	color: var(--muted);
+	font-size: 0.875rem;
+	margin: 0.25rem 0;
+}
+
+.info-part-icon {
+	font-size: 1rem;
+	line-height: 1;
+	flex-shrink: 0;
 }
 
 /* ===== Artifacts ===== */

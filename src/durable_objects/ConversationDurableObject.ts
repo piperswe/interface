@@ -2,6 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { OpenRouter } from '@openrouter/sdk';
 import type { ChatStreamChunk, ChatUsage, GenerationResponseData } from '@openrouter/sdk/models';
 import { routeLLM } from '../llm/route';
+import { compactHistory } from '../llm/context';
 import type { ChatRequest, ContentBlock, Message, StreamEvent, ToolDefinition, Usage } from '../llm/LLM';
 import { ToolRegistry } from '../tools/registry';
 import type { ToolCitation } from '../tools/registry';
@@ -17,6 +18,7 @@ export type { AddMessageResult, Artifact, ArtifactType, ConversationState, Messa
 const PING_INTERVAL_MS = 25_000;
 const TITLE_MAX = 60;
 const MAX_TOOL_ITERATIONS = 10;
+const TITLE_MODEL = 'google/gemma-4-31b-it:free';
 
 import type {
 	JsonValue,
@@ -292,10 +294,34 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 					assistantId,
 				)
 				.toArray() as unknown as Array<{ role: string; content: string }>;
-			const messages: Message[] = history.map((m) => ({
+			let messages: Message[] = history.map((m) => ({
 				role: m.role === 'assistant' ? 'assistant' : 'user',
 				content: m.content,
 			}));
+
+			// Check whether we need to compact context before sending.
+			const lastUsageRow = this.#sql
+				.exec(
+					"SELECT usage_json FROM messages WHERE role = 'assistant' AND status = 'complete' AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1",
+				)
+				.toArray() as unknown as Array<{ usage_json: string | null }>;
+			const lastUsage = lastUsageRow[0]?.usage_json
+				? (parseJson<{ promptTokens: number; inputTokens?: number }>(lastUsageRow[0].usage_json) ?? null)
+				: null;
+			const usageForCompaction = lastUsage
+				? { inputTokens: lastUsage.inputTokens ?? lastUsage.promptTokens }
+				: null;
+			const compaction = await compactHistory(messages, model, this.env, usageForCompaction);
+			if (compaction.wasCompacted) {
+				const infoPart: MessagePart = {
+					type: 'info',
+					text: `Context compacted: summarized ${compaction.droppedCount} earlier messages to stay within the model's limit.`,
+				};
+				parts.push(infoPart);
+				this.#sql.exec('UPDATE messages SET parts = ? WHERE id = ?', JSON.stringify(parts), assistantId);
+				this.#broadcast('part', { messageId: assistantId, part: infoPart });
+				messages = compaction.messages;
+			}
 
 			const convoRow = await this.env.DB.prepare('SELECT thinking_budget FROM conversations WHERE id = ?')
 				.bind(conversationId)
@@ -733,21 +759,59 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 
 	async #touchConversation(conversationId: string, firstMessageContent: string): Promise<void> {
 		const now = Date.now();
-		const candidateTitle = this.#deriveTitle(firstMessageContent);
+		// Always update the timestamp; the title update is handled separately
+		// via waitUntil so it doesn't block the main flow.
 		await this.env.DB.prepare(
 			`UPDATE conversations
-				SET updated_at = ?,
-					title = CASE WHEN title = 'New conversation' THEN ? ELSE title END
+				SET updated_at = ?
 				WHERE id = ?`,
 		)
-			.bind(now, candidateTitle, conversationId)
+			.bind(now, conversationId)
 			.run();
+
+		// Generate the title asynchronously so it doesn't delay the response.
+		this.ctx.waitUntil(this.#generateTitle(conversationId, firstMessageContent));
 	}
 
-	#deriveTitle(content: string): string {
-		const collapsed = content.replace(/\s+/g, ' ').trim();
-		if (collapsed.length <= TITLE_MAX) return collapsed;
-		return collapsed.slice(0, TITLE_MAX).trimEnd() + '…';
+	async #generateTitle(conversationId: string, firstMessageContent: string): Promise<void> {
+		const collapsed = firstMessageContent.replace(/\s+/g, ' ').trim();
+		try {
+			const llm = routeLLM(this.env, TITLE_MODEL);
+			let title = '';
+			for await (const ev of llm.chat({
+				messages: [
+					{
+						role: 'system',
+						content: 'You are a title generator. Given the user message, generate a short, clear, descriptive title (2-6 words) that summarises its topic or intent. Reply with the title only — no quotes, no explanation.',
+					},
+					{ role: 'user', content: collapsed },
+				],
+				maxTokens: 30,
+				temperature: 0.5,
+			})) {
+				if (ev.type === 'text_delta') title += ev.delta;
+				if (ev.type === 'error') throw new Error(ev.message);
+			}
+			title = title.trim().replace(/^"|"$/g, '').slice(0, TITLE_MAX);
+			if (!title) throw new Error('empty title from LLM');
+			await this.env.DB.prepare(
+				`UPDATE conversations
+					SET title = CASE WHEN title = 'New conversation' THEN ? ELSE title END
+					WHERE id = ?`,
+			)
+				.bind(title, conversationId)
+				.run();
+		} catch (e) {
+			// Fall back to truncation on any error.
+			const fallback = collapsed.length <= TITLE_MAX ? collapsed : collapsed.slice(0, TITLE_MAX).trimEnd() + '…';
+			await this.env.DB.prepare(
+				`UPDATE conversations
+					SET title = CASE WHEN title = 'New conversation' THEN ? ELSE title END
+					WHERE id = ?`,
+			)
+				.bind(fallback, conversationId)
+				.run();
+		}
 	}
 
 	#sseFrame(event: string, data: unknown): Uint8Array {

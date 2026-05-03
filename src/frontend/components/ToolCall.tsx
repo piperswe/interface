@@ -4,18 +4,17 @@ export function ToolCallCard({
 	call,
 	result,
 	defaultOpen = false,
+	nested = false,
 }: {
 	call: ToolCallRecord;
 	result?: ToolResultRecord;
 	defaultOpen?: boolean;
+	nested?: boolean;
 }) {
 	const pending = !result;
-	// Auto-expand pending tool calls (mid-run) so the operator sees what the
-	// model is doing without clicking. Already-completed cards stay collapsed
-	// unless the parent message is itself streaming.
 	const open = pending || defaultOpen;
 	return (
-		<details className="tool-call" data-tool-name={call.name} open={open}>
+		<details className={`tool-call${nested ? ' nested' : ''}`} data-tool-name={call.name} open={open}>
 			<summary>
 				<span className="tool-call-name">{call.name}</span>
 				{pending ? (

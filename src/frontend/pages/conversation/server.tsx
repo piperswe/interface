@@ -42,10 +42,14 @@ async function withRenderedMarkdown(props: ConversationPageProps): Promise<Conve
 }
 
 export async function renderConversationPage(
-	props: ConversationPageProps,
+	props: { conversation: ConversationPageProps['conversation']; models: ConversationPageProps['models']; initialState: ConversationPageProps['initialState']; thinkingBudget?: ConversationPageProps['thinkingBudget'] },
 	options: { theme?: Theme; conversations: Conversation[] },
 ): Promise<ReadableStream<Uint8Array>> {
-	const enriched = await withRenderedMarkdown(props);
+	const fullProps: ConversationPageProps = {
+		...props,
+		conversations: options.conversations,
+	};
+	const enriched = await withRenderedMarkdown(fullProps);
 	return renderHtml(
 		<Document title={enriched.conversation.title} theme={options.theme}>
 			<AppShell conversations={options.conversations} activeConversationId={enriched.conversation.id}>

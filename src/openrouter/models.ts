@@ -1,52 +1,63 @@
-type OpenRouterFrontendModel = {
-	slug: string;
-	short_name?: string;
-	name?: string;
-	is_hidden?: boolean;
-	is_disabled?: boolean;
-};
+import { OpenRouter } from '@openrouter/sdk';
 
-export type ModelEntry = { slug: string; label: string };
+const FALLBACK_CONTEXT_WINDOW = 128_000;
+const MODELS_CACHE_TTL_MS = 60 * 60 * 1000;
 
-export const FALLBACK_MODEL: ModelEntry = { slug: '~openai/gpt-latest', label: 'GPT (latest)' };
+let cachedModels: { data: Array<{ id: string; contextLength: number | null; topProvider: { contextLength?: number | null } | null }>; fetchedAt: number } | null = null;
 
-const MODELS_URL = 'https://openrouter.ai/api/frontend/models/find?order=top-weekly';
-const CACHE_TTL_SECONDS = 600;
-
-// DOM's lib.dom.d.ts declares a `CacheStorage` without `.default`, which shadows the
-// Workers runtime's augmented type. Cast to the Workers shape for direct cache access.
-const workerCaches = caches as unknown as { default: Cache };
-
-async function fetchModelsResponse(): Promise<Response> {
-	const cache = workerCaches.default;
-	const cacheKey = new Request(MODELS_URL, { method: 'GET' });
-	const cached = await cache.match(cacheKey);
-	if (cached) return cached;
-
-	const fresh = await fetch(MODELS_URL, { headers: { Accept: 'application/json' } });
-	if (!fresh.ok) return fresh;
-
-	const cacheable = new Response(fresh.body, fresh);
-	cacheable.headers.set('Cache-Control', `public, max-age=${CACHE_TTL_SECONDS}`);
-	if (cacheable.body) {
-		const [forCache, forReturn] = cacheable.body.tee();
-		await cache.put(cacheKey, new Response(forCache, cacheable));
-		return new Response(forReturn, cacheable);
-	}
-	return cacheable;
+function createClient(env: Env): OpenRouter {
+	return new OpenRouter({
+		apiKey: env.OPENROUTER_KEY,
+		httpReferer: 'https://github.com/piperswe/interface',
+		appTitle: 'Interface',
+	});
 }
 
-export async function fetchTopModels(limit: number): Promise<ModelEntry[]> {
-	try {
-		const response = await fetchModelsResponse();
-		if (!response.ok) throw new Error(`Status ${response.status}`);
-		const body = (await response.json()) as { data?: { models?: OpenRouterFrontendModel[] } };
-		const models = body.data?.models ?? [];
-		return models
-			.filter((m) => m && m.slug && !m.is_hidden && !m.is_disabled)
-			.slice(0, limit)
-			.map((m) => ({ slug: m.slug, label: m.short_name || m.name || m.slug }));
-	} catch {
-		return [FALLBACK_MODEL];
+function normalizeSlugForLookup(slug: string): string {
+	// Bare Anthropic IDs (e.g. "claude-sonnet-4-5") need the vendor prefix
+	// for OpenRouter's model list.
+	if (slug.startsWith('claude-')) return `anthropic/${slug}`;
+	return slug;
+}
+
+export async function getModelContextWindow(env: Env, slug: string): Promise<number> {
+	const normalized = normalizeSlugForLookup(slug);
+
+	// Warm cache if stale or missing.
+	const now = Date.now();
+	if (!cachedModels || now - cachedModels.fetchedAt > MODELS_CACHE_TTL_MS) {
+		try {
+			const client = createClient(env);
+			const response = await client.models.list();
+			const models = response.data ?? [];
+			cachedModels = {
+				data: models.map((m) => ({
+					id: m.id,
+					contextLength: m.contextLength ?? null,
+					topProvider: m.topProvider
+						? { contextLength: m.topProvider.contextLength ?? null }
+						: null,
+				})),
+				fetchedAt: now,
+			};
+		} catch {
+			/* cache miss is fine — we have a fallback */
+		}
 	}
+
+	if (cachedModels) {
+		const match = cachedModels.data.find((m) => m.id === normalized);
+		if (match) {
+			const fromModel = match.contextLength;
+			const fromProvider = match.topProvider?.contextLength ?? null;
+			return fromModel ?? fromProvider ?? FALLBACK_CONTEXT_WINDOW;
+		}
+	}
+
+	return FALLBACK_CONTEXT_WINDOW;
+}
+
+// Exposed for testing.
+export function _clearModelsCache(): void {
+	cachedModels = null;
 }

@@ -59,7 +59,8 @@ export type ToolResultPart = {
 	content: string;
 	isError: boolean;
 };
-export type MessagePart = TextPart | ThinkingPart | ToolUsePart | ToolResultPart;
+export type InfoPart = { type: 'info'; text: string };
+export type MessagePart = TextPart | ThinkingPart | ToolUsePart | ToolResultPart | InfoPart;
 
 export type MessageRow = {
 	id: string;
