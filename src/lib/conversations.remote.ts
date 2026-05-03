@@ -20,13 +20,13 @@ function stubFor(id: string) {
 	return getConversationStub(getEnv(), id);
 }
 
-// Form: start a new conversation. Progressively-enhanced — works without JS,
-// posting through a 303 redirect; enhanced clients get the same redirect
-// without a full page reload. Bound to "New chat" buttons throughout the app.
-export const createNewConversation = form(async () => {
+// Command: start a new conversation. Returns the new id so the caller can
+// `goto(`/c/${id}`)` for an in-place SPA navigation. Bound to "New chat"
+// buttons throughout the app.
+export const createNewConversation = command(async () => {
 	const env = getEnv();
 	const id = await createConversation(env);
-	redirect(303, `/c/${id}`);
+	return { id };
 });
 
 // Form: send a user message into a conversation. Per-conversation instance via

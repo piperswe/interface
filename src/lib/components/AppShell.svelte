@@ -7,6 +7,7 @@
 <script lang="ts">
 	import { fmtRelative, recencyBandLabel } from '$lib/formatters';
 	import type { Snippet } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { createNewConversation } from '$lib/conversations.remote';
 
 	let {
@@ -22,12 +23,26 @@
 	const now = Date.now();
 	const grouped = $derived(groupByBand(conversations, now));
 
+	let creatingChat = $state(false);
+
 	// Collapse the mobile drawer once the user picks a conversation (or hits
 	// Settings) so the conversation is visible immediately. Desktop hides
 	// the toggle in CSS, so this is a no-op there.
 	function closeDrawer() {
 		const toggle = document.getElementById('sidebar-toggle') as HTMLInputElement | null;
 		if (toggle) toggle.checked = false;
+	}
+
+	async function startNewChat() {
+		if (creatingChat) return;
+		creatingChat = true;
+		try {
+			closeDrawer();
+			const { id } = await createNewConversation();
+			await goto(`/c/${id}`);
+		} finally {
+			creatingChat = false;
+		}
 	}
 </script>
 
@@ -37,12 +52,9 @@
 	<aside class="sidebar" aria-label="Conversations">
 		<div class="sidebar-header">
 			<a href="/" class="sidebar-brand" onclick={closeDrawer}>Interface</a>
-			<form {...createNewConversation.enhance(async ({ submit }) => {
-				closeDrawer();
-				await submit();
-			})} class="sidebar-new-chat">
-				<button type="submit" aria-label="New chat" title="New chat">New chat</button>
-			</form>
+			<div class="sidebar-new-chat">
+				<button type="button" aria-label="New chat" title="New chat" onclick={startNewChat} disabled={creatingChat}>New chat</button>
+			</div>
 		</div>
 		<div class="sidebar-search">
 			<input type="search" placeholder="Search conversations…" disabled aria-label="Search" />

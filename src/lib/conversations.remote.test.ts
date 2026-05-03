@@ -53,10 +53,11 @@ async function expectError(promise: Promise<unknown>, status: number, msg?: RegE
 }
 
 describe('createNewConversation', () => {
-	it('creates a row and redirects to /c/<id>', async () => {
-		await expectRedirect(createNewConversation() as Promise<unknown>, '/c/');
+	it('creates a row and returns the new id', async () => {
+		const result = (await createNewConversation()) as { id: string };
+		expect(typeof result.id).toBe('string');
 		const list = await listConversations(env);
-		expect(list).toHaveLength(1);
+		expect(list.map((r) => r.id)).toEqual([result.id]);
 	});
 });
 
