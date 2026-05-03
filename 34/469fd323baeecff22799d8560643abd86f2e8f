@@ -1,0 +1,67 @@
+package.json
+  cf5597da3a2fb233 30
+src/frontend/pages/settings/server.tsx
+  cf5597da3a2fb233 2,4,7-10,13-15
+src/frontend/pages/index/server.tsx
+  cf5597da3a2fb233 2,6-9,11-19,28-31
+src/index.test.ts
+  cf5597da3a2fb233 3,9,12-35,40,47-52,54,59,63,65-66,71,76,80-98,100,106,109-165
+src/frontend/styles.css
+  cf5597da3a2fb233 1,4-10,12-26,28,30-33,38-55,60-80,87-88,91-96,99-102,105-110,113-114,117,121,127-129,132,134,142-155,157-168,172,176,179-199,202-205,207-208,211-233,235,238-300,302-303,306-312,315,317-319,322,324,327-331,334-348,351-353,356-359,362-372,375,379-383,386-422,425-444,448-453,456-463,466-475,478,480-499,503-526,529,532,534-535,538-552,556-560,563-565,568-569,572-601,606-617,622,624-625,632-633,635-636,647-649,659-662,665,674-679,689,698,700-703,708-709,711-732,735-736,740,744-751,757,761-762,765,769,774-780,784,793-803,806-813,824,828,835,846,850-851,859,861,863,897-936,940,944-946,949,956,960,963-1053,1057-1072,1074-1077,1082,1084,1104,1106,1108,1113-1114,1118-1119,1123-1124,1126-1127,1130-1136
+src/frontend/formatters.ts
+  cf5597da3a2fb233 19-43
+src/frontend/components/Message.tsx
+  cf5597da3a2fb233 1,4-73,77,79-84,90,92-94
+src/frontend/components/MetaPanel.tsx
+  cf5597da3a2fb233 11-16,43
+src/frontend/markdown.client.ts
+  cf5597da3a2fb233 1-47
+src/frontend/pages/conversation/server.tsx
+  cf5597da3a2fb233 2,5,14-20,34-35,46,50-53
+src/frontend/hooks/useStickyScroll.ts
+  cf5597da3a2fb233 1-50
+src/durable_objects/ConversationDurableObject.ts
+  cf5597da3a2fb233 21-26,37-56,119-120,157,264-283,324,331,363,381-386,422,431,531,552,555-575
+src/frontend/components/AppShell.tsx
+  cf5597da3a2fb233 1-93
+src/frontend/components/ComposeForm.tsx
+  cf5597da3a2fb233 1,12-29,31-39,41,48-53
+src/frontend/markdown.client.test.ts
+  cf5597da3a2fb233 1-45
+src/frontend/components/Message.test.tsx
+  cf5597da3a2fb233 1-23
+src/index.ts
+  cf5597da3a2fb233 1-5,18,29-32,35,37,39,41-46,48-52,54,56,58-142,144-234
+src/frontend/components/ToolCall.tsx
+  cf5597da3a2fb233 3-6,8-10,12-16,18-49
+src/frontend/hooks/useConversationStream.ts
+  cf5597da3a2fb233 2-10,21-24,27-30,33,35,41-111,121,128-135,152-157,165-168,175-178
+src/frontend/pages/conversation/Page.tsx
+  cf5597da3a2fb233 1,7-8,20-23,30-60,62-65,67-68
+src/types/conversation.ts
+  cf5597da3a2fb233 47-63,79
+src/frontend/pages/settings/Page.tsx
+  cf5597da3a2fb233 12-13,141
+src/frontend/hooks/useStreamingMarkdown.ts
+  cf5597da3a2fb233 1-79
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "34469fd323baeecff22799d8560643abd86f2e8f",
+  "prompts": {
+    "cf5597da3a2fb233": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ea6d0d71-88b4-48e1-ac6b-9382577f59e0",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Piper McCorkle",
+      "messages": [],
+      "total_additions": 2086,
+      "total_deletions": 804,
+      "accepted_lines": 2134,
+      "overriden_lines": 0
+    }
+  }
+}
