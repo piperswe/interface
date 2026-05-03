@@ -524,35 +524,6 @@ textarea:focus {
 	font-variant-numeric: tabular-nums;
 }
 
-.thinking-budget {
-	font-size: 0.85rem;
-	color: var(--muted);
-}
-
-.thinking-budget summary {
-	cursor: pointer;
-	min-height: var(--tap-target);
-	display: inline-flex;
-	align-items: center;
-	padding: 0.25rem 0.5rem;
-	border-radius: var(--radius-sm);
-}
-
-.thinking-budget summary:hover {
-	background: var(--surface-2);
-	color: var(--fg);
-}
-
-.thinking-budget-form {
-	display: flex;
-	gap: 0.5rem;
-	margin-top: 0.5rem;
-}
-
-.thinking-budget-form input {
-	flex: 1;
-}
-
 .conversation-scroll {
 	flex: 1;
 	min-height: 0;
@@ -1174,16 +1145,146 @@ details.meta-panel dd {
 	flex-wrap: wrap;
 }
 
-.compose select {
+/* Compose options popover. Anchored to the bottom-left of the input area;
+   opens upward so the panel sits above the row. */
+.compose-options {
+	position: relative;
 	flex: 1 1 auto;
 	min-width: 0;
-	min-height: 36px;
-	padding: 0.35rem 0.6rem;
-	font-size: 0.875rem;
-	background: var(--surface-2);
-	border: 1px solid var(--border-soft);
+}
+
+.compose-options-button {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.35rem;
+	padding: 0.35rem 0.65rem;
+	min-height: 32px;
+	font-size: 0.8125rem;
+	color: var(--muted);
+	background: transparent;
+	border: 1px solid transparent;
 	border-radius: 999px;
+	cursor: pointer;
+	user-select: none;
+	max-width: 100%;
+	list-style: none;
+	-webkit-tap-highlight-color: transparent;
+}
+
+.compose-options-button::-webkit-details-marker {
+	display: none;
+}
+
+.compose-options-button:hover {
+	background: var(--surface-2);
 	color: var(--fg);
+}
+
+.compose-options[open] > .compose-options-button {
+	background: var(--surface-2);
+	color: var(--fg);
+	border-color: var(--border-soft);
+}
+
+.compose-options-model {
+	font-weight: 500;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.compose-options-sep,
+.compose-options-meta {
+	color: var(--muted-2);
+	white-space: nowrap;
+}
+
+.compose-options-chevron {
+	width: 14px;
+	height: 14px;
+	flex-shrink: 0;
+	transition: transform 120ms ease;
+}
+
+.compose-options[open] .compose-options-chevron {
+	transform: rotate(180deg);
+}
+
+.compose-options-panel {
+	position: absolute;
+	bottom: calc(100% + 0.5rem);
+	left: 0;
+	min-width: 240px;
+	max-width: min(320px, calc(100vw - 2 * var(--side-gap)));
+	padding: 0.5rem;
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-md);
+	box-shadow: var(--shadow-md);
+	z-index: 20;
+	display: flex;
+	flex-direction: column;
+	gap: 0.75rem;
+}
+
+.compose-options-section-label {
+	font-size: 0.7rem;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.07em;
+	color: var(--muted-2);
+	padding: 0 0.5rem 0.25rem;
+}
+
+.compose-options-models {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+}
+
+.compose-options-model-option {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	padding: 0.4rem 0.5rem;
+	border-radius: var(--radius-sm);
+	cursor: pointer;
+	font-size: 0.875rem;
+}
+
+.compose-options-model-option:hover {
+	background: var(--surface-2);
+}
+
+.compose-options-model-option input[type='radio'] {
+	min-height: 0;
+	margin: 0;
+	width: 14px;
+	height: 14px;
+	accent-color: var(--accent);
+}
+
+.compose-options-budget {
+	display: flex;
+	gap: 0.5rem;
+	padding: 0 0.5rem;
+}
+
+.compose-options-budget input {
+	flex: 1;
+	min-width: 0;
+	min-height: 32px;
+	padding: 0.3rem 0.5rem;
+	font-size: 0.85rem;
+}
+
+.compose-options-budget button {
+	min-height: 32px;
+	padding: 0.3rem 0.75rem;
+	font-size: 0.85rem;
 }
 
 .compose .send {

@@ -7,7 +7,7 @@
 	import { fmtCost } from '$lib/formatters';
 	import { attachConversationStream } from '$lib/conversation-stream.svelte';
 	import { createStreamingMarkdownRunner } from '$lib/streaming-markdown.svelte';
-	import { regenerateTitle, setThinkingBudget } from '$lib/conversations.remote';
+	import { regenerateTitle } from '$lib/conversations.remote';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -20,7 +20,6 @@
 	let convState: ConversationState = $state(untrack(() => data.initialState));
 	let scrollEl: HTMLDivElement | null = $state(null);
 	let stickToBottom = $state(true);
-	let budgetInput = $state(untrack(() => data.thinkingBudget ?? 0));
 
 	$effect(() => {
 		convState = initialState;
@@ -96,14 +95,6 @@
 		await regenerateTitle(data.conversation.id);
 		await invalidateAll();
 	}
-
-	async function onBudgetSubmit(e: SubmitEvent) {
-		e.preventDefault();
-		const parsed = Number.parseInt(String(budgetInput), 10);
-		const budget = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-		await setThinkingBudget({ conversationId: data.conversation.id, budget });
-		await invalidateAll();
-	}
 </script>
 
 <svelte:head>
@@ -121,17 +112,6 @@
 			onclick={onRegenerate}
 		>↻</button>
 		{#if totalCost > 0}<span class="conversation-cost">Cost: {fmtCost(totalCost)}</span>{/if}
-		<details class="thinking-budget">
-			<summary>
-				Thinking budget: {data.thinkingBudget && data.thinkingBudget > 0
-					? `${data.thinkingBudget} tokens`
-					: 'off'}
-			</summary>
-			<form class="thinking-budget-form" onsubmit={onBudgetSubmit}>
-				<input type="number" name="budget" min="0" step="1024" placeholder="0 = off" bind:value={budgetInput} />
-				<button type="submit">Save</button>
-			</form>
-		</details>
 	</div>
 	<div bind:this={scrollEl} class="conversation-scroll">
 		<div class="conversation-column">
@@ -152,6 +132,7 @@
 				conversationId={data.conversation.id}
 				models={data.models}
 				defaultModel={lastModel}
+				thinkingBudget={data.thinkingBudget}
 				{busy}
 			/>
 		</div>
