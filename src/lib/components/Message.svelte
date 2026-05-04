@@ -58,7 +58,7 @@
 		{@const result = results.get(part.id)}
 		<ToolCall
 			call={{ id: part.id, name: part.name, input: part.input }}
-			result={result ? { toolUseId: result.toolUseId, content: result.content, isError: result.isError } : undefined}
+			result={result ? { toolUseId: result.toolUseId, content: result.content, isError: result.isError, streaming: result.streaming } : undefined}
 			defaultOpen={isStreaming && !result}
 			{nested}
 		/>

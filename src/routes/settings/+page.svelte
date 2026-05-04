@@ -17,7 +17,7 @@
 		removeSubAgent,
 		toggleSubAgent,
 	} from '$lib/settings.remote';
-	import { confirmSubmit, confirmToastSubmit, justSubmit, toastSubmit } from '$lib/form-actions';
+	import { confirmToastSubmit, justSubmit, toastSubmit } from '$lib/form-actions';
 	import { page } from '$app/state';
 	import { untrack } from 'svelte';
 	import type { ProviderType, ReasoningType } from '$lib/server/providers/types';

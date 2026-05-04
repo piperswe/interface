@@ -54,6 +54,9 @@
 		[...convState.messages].reverse().find((m) => m.role === 'assistant' && m.model)?.model ??
 			(data.defaultModel || (data.models[0] ? `${data.models[0].providerId}/${data.models[0].id}` : '')),
 	);
+	const contextUsed = $derived(
+		[...convState.messages].reverse().find((m) => m.role === 'assistant' && m.meta?.usage?.inputTokens)?.meta?.usage?.inputTokens ?? 0,
+	);
 	// Cost tracking removed with OpenRouter-specific generation stats.
 	// Token counts are available via m.meta.usage if needed.
 	const totalCost = $derived(0);
@@ -189,6 +192,7 @@
 				defaultModel={lastModel}
 				thinkingBudget={data.thinkingBudget}
 				{busy}
+				{contextUsed}
 			/>
 		</div>
 	</div>

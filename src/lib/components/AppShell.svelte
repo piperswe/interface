@@ -143,10 +143,10 @@
 											<span class="sidebar-item-title fw-medium text-truncate">{c.title}</span>
 											<span class="sidebar-item-meta">{fmtRelative(c.updated_at, now)}</span>
 										</a>
-										<form
-											class="sidebar-archive-form"
-											{...archive.for(c.id).enhance(justSubmit)}
-										>
+												<form
+													class="sidebar-archive-form"
+													{...archive.for(`sidebar-${c.id}`).enhance(justSubmit)}
+												>
 											<input type="hidden" name="conversationId" value={c.id} />
 											<input
 												type="hidden"

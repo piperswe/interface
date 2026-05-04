@@ -15,6 +15,7 @@ import { listMcpServers } from '../mcp_servers';
 import { listSubAgents } from '../sub_agents';
 import { createAgentTool } from '../tools/agent';
 import { createGetModelsTool } from '../tools/get_models';
+import { createSwitchModelTool } from '../tools/switch_model';
 import { getSetting, getSystemPrompt, getUserBio } from '../settings';
 import { registerSandboxTools } from '../tools/sandbox';
 import { getSandbox } from '@cloudflare/sandbox';
@@ -331,9 +332,9 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			// where the dead generation left off so the user doesn't have to
 			// retry. Resume also runs lazily on `subscribe` / `addUserMessage`;
 			// the alarm is a backstop for the no-traffic case.
-			const interrupted = this.#sql
-				.exec("SELECT id FROM messages WHERE status = 'streaming' LIMIT 1")
-				.toArray() as unknown as Array<{ id: string }>;
+			const interrupted = this.#sql.exec("SELECT id FROM messages WHERE status = 'streaming' LIMIT 1").toArray() as unknown as Array<{
+				id: string;
+			}>;
 			if (interrupted.length > 0) {
 				await ctx.storage.setAlarm(Date.now() + 200);
 			}
@@ -359,9 +360,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 				value TEXT NOT NULL
 			)
 		`);
-		const row = this.#sql
-			.exec("SELECT value FROM _meta WHERE key = 'schema_version'")
-			.toArray() as unknown as Array<{ value: string }>;
+		const row = this.#sql.exec("SELECT value FROM _meta WHERE key = 'schema_version'").toArray() as unknown as Array<{ value: string }>;
 		const current = row[0] ? Number.parseInt(row[0].value, 10) || 0 : 0;
 		for (const m of MIGRATIONS) {
 			if (m.version <= current) continue;
@@ -380,9 +379,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	// one-way).
 	#getConversationId(): string | null {
 		if (this.#conversationId) return this.#conversationId;
-		const row = this.#sql
-			.exec("SELECT value FROM _meta WHERE key = 'conversation_id'")
-			.toArray() as unknown as Array<{ value: string }>;
+		const row = this.#sql.exec("SELECT value FROM _meta WHERE key = 'conversation_id'").toArray() as unknown as Array<{ value: string }>;
 		this.#conversationId = row[0]?.value ?? null;
 		return this.#conversationId;
 	}
@@ -458,11 +455,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		const messageId = target.id;
 		const model = target.model;
 		if (!model) {
-			this.#sql.exec(
-				"UPDATE messages SET status = 'error', error = ? WHERE id = ?",
-				'Cannot resume generation: model unknown.',
-				messageId,
-			);
+			this.#sql.exec("UPDATE messages SET status = 'error', error = ? WHERE id = ?", 'Cannot resume generation: model unknown.', messageId);
 			this.#broadcast('refresh', {});
 			return;
 		}
@@ -482,9 +475,9 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		// partial text/thinking (those followed the last completed tool round
 		// and were unflushed when the DO died) and normalize any orphan
 		// tool_use blocks so the LLM history is valid.
-		const row = this.#sql
-			.exec('SELECT parts FROM messages WHERE id = ?', messageId)
-			.toArray() as unknown as Array<{ parts: string | null }>;
+		const row = this.#sql.exec('SELECT parts FROM messages WHERE id = ?', messageId).toArray() as unknown as Array<{
+			parts: string | null;
+		}>;
 		const persistedParts = parseJson<MessagePart[]>(row[0]?.parts ?? null) ?? [];
 		const trimmed = trimTrailingPartialOutput(persistedParts);
 		normalizeParts(trimmed, 'Generation interrupted by Durable Object restart; retrying.');
@@ -706,6 +699,77 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		this.#broadcast('refresh', {});
 	}
 
+	async compactContext(conversationId: string): Promise<{ compacted: boolean; droppedCount: number }> {
+		this.#setConversationId(conversationId);
+		if (this.#inProgress || this.#resumePromise) return { compacted: false, droppedCount: 0 };
+
+		const lastModelRow = this.#sql
+			.exec(`SELECT model FROM messages WHERE role = 'assistant' AND ${COMPLETE_PREDICATE} ORDER BY created_at DESC LIMIT 1`)
+			.toArray() as unknown as Array<{ model: string | null }>;
+		const model = lastModelRow[0]?.model;
+		if (!model) return { compacted: false, droppedCount: 0 };
+
+		const history = this.#sql
+			.exec(`SELECT id, role, content, parts FROM messages WHERE ${COMPLETE_PREDICATE} ORDER BY created_at ASC`)
+			.toArray() as unknown as Array<{ id: string; role: string; content: string; parts: string | null }>;
+
+		// Build LLM message array while tracking which DB row ID each LLM message came from.
+		const rowIdAtLLMIndex: string[] = [];
+		const messages: Message[] = [];
+		for (const row of history) {
+			if (row.role === 'assistant') {
+				const parsedParts = parseJson<MessagePart[]>(row.parts) ?? [];
+				const hasToolParts = parsedParts.some((p) => p.type === 'tool_use' || p.type === 'tool_result');
+				if (hasToolParts) {
+					const converted = this.#partsToMessages(parsedParts);
+					for (const _ of converted) rowIdAtLLMIndex.push(row.id);
+					messages.push(...converted);
+				} else {
+					rowIdAtLLMIndex.push(row.id);
+					messages.push({ role: 'assistant', content: row.content });
+				}
+			} else if (row.role === 'user') {
+				rowIdAtLLMIndex.push(row.id);
+				messages.push({ role: 'user', content: row.content });
+			}
+		}
+
+		const compaction = await compactHistory(messages, model, this.env, null, {}, true);
+		if (!compaction.wasCompacted || !compaction.summary) return { compacted: false, droppedCount: 0 };
+
+		// Map dropped LLM message count to DB row IDs to soft-delete.
+		const rowsToDelete = new Set<string>();
+		let llmCount = 0;
+		for (const rowId of rowIdAtLLMIndex) {
+			if (llmCount >= compaction.droppedCount) break;
+			rowsToDelete.add(rowId);
+			llmCount++;
+		}
+
+		const now = nowMs();
+		for (const id of rowsToDelete) {
+			this.#sql.exec('UPDATE messages SET deleted_at = ? WHERE id = ?', now, id);
+		}
+
+		// Insert a visible info message summarising what was compacted.
+		const summaryId = uuid();
+		const infoPart: MessagePart = {
+			type: 'info',
+			text: `Context compacted: summarized ${rowsToDelete.size} earlier messages. Summary: ${compaction.summary}`,
+		};
+		this.#sql.exec(
+			"INSERT INTO messages (id, role, content, model, status, parts, created_at) VALUES (?, 'assistant', ?, ?, 'complete', ?, ?)",
+			summaryId,
+			compaction.summary,
+			model,
+			JSON.stringify([infoPart]),
+			now + 1,
+		);
+
+		this.#broadcast('refresh', {});
+		return { compacted: true, droppedCount: rowsToDelete.size };
+	}
+
 	// Wipe all DO storage. Cloudflare doesn't expose a "delete this DO from
 	// the namespace" API, but `ctx.storage.deleteAll()` drops every row in
 	// the SQLite store, so the next time something resolves this DO id it'll
@@ -879,12 +943,10 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		this.#sql.exec('UPDATE messages SET started_at = ? WHERE id = ?', ip.startedAt, assistantId);
 
 		try {
-			const llm = await this.#routeLLM(model);
+			let currentModel = model;
+			let llm = await this.#routeLLM(model);
 			const history = this.#sql
-				.exec(
-					`SELECT role, content, parts FROM messages WHERE id != ? AND ${COMPLETE_PREDICATE} ORDER BY created_at ASC`,
-					assistantId,
-				)
+				.exec(`SELECT role, content, parts FROM messages WHERE id != ? AND ${COMPLETE_PREDICATE} ORDER BY created_at ASC`, assistantId)
 				.toArray() as unknown as Array<{ role: string; content: string; parts: string | null }>;
 			let messages: Message[] = [];
 			for (const m of history) {
@@ -917,9 +979,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			// OpenRouter-style `{promptTokens, promptTokensDetails}` shape is
 			// kept as a fallback for legacy rows.
 			const lastUsageRow = this.#sql
-				.exec(
-					`SELECT usage_json FROM messages WHERE role = 'assistant' AND ${COMPLETE_PREDICATE} ORDER BY created_at DESC LIMIT 1`,
-				)
+				.exec(`SELECT usage_json FROM messages WHERE role = 'assistant' AND ${COMPLETE_PREDICATE} ORDER BY created_at DESC LIMIT 1`)
 				.toArray() as unknown as Array<{ usage_json: string | null }>;
 			const lastUsage = lastUsageRow[0]?.usage_json
 				? (parseJson<{
@@ -1085,6 +1145,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 				// always sees a paired pair. The preliminary part is swapped for
 				// the final result on completion, and a streaming
 				// `emitToolOutput` callback streams output chunks to the UI.
+				let pendingModelSwitch: string | null = null;
 				for (const call of turnToolCalls) {
 					if (!this.#inProgress || this.#inProgress.messageId !== assistantId) break;
 					parts.push({ type: 'tool_use', id: call.id, name: call.name, input: call.input, thoughtSignature: call.thoughtSignature });
@@ -1118,6 +1179,9 @@ The user's bio, preferences, and context are provided separately in the user tur
 									toolUseId: call.id,
 									chunk,
 								});
+							},
+							switchModel: (newModelId: string) => {
+								pendingModelSwitch = newModelId;
 							},
 						},
 						call.name,
@@ -1182,6 +1246,16 @@ The user's bio, preferences, and context are provided separately in the user tur
 							},
 						],
 					});
+				}
+
+				if (pendingModelSwitch && pendingModelSwitch !== currentModel && this.#inProgress?.messageId === assistantId) {
+					currentModel = pendingModelSwitch;
+					llm = await this.#routeLLM(currentModel);
+					ip.providerID = llm.providerID;
+					const infoPart: MessagePart = { type: 'info', text: `Switched to model: ${currentModel}` };
+					parts.push(infoPart);
+					this.#sql.exec('UPDATE messages SET parts = ? WHERE id = ?', JSON.stringify(parts), assistantId);
+					this.#broadcast('part', { messageId: assistantId, part: infoPart });
 				}
 
 				if (isLastIteration && this.#inProgress?.messageId === assistantId) {
@@ -1336,10 +1410,13 @@ The user's bio, preferences, and context are provided separately in the user tur
 
 	async #buildToolRegistry(model: string, context: ConversationContext): Promise<ToolRegistry> {
 		const registry = await this.#buildBaseToolRegistry(context.mcpServers);
+		const globalIds = context.allModels.map((m) => buildGlobalModelId(m.providerId, m.id));
+		if (globalIds.length > 0) {
+			registry.register(createSwitchModelTool({ availableModelGlobalIds: globalIds }));
+		}
 		const enabledSubAgents = context.subAgents.filter((sa) => sa.enabled);
 		if (enabledSubAgents.length > 0) {
 			registry.register(createGetModelsTool({ currentModel: model, availableModels: context.allModels }));
-			const globalIds = context.allModels.map((m) => buildGlobalModelId(m.providerId, m.id));
 			const agentTool = createAgentTool(
 				{
 					buildInnerToolRegistry: () => this.#buildBaseToolRegistry(context.mcpServers),
@@ -1446,7 +1523,9 @@ The user's bio, preferences, and context are provided separately in the user tur
 
 	#readArtifactsByMessage(): Map<string, Artifact[]> {
 		const rows = this.#sql
-			.exec(`SELECT id, message_id, type, name, language, version, content, content_html, created_at FROM artifacts ORDER BY created_at ASC`)
+			.exec(
+				`SELECT id, message_id, type, name, language, version, content, content_html, created_at FROM artifacts ORDER BY created_at ASC`,
+			)
 			.toArray() as unknown as Array<{
 			id: string;
 			message_id: string;
@@ -1599,20 +1678,14 @@ The user's bio, preferences, and context are provided separately in the user tur
 	// `onlyIfDefault` guards the auto-generated path so a user-edited title
 	// isn't clobbered by a slow waitUntil() catching up. `regenerateTitle`
 	// passes false because the user explicitly asked for a refresh.
-	async #writeTitle(
-		conversationId: string,
-		input: string,
-		opts: { systemPrompt: string; onlyIfDefault: boolean },
-	): Promise<void> {
+	async #writeTitle(conversationId: string, input: string, opts: { systemPrompt: string; onlyIfDefault: boolean }): Promise<void> {
 		const collapsed = input.replace(/\s+/g, ' ').trim();
 		// Pick the configured title model, or fall back to the first available model.
 		// Use the cached models list rather than hitting D1 again.
 		const context = await this.#getContext();
 		const globalIds = context.allModels.map((m) => buildGlobalModelId(m.providerId, m.id));
 		const configuredTitleModel = await getSetting(this.env, 'title_model');
-		const titleModel = configuredTitleModel && globalIds.includes(configuredTitleModel)
-			? configuredTitleModel
-			: globalIds[0];
+		const titleModel = configuredTitleModel && globalIds.includes(configuredTitleModel) ? configuredTitleModel : globalIds[0];
 		if (!titleModel) return; // No models configured, skip title generation
 
 		let title: string;
@@ -1624,7 +1697,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 					{ role: 'system', content: opts.systemPrompt },
 					{ role: 'user', content: collapsed },
 				],
-				maxTokens: 30,
+				maxTokens: 1024,
 				temperature: 0.5,
 			})) {
 				if (ev.type === 'text_delta') buf += ev.delta;
