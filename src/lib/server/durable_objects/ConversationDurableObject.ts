@@ -612,8 +612,17 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		if (!model) return { status: 'invalid', reason: 'missing model' };
 
 		const now = nowMs();
+		const systemId = uuid();
 		const userId = uuid();
 		const assistantId = uuid();
+
+		const systemContent = `The current date and time is: ${new Date(now).toUTCString()}`;
+		this.#sql.exec(
+			"INSERT INTO messages (id, role, content, model, status, created_at) VALUES (?, 'system', ?, NULL, 'complete', ?)",
+			systemId,
+			systemContent,
+			now,
+		);
 
 		// Pre-render the user message so the page load doesn't have to.
 		let userContentHtml: string | null = null;
@@ -627,13 +636,13 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			userId,
 			trimmed,
 			userContentHtml,
-			now,
+			now + 1,
 		);
 		this.#sql.exec(
 			"INSERT INTO messages (id, role, content, model, status, created_at) VALUES (?, 'assistant', '', ?, 'streaming', ?)",
 			assistantId,
 			model,
-			now + 1,
+			now + 2,
 		);
 
 		this.#inProgress = {
@@ -964,8 +973,12 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 				.exec(`SELECT role, content, parts FROM messages WHERE id != ? AND ${COMPLETE_PREDICATE} ORDER BY created_at ASC`, assistantId)
 				.toArray() as unknown as Array<{ role: string; content: string; parts: string | null }>;
 			let messages: Message[] = [];
+			let pendingSystemContent: string | null = null;
 			for (const m of history) {
-				if (m.role === 'assistant') {
+				if (m.role === 'system') {
+					pendingSystemContent = m.content;
+				} else if (m.role === 'assistant') {
+					pendingSystemContent = null;
 					const parsedParts = parseJson<MessagePart[]>(m.parts) ?? [];
 					const hasToolParts = parsedParts.some((p) => p.type === 'tool_use' || p.type === 'tool_result');
 					if (hasToolParts) {
@@ -974,7 +987,9 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 						messages.push({ role: 'assistant', content: m.content });
 					}
 				} else {
-					messages.push({ role: 'user', content: m.content });
+					const prefix = pendingSystemContent ? `[${pendingSystemContent}]\n\n` : '';
+					pendingSystemContent = null;
+					messages.push({ role: 'user', content: prefix + m.content });
 				}
 			}
 
