@@ -1,0 +1,25 @@
+src/routes/c/[id]/+page.svelte
+  893a8d41aa85437c 31-34
+src/app.scss
+  893a8d41aa85437c 167-172
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "68939245cbabd27d9f42bd6ffafc8f57dd9d8433",
+  "prompts": {
+    "893a8d41aa85437c": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_20fb0fdd6ffe1M32RY0hBcyBbT",
+        "model": "cloudflare-workers-ai/@cf/moonshotai/kimi-k2.6"
+      },
+      "human_author": "Piper McCorkle",
+      "messages": [],
+      "total_additions": 10,
+      "total_deletions": 1,
+      "accepted_lines": 10,
+      "overriden_lines": 0
+    }
+  }
+}
