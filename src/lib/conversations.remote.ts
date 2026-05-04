@@ -70,6 +70,14 @@ export const setThinkingBudget = command(
 	},
 );
 
+// Command: abort the current in-flight generation in this conversation.
+// Persists whatever partial content exists as a complete message.
+export const abortGeneration = command('unchecked', async (conversationId: string) => {
+	const stub = stubFor(conversationId);
+	await stub.abortGeneration(conversationId);
+	return { ok: true as const };
+});
+
 // Form: archive a conversation. Soft-delete only — the row stays in D1 and
 // the DO storage is untouched, so unarchive restores everything.
 export const archive = form('unchecked', async (data: { conversationId?: unknown }) => {

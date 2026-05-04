@@ -6,7 +6,7 @@
 
 <script lang="ts">
 	import type { ModelEntry } from '$lib/server/models/config';
-	import { sendMessage, setThinkingBudget } from '$lib/conversations.remote';
+	import { sendMessage, setThinkingBudget, abortGeneration } from '$lib/conversations.remote';
 	import { invalidateAll } from '$app/navigation';
 	import { untrack } from 'svelte';
 	import type { Preset } from './thinking-presets';
@@ -71,6 +71,11 @@
 		const budget = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 		activePresetId = 'custom';
 		await applyBudget(budget);
+	}
+
+	async function onStop() {
+		await abortGeneration(conversationId);
+		await invalidateAll();
 	}
 
 	function onDocPointerDown(e: PointerEvent) {
@@ -192,12 +197,20 @@
 				</div>
 			</div>
 		</details>
-		<button type="submit" class="send btn btn-primary rounded-circle d-flex align-items-center justify-content-center flex-shrink-0" disabled={busy} aria-label={busy ? 'Generating…' : 'Send'}>
-			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width: 18px; height: 18px">
-				<line x1="12" y1="19" x2="12" y2="5" />
-				<polyline points="5 12 12 5 19 12" />
-			</svg>
-		</button>
+			{#if busy}
+			<button type="button" class="send btn btn-primary rounded-circle d-flex align-items-center justify-content-center flex-shrink-0" onclick={onStop} aria-label="Stop">
+				<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="width: 18px; height: 18px">
+					<rect x="6" y="6" width="12" height="12" rx="2" />
+				</svg>
+			</button>
+		{:else}
+			<button type="submit" class="send btn btn-primary rounded-circle d-flex align-items-center justify-content-center flex-shrink-0" disabled={busy} aria-label="Send">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width: 18px; height: 18px">
+					<line x1="12" y1="19" x2="12" y2="5" />
+					<polyline points="5 12 12 5 19 12" />
+				</svg>
+			</button>
+		{/if}
 	</div>
 </form>
 

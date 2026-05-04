@@ -297,4 +297,13 @@ describe('ConversationDurableObject', () => {
 		expect(a1?.status).toBe('error');
 		expect(a1?.error).toBe('Generation interrupted');
 	});
+
+	it('abortGeneration is a safe no-op when nothing is in progress', async () => {
+		const id = await createConversation(env);
+		const stub = stubFor(id);
+		await stub.abortGeneration(id);
+		const state = await readState(stub);
+		expect(state.messages).toEqual([]);
+		expect(state.inProgress).toBeNull();
+	});
 });

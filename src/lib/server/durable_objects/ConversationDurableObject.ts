@@ -278,6 +278,20 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		await this.env.DB.prepare('UPDATE conversations SET thinking_budget = ? WHERE id = ?').bind(value, conversationId).run();
 	}
 
+	async abortGeneration(_conversationId: string): Promise<void> {
+		if (!this.#inProgress) return;
+		const ip = this.#inProgress;
+		this.#sql.exec(
+			`UPDATE messages SET content = ?, status = 'complete', thinking = ?, parts = ? WHERE id = ?`,
+			ip.content,
+			ip.thinking || null,
+			ip.parts.length > 0 ? JSON.stringify(ip.parts) : null,
+			ip.messageId,
+		);
+		this.#inProgress = null;
+		this.#broadcast('refresh', {});
+	}
+
 	// Wipe all DO storage. Cloudflare doesn't expose a "delete this DO from
 	// the namespace" API, but `ctx.storage.deleteAll()` drops every row in
 	// the SQLite store, so the next time something resolves this DO id it'll
@@ -500,6 +514,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 					...(thinking ? { thinking } : {}),
 					...(reasoning ? { reasoning } : {}),
 				})) {
+					if (!this.#inProgress || this.#inProgress.messageId !== assistantId) break;
 					if (ev.type === 'text_delta') {
 						if (!firstTokenAt) firstTokenAt = Date.now();
 						turnText += ev.delta;
@@ -528,6 +543,8 @@ The user's bio, preferences, and context are provided separately in the user tur
 					}
 				}
 
+				if (!this.#inProgress || this.#inProgress.messageId !== assistantId) break;
+
 				if (providerError) throw new Error(providerError);
 
 				if (turnToolCalls.length === 0) break;
@@ -544,6 +561,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 
 				// Execute each tool, broadcast call+result events, append result to history.
 				for (const call of turnToolCalls) {
+					if (!this.#inProgress || this.#inProgress.messageId !== assistantId) break;
 					parts.push({ type: 'tool_use', id: call.id, name: call.name, input: call.input });
 					this.#broadcast('tool_call', {
 						messageId: assistantId,
@@ -597,8 +615,12 @@ The user's bio, preferences, and context are provided separately in the user tur
 				}
 			}
 
-			const finalText = this.#inProgress?.content ?? '';
-			const finalThinking = this.#inProgress?.thinking ?? '';
+			if (!this.#inProgress || this.#inProgress.messageId !== assistantId) {
+				// Aborted by user — don't overwrite the row already persisted by abortGeneration.
+				return;
+			}
+			const finalText = this.#inProgress.content;
+			const finalThinking = this.#inProgress.thinking;
 			this.#sql.exec(
 				`UPDATE messages SET content = ?, status = 'complete', first_token_at = ?, last_chunk_json = ?, usage_json = ?, provider = ?, thinking = ?, tool_calls = ?, tool_results = ?, parts = ? WHERE id = ?`,
 				finalText,
@@ -627,8 +649,12 @@ The user's bio, preferences, and context are provided separately in the user tur
 				this.ctx.waitUntil(this.#fetchGenerationStats(assistantId, lastGenerationId, startedAt, firstTokenAt, lastChunk, usage));
 			}
 		} catch (e) {
+			if (!this.#inProgress || this.#inProgress.messageId !== assistantId) {
+				// Already aborted and cleaned up by abortGeneration.
+				return;
+			}
 			const msg = formatLLMError(e);
-			const partial = this.#inProgress?.content ?? '';
+			const partial = this.#inProgress.content;
 			this.#sql.exec(
 				"UPDATE messages SET content = ?, status = 'error', error = ?, first_token_at = ?, last_chunk_json = ?, usage_json = ? WHERE id = ?",
 				partial,

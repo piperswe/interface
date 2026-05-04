@@ -34,9 +34,12 @@ async function injectSshKey(sandbox: ReturnType<typeof getSandbox>, key: string)
 	} catch {
 		/* may already exist */
 	}
-	await sandbox.writeFile(SSH_KEY_PATH, key);
+	await sandbox.exec('chmod 700 /root/.ssh');
+	const normalizedKey = key.endsWith('\n') ? key : key + '\n';
+	await sandbox.writeFile(SSH_KEY_PATH, normalizedKey);
 	await sandbox.exec(`chmod 600 ${SSH_KEY_PATH}`);
 	await sandbox.writeFile(SSH_CONFIG_PATH, SSH_CONFIG);
+	await sandbox.exec(`chmod 600 ${SSH_CONFIG_PATH}`);
 }
 
 async function ensureSshKey(ctx: ToolContext): Promise<void> {
