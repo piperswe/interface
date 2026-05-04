@@ -31,6 +31,39 @@ become async fetches when JS is available.
 
 Loaders (`+page.server.ts`, `+layout.server.ts`) cover the read path.
 
+### Tips: "A form object can only be attached to a single `<form>` element"
+
+This error means the same `form.for(key)` instance is being spread onto two
+separate `<form>` elements at the same time. Common causes:
+
+1. **Sidebar + main page collision** — You render a form in the sidebar list
+   AND in the main content for the same entity (e.g. an archive button in the
+   sidebar and an archive button on `/c/[id]`). Both use `archive.for(c.id)`,
+   which returns the same cached form object.
+   
+   **Fix:** Namespace the sidebar forms: `archive.for('nav-' + c.id)` instead
+   of `archive.for(c.id)`. The key is only for client-side pending-state
+   isolation; the server still receives the same POST data.
+
+2. **Keyed loops with dynamic data** — A `{#each}` block with keyed items
+   reorders or removes items, but SvelteKit's form object is still cached for
+   that key. When the item reappears or the component remounts, the old form
+   object thinks it's already attached.
+   
+   **Fix:** Use a unique prefix per context (sidebar, modal, page) or use
+   different keys per render location.
+
+3. **Conditional rendering** — The same `.for(key)` is used in an `{#if}` block
+   that toggles. When the form unmounts and remounts, SvelteKit sees the same
+   form object being attached to a new element.
+   
+   **Fix:** Use a stable unique key per mount point, or track the DOM element
+   lifecycle more carefully.
+
+**Rule of thumb:** If you call `someForm.for(id)` in two different places
+(sidebar + page, or two modals), those two places MUST use different keys.
+Prefixing is the safest approach.
+
 ### Durable Objects on SvelteKit
 
 `@sveltejs/adapter-cloudflare` emits `_worker.js` with only a default export.
