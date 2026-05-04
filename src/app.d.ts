@@ -42,6 +42,10 @@ declare global {
 		DEEPSEEK_KEY?: string;
 		KAGI_KEY?: string;
 		YNAB_TOKEN?: string;
+		// Cloudflare API token sent in the `cf-aig-authorization` header
+		// when the AI Gateway is configured (Unified Billing / BYOK auth).
+		// Provider-specific keys are *not* sent through the gateway path.
+		CF_AI_GATEWAY_TOKEN?: string;
 		// Optional Sandbox binding. When present, conversation-scoped
 		// sandbox tools are registered in the tool registry.
 		SANDBOX?: DurableObjectNamespace<Sandbox>;

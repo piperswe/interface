@@ -22,6 +22,7 @@
 	const modelListForm = saveSetting.for('model_list');
 	const thresholdForm = saveSetting.for('context_compaction_threshold');
 	const summaryTokensForm = saveSetting.for('context_compaction_summary_tokens');
+	const cfAIGatewayIdForm = saveSetting.for('cf_ai_gateway_id');
 
 	let models = $state(untrack(() => data.modelList.map((m) => ({ slug: m.slug, label: m.label, reasoning: m.reasoning as ReasoningType | undefined }))));
 
@@ -96,6 +97,34 @@
 					<option value="light">Light</option>
 					<option value="dark">Dark</option>
 				</select>
+				<button type="submit" class="btn btn-primary">Save</button>
+			</div>
+		</form>
+	</section>
+
+	<section class="settings-section border rounded p-3 bg-body" aria-labelledby="cf-ai-gateway">
+		<h2 id="cf-ai-gateway" class="fs-6 fw-semibold m-0 mb-2">Cloudflare AI Gateway</h2>
+		<p class="text-muted small m-0 mb-2">
+			When set, all third-party provider traffic (Anthropic, OpenAI, DeepSeek,
+			and any catch-all model) is routed through your AI Gateway with
+			Unified Billing / BYOK auth. Workers AI (<code>@cf/…</code>) is always
+			routed via the binding and bills against Workers AI Neurons regardless.
+			Set <code>CF_AI_GATEWAY_TOKEN</code> as a Worker secret to authenticate
+			gateway requests.
+		</p>
+		<form {...cfAIGatewayIdForm.enhance(justSubmit)}>
+			<input type="hidden" name="key" value="cf_ai_gateway_id" />
+			<label for="cf-ai-gateway-input" class="form-label">Gateway slug</label>
+			<div class="d-flex gap-2">
+				<input
+					id="cf-ai-gateway-input"
+					type="text"
+					name="value"
+					value={data.cfAIGatewayId}
+					placeholder="e.g. my-gateway"
+					class="form-control"
+					style="font-family: monospace; max-width: 24rem"
+				/>
 				<button type="submit" class="btn btn-primary">Save</button>
 			</div>
 		</form>

@@ -32,8 +32,9 @@ export type AgentToolDeps = {
 	// User-id scoping. Single-user mode passes 1; multi-user passes the
 	// session user.
 	userId?: number;
-	// LLM factory; defaults to `routeLLM`. Tests inject a fake.
-	routeLLM?: (env: Env, model: string) => LLM;
+	// LLM factory; defaults to `routeLLM`. Tests inject a fake. May return
+	// either an `LLM` synchronously or a `Promise<LLM>` — both are awaited.
+	routeLLM?: (env: Env, model: string) => LLM | Promise<LLM>;
 };
 
 export function createAgentTool(deps: AgentToolDeps, subAgents: SubAgentRow[]): Tool | null {
@@ -132,7 +133,7 @@ export function createAgentTool(deps: AgentToolDeps, subAgents: SubAgentRow[]): 
 			// The caller arg is required by the schema, so it's almost always
 			// what runs; the fallbacks remain for defensive correctness.
 			const model = requestedModel || (subAgent.model && subAgent.model.trim() ? subAgent.model : deps.defaultModel);
-			const llm = (deps.routeLLM ?? defaultRouteLLM)(ctx.env, model);
+			const llm = await (deps.routeLLM ?? defaultRouteLLM)(ctx.env, model);
 
 			const messages: Message[] = [{ role: 'user', content: args.prompt }];
 			const maxIter = subAgent.maxIterations && subAgent.maxIterations > 0 ? subAgent.maxIterations : DEFAULT_MAX_INNER_ITERATIONS;
