@@ -70,6 +70,15 @@ describe('archive / unarchive', () => {
 		expect(archived.map((r) => r.id)).toEqual([id]);
 	});
 
+	it('archive respects an explicit redirectTo', async () => {
+		const id = await createConversation(env);
+		await expectRedirect(
+			archive({ conversationId: id, redirectTo: '/archive' }) as Promise<unknown>,
+			'/archive',
+		);
+		expect(await listConversations(env)).toEqual([]);
+	});
+
 	it('unarchive restores the conversation', async () => {
 		const id = await createConversation(env);
 		await expectRedirect(archive({ conversationId: id }) as Promise<unknown>, '/');

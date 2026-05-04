@@ -80,11 +80,12 @@ export const abortGeneration = command('unchecked', async (conversationId: strin
 
 // Form: archive a conversation. Soft-delete only — the row stays in D1 and
 // the DO storage is untouched, so unarchive restores everything.
-export const archive = form('unchecked', async (data: { conversationId?: unknown }) => {
+export const archive = form('unchecked', async (data: { conversationId?: unknown; redirectTo?: unknown }) => {
 	const id = String(data.conversationId ?? '');
 	if (!CONVERSATION_ID_PATTERN.test(id)) error(400, `invalid conversation id: ${id}`);
 	await archiveConversation(getEnv(), id);
-	redirect(303, '/');
+	const location = String(data.redirectTo ?? '/');
+	redirect(303, location);
 });
 
 // Form: unarchive a conversation. Reverses `archive`.
