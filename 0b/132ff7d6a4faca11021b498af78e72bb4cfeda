@@ -1,0 +1,28 @@
+src/lib/conversations.remote.test.ts
+  7c3f40c7bae6d5c0 73-79
+src/lib/components/AppShell.svelte
+  3b2ef1ca0f0ebf5d 98
+  7c3f40c7bae6d5c0 10,12-14,30-31,49-97,99-101,104,129,139-161,174-179,212,238,259-316,382-386
+src/lib/conversations.remote.ts
+  7c3f40c7bae6d5c0 83,87-88
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "0b132ff7d6a4faca11021b498af78e72bb4cfeda",
+  "prompts": {
+    "7c3f40c7bae6d5c0": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_20b28f6f7ffew733VlWTVoPFWN",
+        "model": "cloudflare-ai-gateway/workers-ai/@cf/moonshotai/kimi-k2.6"
+      },
+      "human_author": "Piper McCorkle",
+      "messages": [],
+      "total_additions": 178,
+      "total_deletions": 15,
+      "accepted_lines": 166,
+      "overriden_lines": 0
+    }
+  }
+}
