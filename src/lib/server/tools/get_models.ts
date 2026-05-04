@@ -1,14 +1,12 @@
-// `get_models` tool: lists the user's curated model catalogue and the model
-// the parent agent is currently running on. The main agent is expected to
-// call this before delegating to a sub-agent (see the `agent` tool's
-// description), then ask the user which model the sub-agent should use.
+// `get_models` tool: lists the user's configured models grouped by provider,
+// and the model the parent agent is currently running on.
 
-import type { ModelEntry } from '../models/config';
+import type { ProviderModel } from '../providers/types';
 import type { Tool, ToolExecutionResult } from './registry';
 
 export type GetModelsToolDeps = {
 	currentModel: string;
-	availableModels: ModelEntry[];
+	availableModels: ProviderModel[];
 };
 
 export function createGetModelsTool(deps: GetModelsToolDeps): Tool {
@@ -23,12 +21,23 @@ export function createGetModelsTool(deps: GetModelsToolDeps): Tool {
 			const lines: string[] = [];
 			lines.push(`Current model (parent agent): ${deps.currentModel}`);
 			if (deps.availableModels.length === 0) {
-				lines.push('', 'No curated model list configured.');
+				lines.push('', 'No models configured.');
 			} else {
-				lines.push('', 'Available models:');
+				// Group by provider for readability
+				const byProvider = new Map<string, ProviderModel[]>();
 				for (const m of deps.availableModels) {
-					const isCurrent = m.slug === deps.currentModel;
-					lines.push(`- ${m.slug}${m.label && m.label !== m.slug ? ` (${m.label})` : ''}${isCurrent ? ' [current]' : ''}`);
+					const list = byProvider.get(m.providerId) ?? [];
+					list.push(m);
+					byProvider.set(m.providerId, list);
+				}
+				lines.push('', 'Available models:');
+				for (const [providerId, models] of byProvider) {
+					lines.push(`\n${providerId}:`);
+					for (const m of models) {
+						const globalId = `${m.providerId}/${m.id}`;
+						const isCurrent = globalId === deps.currentModel;
+						lines.push(`  - ${globalId}${m.name && m.name !== m.id ? ` (${m.name})` : ''}${isCurrent ? ' [current]' : ''}`);
+					}
 				}
 			}
 			return { content: lines.join('\n') };

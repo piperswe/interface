@@ -69,27 +69,12 @@ export async function getUserBio(env: Env, userId: number = SINGLE_USER_ID): Pro
 	return getSetting(env, 'user_bio', userId);
 }
 
-// ---- Model list helpers ----------------------------------------------------------------
+// ---- Secret keys (tool-specific, not provider API keys) --------------------------------
 
-import { parseModelList, type ModelEntry } from './models/config';
-
-export async function getModelList(env: Env, userId: number = SINGLE_USER_ID): Promise<ModelEntry[]> {
-	const raw = await getSetting(env, 'model_list', userId);
-	return parseModelList(raw);
-}
-
-// Provider keys are stored in Worker secrets (per Phase 0a Open Question 5
-// default — envelope encryption deferred to Phase 6 multi-user). The Settings
-// UI surfaces only "configured / not configured" status; actual key edits
-// happen via `wrangler secret put`. Single source of truth for the optional-
-// secret set — keep this list in sync with the optional fields declared on
-// `Cloudflare.Env` in src/app.d.ts.
+// The Settings UI surfaces only "configured / not configured" status for
+// secrets that remain as Worker secrets. Provider API keys moved to D1 in
+// the providers table.
 export const KNOWN_SECRET_KEYS = [
-	'OPENROUTER_KEY',
-	'ANTHROPIC_KEY',
-	'OPENAI_KEY',
-	'GOOGLE_KEY',
-	'DEEPSEEK_KEY',
 	'KAGI_KEY',
 	'YNAB_TOKEN',
 	'SANDBOX_SSH_KEY',

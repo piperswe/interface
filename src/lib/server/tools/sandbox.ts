@@ -92,7 +92,7 @@ export const sandboxExecTool: Tool = {
 	definition: {
 		name: 'sandbox_exec',
 		description:
-			'Execute a shell command inside the conversation\'s isolated sandbox. Returns stdout, stderr, exit code, and success status. Use for running scripts, installing packages, compiling code, or any shell-level operation.',
+			"Execute a shell command inside the conversation's isolated sandbox. Returns stdout, stderr, exit code, and success status. Use for running scripts, installing packages, compiling code, or any shell-level operation. The sandbox is running the latest Debian testing as root. Use `apt-get` to install packages. Ensure you run `apt-get update` before `apt-get install`.",
 		inputSchema: execInputSchema,
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
@@ -183,7 +183,7 @@ export const sandboxRunCodeTool: Tool = {
 	definition: {
 		name: 'sandbox_run_code',
 		description:
-			'Execute Python, JavaScript, or TypeScript code inside the conversation\'s isolated sandbox. The default execution context is reused for the same language, so variables and imports persist across calls in this conversation. Returns the last expression result, stdout/stderr logs, and any execution errors. Use for data analysis, calculations, or any interpreted code.',
+			"Execute Python, JavaScript, or TypeScript code inside the conversation's isolated sandbox. The default execution context is reused for the same language, so variables and imports persist across calls in this conversation. Returns the last expression result, stdout/stderr logs, and any execution errors. Use for data analysis, calculations, or any interpreted code.",
 		inputSchema: runCodeInputSchema,
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
@@ -262,7 +262,7 @@ const readFileInputSchema = {
 export const sandboxReadFileTool: Tool = {
 	definition: {
 		name: 'sandbox_read_file',
-		description: 'Read the contents of a file from the conversation\'s sandbox filesystem.',
+		description: "Read the contents of a file from the conversation's sandbox filesystem.",
 		inputSchema: readFileInputSchema,
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
@@ -304,7 +304,7 @@ const writeFileInputSchema = {
 export const sandboxWriteFileTool: Tool = {
 	definition: {
 		name: 'sandbox_write_file',
-		description: 'Write (or overwrite) a file in the conversation\'s sandbox filesystem.',
+		description: "Write (or overwrite) a file in the conversation's sandbox filesystem.",
 		inputSchema: writeFileInputSchema,
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
@@ -342,7 +342,7 @@ const deleteFileInputSchema = {
 export const sandboxDeleteFileTool: Tool = {
 	definition: {
 		name: 'sandbox_delete_file',
-		description: 'Delete a file from the conversation\'s sandbox filesystem.',
+		description: "Delete a file from the conversation's sandbox filesystem.",
 		inputSchema: deleteFileInputSchema,
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
@@ -381,7 +381,7 @@ const mkdirInputSchema = {
 export const sandboxMkdirTool: Tool = {
 	definition: {
 		name: 'sandbox_mkdir',
-		description: 'Create a directory in the conversation\'s sandbox filesystem.',
+		description: "Create a directory in the conversation's sandbox filesystem.",
 		inputSchema: mkdirInputSchema,
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
@@ -416,7 +416,7 @@ const existsInputSchema = {
 export const sandboxExistsTool: Tool = {
 	definition: {
 		name: 'sandbox_exists',
-		description: 'Check whether a file or directory exists in the conversation\'s sandbox filesystem.',
+		description: "Check whether a file or directory exists in the conversation's sandbox filesystem.",
 		inputSchema: existsInputSchema,
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {

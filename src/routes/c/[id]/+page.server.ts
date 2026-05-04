@@ -1,7 +1,8 @@
 import { error } from '@sveltejs/kit';
 import { getConversation } from '$lib/server/conversations';
 import { getConversationStub } from '$lib/server/durable_objects';
-import { getModelList } from '$lib/server/settings';
+import { listAllModels } from '$lib/server/providers/models';
+import { getSetting } from '$lib/server/settings';
 import { renderArtifactCode, renderMarkdown } from '$lib/server/markdown';
 import type { Artifact, ConversationState, MessagePart, MessageRow } from '$lib/types/conversation';
 import { CONVERSATION_ID_PATTERN } from '$lib/conversation-id';
@@ -22,10 +23,6 @@ async function renderPartHtml(part: MessagePart): Promise<MessagePart> {
 }
 
 async function withRenderedMarkdown(state: ConversationState): Promise<ConversationState> {
-	// Re-render only what the DO didn't already render. The DO writes HTML at
-	// generation completion (and on user-message insert / artifact add); for
-	// rows that pre-date that — and for in-flight assistant rows — we render
-	// here. This keeps repeated page loads on a finished conversation cheap.
 	const messages: MessageRow[] = await Promise.all(
 		state.messages.map(async (m) => {
 			const artifacts = m.artifacts
@@ -68,10 +65,11 @@ export const load: PageServerLoad = async ({ params, platform }) => {
 	if (!CONVERSATION_ID_PATTERN.test(conversationId)) error(404, 'not found');
 
 	const stub = getConversationStub(platform.env, conversationId);
-	const [state, models, conversation] = await Promise.all([
+	const [state, models, conversation, defaultModel] = await Promise.all([
 		stub.getState(),
-		getModelList(platform.env),
+		listAllModels(platform.env),
 		getConversation(platform.env, conversationId),
+		getSetting(platform.env, 'default_model'),
 	]);
 	if (!conversation) error(404, 'not found');
 
@@ -80,5 +78,6 @@ export const load: PageServerLoad = async ({ params, platform }) => {
 		models,
 		thinkingBudget: conversation.thinking_budget ?? null,
 		initialState: await withRenderedMarkdown(state),
+		defaultModel: defaultModel ?? '',
 	};
 };

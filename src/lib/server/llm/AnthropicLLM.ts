@@ -9,7 +9,6 @@ import { formatError } from './errors';
 //   - cacheControl: applied to the last system block + the tools list when set.
 //   - tools: passed through; tool_use blocks stream back as tool_call_delta /
 //     tool_call events.
-// PRD §5.1 / §7.2 P1.1 / P1.8 — extended thinking, prompt caching.
 
 const DEFAULT_MAX_TOKENS = 4096;
 
@@ -18,8 +17,14 @@ export class AnthropicLLM implements LLM {
 	model: string;
 	providerID: string;
 
-	constructor(client: Anthropic, model: string, providerID: string = 'anthropic') {
-		this.#client = client;
+	constructor(apiKey: string, model: string, providerID?: string);
+	constructor(client: Anthropic, model: string, providerID?: string);
+	constructor(apiKeyOrClient: string | Anthropic, model: string, providerID: string = 'anthropic') {
+		if (typeof apiKeyOrClient === 'string') {
+			this.#client = new Anthropic({ apiKey: apiKeyOrClient });
+		} else {
+			this.#client = apiKeyOrClient;
+		}
 		this.model = model;
 		this.providerID = providerID;
 	}
@@ -130,8 +135,6 @@ function toAnthropicMessages(messages: Message[]): Messages.MessageParam[] {
 		.filter((m) => m.role === 'user' || m.role === 'assistant' || m.role === 'tool')
 		.map((m) => {
 			if (m.role === 'tool') {
-				// Phase 3b will materialize tool messages from the tool execution loop.
-				// Until then, surface as a user message carrying the tool_result block.
 				const blocks = typeof m.content === 'string' ? [{ type: 'text' as const, text: m.content }] : m.content;
 				return { role: 'user' as const, content: blocksToAnthropic(blocks) };
 			}
@@ -195,4 +198,3 @@ function toAnthropicTools(tools: ToolDefinition[], cacheControl: CacheControl | 
 		return tool;
 	});
 }
-

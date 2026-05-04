@@ -14,6 +14,9 @@ RUN apt-get update \
     npm \
 	python3 \
     python-is-python3 \
- && apt-get clean -y
+    curl \
+    wget \
+    ca-certificates \
+	&& apt-get clean -y
 
 ENTRYPOINT ["/sandbox"]

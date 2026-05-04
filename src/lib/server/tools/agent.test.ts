@@ -106,7 +106,7 @@ describe('createAgentTool', () => {
 			{
 				buildInnerToolRegistry: async () => new ToolRegistry(),
 				defaultModel: 'fake-model',
-				routeLLM: () => llm,
+				routeLLM: async () => llm,
 			},
 			list,
 		)!;
@@ -134,7 +134,7 @@ describe('createAgentTool', () => {
 			{
 				buildInnerToolRegistry: async () => new ToolRegistry().register(echoTool),
 				defaultModel: 'fake-model',
-				routeLLM: () => llm,
+				routeLLM: async () => llm,
 			},
 			list,
 		)!;
@@ -165,7 +165,7 @@ describe('createAgentTool', () => {
 			{
 				buildInnerToolRegistry: async () => new ToolRegistry(),
 				defaultModel: 'fake-model',
-				routeLLM: () => llm,
+				routeLLM: async () => llm,
 			},
 			list,
 		)!;
@@ -205,7 +205,7 @@ describe('createAgentTool', () => {
 			{
 				buildInnerToolRegistry: async () => new ToolRegistry().register(echoTool).register(banned),
 				defaultModel: 'fake-model',
-				routeLLM: () => llm,
+				routeLLM: async () => llm,
 			},
 			list,
 		)!;
@@ -226,7 +226,7 @@ describe('createAgentTool', () => {
 			{
 				buildInnerToolRegistry: async () => new ToolRegistry(),
 				defaultModel: 'fake-model',
-				routeLLM: () => new ScriptedLLM([]),
+				routeLLM: async () => new ScriptedLLM([]),
 			},
 			list,
 		)!;
@@ -248,7 +248,7 @@ describe('createAgentTool', () => {
 			{
 				buildInnerToolRegistry: async () => new ToolRegistry().register(echoTool),
 				defaultModel: 'fake-model',
-				routeLLM: () => llm,
+				routeLLM: async () => llm,
 			},
 			list,
 		)!;
@@ -265,7 +265,7 @@ describe('createAgentTool', () => {
 			{
 				buildInnerToolRegistry: async () => new ToolRegistry(),
 				defaultModel: 'fake-model',
-				routeLLM: () => llm,
+				routeLLM: async () => llm,
 			},
 			list,
 		)!;
@@ -283,8 +283,8 @@ describe('createAgentTool', () => {
 			{
 				buildInnerToolRegistry: async () => new ToolRegistry(),
 				defaultModel: 'parent-model',
-				routeLLM: (_env, model) => {
-					seen.push(model);
+				routeLLM: async (_env, _globalId) => {
+					seen.push(_globalId);
 					return llm;
 				},
 			},
@@ -303,8 +303,8 @@ describe('createAgentTool', () => {
 			{
 				buildInnerToolRegistry: async () => new ToolRegistry(),
 				defaultModel: 'parent-model',
-				routeLLM: (_env, model) => {
-					seen.push(model);
+				routeLLM: async (_env, _globalId) => {
+					seen.push(_globalId);
 					return llm;
 				},
 			},
@@ -321,7 +321,7 @@ describe('createAgentTool', () => {
 			{
 				buildInnerToolRegistry: async () => new ToolRegistry(),
 				defaultModel: 'parent-model',
-				routeLLM: () => new ScriptedLLM([]),
+				routeLLM: async () => new ScriptedLLM([]),
 			},
 			list,
 		)!;
@@ -337,8 +337,8 @@ describe('createAgentTool', () => {
 			{
 				buildInnerToolRegistry: async () => new ToolRegistry(),
 				defaultModel: 'parent-model',
-				availableModelSlugs: ['model-a', 'model-b'],
-				routeLLM: () => new ScriptedLLM([]),
+				availableModelGlobalIds: ['model-a', 'model-b'],
+				routeLLM: async () => new ScriptedLLM([]),
 			},
 			list,
 		)!;
@@ -358,7 +358,7 @@ describe('createAgentTool', () => {
 			{
 				buildInnerToolRegistry: async () => new ToolRegistry(),
 				defaultModel: 'parent-model',
-				availableModelSlugs: ['model-a', 'model-b'],
+				availableModelGlobalIds: ['model-a', 'model-b'],
 			},
 			list,
 		)!;

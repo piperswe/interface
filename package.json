@@ -13,7 +13,8 @@
 		"test": "vitest run",
 		"test:watch": "vitest",
 		"test:coverage": "vitest run --coverage",
-		"cf-typegen": "wrangler types"
+		"cf-typegen": "wrangler types",
+		"migrate": "wrangler d1 migrations apply interface --remote"
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-pool-workers": "^0.15.2",
@@ -42,6 +43,7 @@
 		"marked": "^14.1.4",
 		"marked-katex-extension": "^5.1.8",
 		"marked-shiki": "^1.2.1",
+		"openai": "^6.36.0",
 		"shiki": "^4.0.2",
 		"ynab": "^4.1.0"
 	}

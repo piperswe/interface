@@ -5,7 +5,6 @@ import {
 	describeSecretKeys,
 	getContextCompactionSummaryTokens,
 	getContextCompactionThreshold,
-	getModelList,
 	getSetting,
 	getSystemPrompt,
 	getUserBio,
@@ -13,7 +12,6 @@ import {
 	listSettings,
 	setSetting,
 } from './settings';
-import { DEFAULT_MODEL_LIST } from './models/config';
 
 afterEach(async () => {
 	await env.DB.prepare('DELETE FROM settings').run();
@@ -56,21 +54,20 @@ describe('settings', () => {
 		expect(await getSetting(env, 'theme', 2)).toBe('light');
 	});
 
-	it('describeSecretKeys reports configured for the seeded OPENROUTER_KEY', () => {
+	it('describeSecretKeys reports configured for seeded secrets', () => {
 		const statuses = describeSecretKeys(env);
-		expect(statuses.find((s) => s.name === 'OPENROUTER_KEY')?.configured).toBe(true);
+		expect(statuses.find((s) => s.name === 'KAGI_KEY')?.configured).toBe(true);
 	});
 
 	it('describeSecretKeys reports missing for unset keys', () => {
 		const statuses = describeSecretKeys(env);
-		const missing = statuses.find((s) => s.name === 'ANTHROPIC_KEY');
+		const missing = statuses.find((s) => s.name === 'SANDBOX_SSH_KEY');
 		expect(missing?.configured).toBe(false);
 	});
 
 	it('exports the canonical secret key list', () => {
-		expect(KNOWN_SECRET_KEYS).toContain('OPENROUTER_KEY');
-		expect(KNOWN_SECRET_KEYS).toContain('ANTHROPIC_KEY');
 		expect(KNOWN_SECRET_KEYS).toContain('KAGI_KEY');
+		expect(KNOWN_SECRET_KEYS).toContain('YNAB_TOKEN');
 		expect(KNOWN_SECRET_KEYS).toContain('SANDBOX_SSH_KEY');
 	});
 
@@ -122,19 +119,6 @@ describe('settings', () => {
 			await setSetting(env, 'user_bio', 'I like cats.');
 			expect(await getSystemPrompt(env)).toBe('You are a helpful pirate.');
 			expect(await getUserBio(env)).toBe('I like cats.');
-		});
-	});
-
-	describe('getModelList', () => {
-		it('returns the defaults when unset', async () => {
-			expect(await getModelList(env)).toEqual(DEFAULT_MODEL_LIST);
-		});
-		it('returns the parsed list when set', async () => {
-			await setSetting(env, 'model_list', JSON.stringify([{ slug: 'foo', label: 'Foo' }, { slug: 'bar', label: 'Bar' }]));
-			expect(await getModelList(env)).toEqual([
-				{ slug: 'foo', label: 'Foo' },
-				{ slug: 'bar', label: 'Bar' },
-			]);
 		});
 	});
 });
