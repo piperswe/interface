@@ -1,0 +1,47 @@
+src/lib/components/AppShell.svelte
+  c8216e317ffa81fb 49-51,53,57,59,61,68,74,78,89-91,94,98-100,103-236
+package.json
+  c8216e317ffa81fb 26,38
+src/routes/settings/+page.svelte
+  c8216e317ffa81fb 95-96,98-99,102-104,109,114-116,122,134-136,143,145-147,153,159,165-166,171,173,175,177,179,184,186,188,194,197,202-204,213,215-217,221,225,229,232-233,242-243,248,250,257-258,260,264,271,274,281,284,290,293,301-302,305,311,313,317,322-324,334,336,340-342,352,354,358-360,367-371,375,381-382,389,391,401-403,409-411,416-418,423,425-427,430,435-437,443-444,453,456-457,460,462-463,471,474-475,480-542
+src/lib/components/ComposeForm.svelte
+  c8216e317ffa81fb 94,104,106,128,131,147,150,166,185,187,195-196,203-368
+src/lib/components/MetaPanel.svelte
+  c8216e317ffa81fb 11,15,43-108
+src/routes/c/[id]/+page.svelte
+  c8216e317ffa81fb 114-116,121,125,127,149-150,154,162-163,174-296
+src/app.scss
+  c8216e317ffa81fb 1-166
+src/routes/archive/+page.svelte
+  c8216e317ffa81fb 14-15,19,21-24,28,35,44,52-65
+src/lib/components/Message.svelte
+  c8216e317ffa81fb 33,35,53,68,93,95,99,107,110,116-422
+src/lib/components/ToolCall.svelte
+  c8216e317ffa81fb 20-22,24,28,30,33,36,41,44,48-114
+src/lib/components/Artifact.svelte
+  c8216e317ffa81fb 9-10,19,22-53
+src/routes/+layout.svelte
+  c8216e317ffa81fb 2
+src/routes/+page.svelte
+  c8216e317ffa81fb 23-26,28-33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "7368f3157023f479feafc80d51954fb5ab663e45",
+  "prompts": {
+    "c8216e317ffa81fb": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_20fc753e6ffehFZ7SH8UnhmDrJ",
+        "model": "cloudflare-workers-ai/@cf/moonshotai/kimi-k2.6"
+      },
+      "human_author": "Piper McCorkle",
+      "messages": [],
+      "total_additions": 1376,
+      "total_deletions": 268,
+      "accepted_lines": 1342,
+      "overriden_lines": 0
+    }
+  }
+}
