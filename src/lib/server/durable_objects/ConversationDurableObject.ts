@@ -1069,8 +1069,14 @@ The user's bio, preferences, and context are provided separately in the user tur
 					llm = await this.#routeLLM(currentModel);
 					const infoPart: MessagePart = { type: 'info', text: `Switched to model: ${currentModel}` };
 					parts.push(infoPart);
-					this.#sql.exec('UPDATE messages SET parts = ? WHERE id = ?', JSON.stringify(parts), assistantId);
+					this.#sql.exec(
+						'UPDATE messages SET model = ?, parts = ? WHERE id = ?',
+						currentModel,
+						JSON.stringify(parts),
+						assistantId,
+					);
 					this.#broadcast('part', { messageId: assistantId, part: infoPart });
+					this.#broadcast('model_switch', { messageId: assistantId, model: currentModel });
 				}
 
 				if (isLastIteration && this.#inProgress?.messageId === assistantId) {
