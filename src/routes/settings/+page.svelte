@@ -8,7 +8,7 @@
 		removeSubAgent,
 		toggleSubAgent,
 	} from '$lib/settings.remote';
-	import { confirmSubmit, justSubmit } from '$lib/form-actions';
+	import { confirmSubmitToast, justSubmitToast } from '$lib/form-actions';
 	import { page } from '$app/state';
 	import { untrack } from 'svelte';
 	import type { ReasoningType } from '$lib/server/models/config';
@@ -43,6 +43,11 @@
 		),
 	);
 
+	// Backing value for the out-of-band "Reset to defaults" form below: posts
+	// the seeded defaults directly to `saveSetting` so a single click both
+	// reverts the local model edits and persists them.
+	const serializedDefaults = $derived(JSON.stringify(data.defaultModelList, null, 2));
+
 	function addModel() {
 		models.push({ slug: '', label: '', reasoning: undefined });
 	}
@@ -67,16 +72,10 @@
 		}
 	}
 
-	function resetToDefaults() {
-		models = data.defaultModelList.map((m) => ({
-			slug: m.slug,
-			label: m.label,
-			reasoning: m.reasoning as ReasoningType | undefined,
-		}));
-	}
-
-	const deleteServer = (name: string) => confirmSubmit(`Delete MCP server "${name}"?`);
-	const deleteSubAgentBy = (name: string) => confirmSubmit(`Delete sub-agent "${name}"?`);
+	const deleteServer = (name: string) =>
+		confirmSubmitToast(`Delete MCP server "${name}"?`, 'MCP server deleted', 'Failed to delete MCP server');
+	const deleteSubAgentBy = (name: string) =>
+		confirmSubmitToast(`Delete sub-agent "${name}"?`, 'Sub-agent deleted', 'Failed to delete sub-agent');
 </script>
 
 <svelte:head>
@@ -90,7 +89,7 @@
 
 			<section class="settings-section border rounded p-3 bg-body" aria-labelledby="appearance">
 				<h2 id="appearance" class="fs-6 fw-semibold m-0 mb-2">Appearance</h2>
-				<form {...themeForm.enhance(justSubmit)}>
+				<form {...themeForm.enhance(justSubmitToast())}>
 					<input type="hidden" name="key" value="theme" />
 					<label for="theme-select" class="form-label">Theme</label>
 					<div class="d-flex gap-2">
@@ -114,7 +113,7 @@
 					Set <code>CF_AI_GATEWAY_TOKEN</code> as a Worker secret to authenticate
 					gateway requests.
 				</p>
-				<form {...cfAIGatewayIdForm.enhance(justSubmit)}>
+				<form {...cfAIGatewayIdForm.enhance(justSubmitToast())}>
 					<input type="hidden" name="key" value="cf_ai_gateway_id" />
 					<label for="cf-ai-gateway-input" class="form-label">Gateway slug</label>
 					<div class="d-flex gap-2">
@@ -188,7 +187,7 @@
 						Add server
 					</summary>
 					<form
-						{...addMcpServer.enhance(justSubmit)}
+						{...addMcpServer.enhance(justSubmitToast('MCP server added', 'Failed to add MCP server'))}
 						class="d-flex flex-column gap-2 mt-2"
 					>
 						<label class="form-label">
@@ -240,7 +239,7 @@
 										{a.enabled ? 'enabled' : 'disabled'}
 									</span>
 									<span class="flex-fill"></span>
-									<form {...toggleSubAgent.for(a.id).enhance(justSubmit)}>
+									<form {...toggleSubAgent.for(a.id).enhance(justSubmitToast('Sub-agent updated', 'Failed to update sub-agent'))}>
 										<input type="hidden" name="id" value={a.id} />
 										<input type="hidden" name="enabled" value={a.enabled ? 'false' : 'true'} />
 										<button type="submit" class="btn btn-sm btn-outline-secondary">{a.enabled ? 'Disable' : 'Enable'}</button>
@@ -265,7 +264,7 @@
 						Add sub-agent
 					</summary>
 					<form
-						{...addSubAgent.enhance(justSubmit)}
+						{...addSubAgent.enhance(justSubmitToast('Sub-agent added', 'Failed to add sub-agent'))}
 						class="d-flex flex-column gap-2 mt-2"
 					>
 						<label class="form-label">
@@ -345,7 +344,7 @@
 				<p class="text-muted small m-0 mb-2">
 					Injected as a system message at the start of every chat. Leave blank to use the default.
 				</p>
-				<form {...systemPromptForm.enhance(justSubmit)}>
+				<form {...systemPromptForm.enhance(justSubmitToast())}>
 					<input type="hidden" name="key" value="system_prompt" />
 					<textarea
 						name="value"
@@ -363,7 +362,7 @@
 				<p class="text-muted small m-0 mb-2">
 					Appended to the system message to give the AI context about you.
 				</p>
-				<form {...userBioForm.enhance(justSubmit)}>
+				<form {...userBioForm.enhance(justSubmitToast())}>
 					<input type="hidden" name="key" value="user_bio" />
 					<textarea
 						name="value"
@@ -381,7 +380,19 @@
 				<p class="text-muted small m-0 mb-2">
 					Models available in the composer dropdown.
 				</p>
-				<form {...modelListForm.enhance(justSubmit)}>
+				<!-- Hidden, out-of-band form referenced by the "Reset to defaults" button below
+				     (via `form="model-list-reset-form"`). Submitting it persists the seeded
+				     defaults in one click; we keep the layout of the main form unchanged. -->
+				<form
+					id="model-list-reset-form"
+					{...modelListForm.enhance(
+						justSubmitToast('Defaults restored', 'Failed to restore defaults'),
+					)}
+				>
+					<input type="hidden" name="key" value="model_list" />
+					<input type="hidden" name="value" value={serializedDefaults} />
+				</form>
+				<form {...modelListForm.enhance(justSubmitToast())}>
 					<input type="hidden" name="key" value="model_list" />
 					<input type="hidden" name="value" value={serializedModels} />
 					{#if models.length > 0}
@@ -445,8 +456,12 @@
 					{/if}
 					<div class="d-flex gap-2 mt-3 flex-wrap">
 						<button type="button" class="btn btn-outline-secondary" onclick={addModel}>+ Add model</button>
-						<button type="button" class="btn btn-outline-secondary ms-auto" onclick={resetToDefaults}>
-							Restore defaults
+						<button
+							type="submit"
+							form="model-list-reset-form"
+							class="btn btn-outline-secondary ms-auto"
+						>
+							Reset to defaults
 						</button>
 						<button type="submit" class="btn btn-primary">Save</button>
 					</div>
@@ -459,7 +474,7 @@
 					When estimated token usage exceeds this percentage of the model's context
 					window, older messages are summarized to make room. 0 = disabled.
 				</p>
-				<form {...thresholdForm.enhance(justSubmit)}>
+				<form {...thresholdForm.enhance(justSubmitToast())}>
 					<input type="hidden" name="key" value="context_compaction_threshold" />
 					<div class="d-flex gap-2 align-items-center">
 						<label for="threshold-input" class="form-label m-0">Threshold</label>
@@ -478,7 +493,7 @@
 						<button type="submit" class="btn btn-primary">Save</button>
 					</div>
 				</form>
-				<form {...summaryTokensForm.enhance(justSubmit)} class="mt-3">
+				<form {...summaryTokensForm.enhance(justSubmitToast())} class="mt-3">
 					<input type="hidden" name="key" value="context_compaction_summary_tokens" />
 					<div class="d-flex gap-2 align-items-center">
 						<label for="summary-tokens-input" class="form-label m-0">Summary budget</label>
