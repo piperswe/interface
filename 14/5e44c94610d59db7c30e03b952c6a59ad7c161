@@ -1,0 +1,65 @@
+package.json
+  8b9243c2a3a21894 45
+src/lib/server/llm/context.ts
+  8b9243c2a3a21894 58-60,121
+src/lib/form-actions.ts
+  8b9243c2a3a21894 5-11,25-51
+src/routes/c/[id]/+page.svelte
+  8b9243c2a3a21894 10,140-143,187
+src/lib/server/tools/fetch_url.ts
+  8b9243c2a3a21894 6,45-49,55-63,79-89,115,120,122-124,129-147,213-241
+src/routes/+layout.svelte
+  8b9243c2a3a21894 5,20
+src/lib/settings.remote.ts
+  8b9243c2a3a21894 27
+src/lib/server/llm/route.ts
+  8b9243c2a3a21894 3,5,7,9,14-15,18,20-27,29-34,40-41,48,53-79,83-126,133-142,144-165,172
+wrangler.jsonc
+  8b9243c2a3a21894 53-55
+src/lib/server/durable_objects/ConversationDurableObject.ts
+  8b9243c2a3a21894 19,85-90,93-102,110-128,294-306,313-323,327-332,360-546,567-574,614,628,635-636,639-642,658-711,720-721,764-768,800-803,807,810,813,817-818,828,842-854,875,887-896,956,963,974-976,978-979,1024,1031,1131-1133,1136-1138,1194,1197-1199,1264,1267,1648
+src/app.d.ts
+  8b9243c2a3a21894 45-48
+src/routes/settings/+page.server.ts
+  8b9243c2a3a21894 5,19,27,39
+src/routes/settings/+page.svelte
+  8b9243c2a3a21894 11,25,46-50,75-78,92,105-133,190,242,267,347,365,383-395,459-464,477,496
+src/lib/server/llm/route.test.ts
+  8b9243c2a3a21894 2,4-15,17-33,36-42,45-71,74-80,83-124,127,129,132-151
+src/lib/server/models/config.ts
+  8b9243c2a3a21894 11-13,23-24,33
+src/lib/server/tools/agent.ts
+  8b9243c2a3a21894 35-37,136
+src/lib/server/durable_objects/ConversationDurableObject.test.ts
+  8b9243c2a3a21894 1,8,14-33,319,324-331,334-350,353,356,358-362,364-542
+worker-configuration.d.ts
+  8b9243c2a3a21894 2,7
+src/lib/server/settings.ts
+  8b9243c2a3a21894 72-84,109-112
+src/lib/server/tools/fetch_url.test.ts
+  8b9243c2a3a21894 94-173
+src/lib/toasts.ts
+  8b9243c2a3a21894 1-33
+src/lib/conversations.remote.ts
+  8b9243c2a3a21894 81-97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "145e44c94610d59db7c30e03b952c6a59ad7c161",
+  "prompts": {
+    "8b9243c2a3a21894": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_20bf9bde7ffeNzxB7Cu5sfnwM6",
+        "model": "cloudflare-workers-ai/@cf/moonshotai/kimi-k2.6"
+      },
+      "human_author": "Piper McCorkle",
+      "messages": [],
+      "total_additions": 3023,
+      "total_deletions": 158,
+      "accepted_lines": 3011,
+      "overriden_lines": 0
+    }
+  }
+}
