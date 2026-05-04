@@ -77,6 +77,7 @@ export async function getUserBio(env: Env, userId: number = SINGLE_USER_ID): Pro
 export const KNOWN_SECRET_KEYS = [
 	'KAGI_KEY',
 	'YNAB_TOKEN',
+	'OPENWEATHERMAP_KEY',
 	'SANDBOX_SSH_KEY',
 ] as const;
 
