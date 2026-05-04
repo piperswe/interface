@@ -109,15 +109,20 @@ describe('ConversationDurableObject', () => {
 					'first_token_at',
 					'last_chunk_json',
 					'usage_json',
-					'generation_json',
 					'provider',
 					'thinking',
-					'tool_calls',
-					'tool_results',
 					'parent_id',
 					'deleted_at',
+					'parts',
+					'content_html',
+					'thinking_html',
 				]),
 			);
+			// Migration 3 dropped the redundant legacy columns.
+			expect(names).not.toContain('tool_calls');
+			expect(names).not.toContain('tool_results');
+			expect(names).not.toContain('parts_html');
+			expect(names).not.toContain('generation_json');
 		});
 	});
 
@@ -298,16 +303,20 @@ describe('ConversationDurableObject', () => {
 		expect(next.done).toBe(true);
 	});
 
-	it('legacy parts are reconstructed for messages that pre-date the parts column', async () => {
+	it('parts column drives the rendered timeline', async () => {
 		const id = await createConversation(env);
 		const stub = stubFor(id);
 		await runInDurableObject(stub, async (_instance, ctx) => {
+			const parts = JSON.stringify([
+				{ type: 'thinking', text: 'silently planning' },
+				{ type: 'text', text: 'final answer' },
+				{ type: 'tool_use', id: 't1', name: 'web_search', input: { q: 'x' } },
+				{ type: 'tool_result', toolUseId: 't1', content: 'result', isError: false },
+			]);
 			ctx.storage.sql.exec(
-				`INSERT INTO messages (id, role, content, model, status, created_at, thinking, tool_calls, tool_results)
-				 VALUES ('a1', 'assistant', 'final answer', 'm', 'complete', 1,
-				   'silently planning',
-				   '[{"id":"t1","name":"web_search","input":{"q":"x"}}]',
-				   '[{"toolUseId":"t1","content":"result","isError":false}]')`,
+				`INSERT INTO messages (id, role, content, model, status, created_at, thinking, parts)
+				 VALUES ('a1', 'assistant', 'final answer', 'm', 'complete', 1, 'silently planning', ?)`,
+				parts,
 			);
 		});
 		const state = await readState(stub);
@@ -386,10 +395,8 @@ describe('ConversationDurableObject', () => {
 				{ type: 'text', text: 'partial sente' },
 			]);
 			ctx.storage.sql.exec(
-				`INSERT INTO messages (id, role, content, thinking, model, status, created_at, parts, tool_calls, tool_results)
-				 VALUES ('a1', 'assistant', 'partial sente', NULL, 'fake/model', 'streaming', 2, ?,
-				   '[{"id":"t1","name":"web_search","input":{"q":"x"}}]',
-				   '[{"toolUseId":"t1","content":"result body","isError":false}]')`,
+				`INSERT INTO messages (id, role, content, thinking, model, status, created_at, parts)
+				 VALUES ('a1', 'assistant', 'partial sente', NULL, 'fake/model', 'streaming', 2, ?)`,
 				partsJson,
 			);
 			ctx.storage.sql.exec(
@@ -406,10 +413,12 @@ describe('ConversationDurableObject', () => {
 		expect(a1.content).toBe('final answer based on result');
 		const partTypes = (a1.parts ?? []).map((p) => p.type);
 		expect(partTypes).toEqual(['tool_use', 'tool_result', 'text']);
-		// The tool_calls/tool_results columns must still show the recovered
-		// round so future turns see consistent history.
-		expect(a1.toolCalls).toEqual([{ id: 't1', name: 'web_search', input: { q: 'x' } }]);
-		expect(a1.toolResults).toEqual([{ toolUseId: 't1', content: 'result body', isError: false }]);
+		// The recovered tool round survives in `parts` so future turns see
+		// consistent history.
+		const tu = (a1.parts ?? []).find((p) => p.type === 'tool_use');
+		expect(tu).toEqual({ type: 'tool_use', id: 't1', name: 'web_search', input: { q: 'x' } });
+		const tr = (a1.parts ?? []).find((p) => p.type === 'tool_result');
+		expect(tr).toEqual({ type: 'tool_result', toolUseId: 't1', content: 'result body', isError: false });
 
 		// And the LLM was called with the recovered tool round in its
 		// `messages` array, so it had the context needed to continue.

@@ -17,7 +17,7 @@
 		removeSubAgent,
 		toggleSubAgent,
 	} from '$lib/settings.remote';
-	import { confirmSubmit, justSubmit } from '$lib/form-actions';
+	import { confirmToastSubmit, justSubmit, toastSubmit } from '$lib/form-actions';
 	import { page } from '$app/state';
 	import { untrack } from 'svelte';
 	import type { ProviderType, ReasoningType } from '$lib/server/providers/types';
@@ -60,8 +60,6 @@
 	// Provider edit state
 	let editProviderId = $state<string | null>(null);
 
-	const deleteServer = (name: string) => confirmSubmit(`Delete MCP server "${name}"?`);
-	const deleteSubAgentBy = (name: string) => confirmSubmit(`Delete sub-agent "${name}"?`);
 
 	async function onFetchPresetModels() {
 		if (!selectedPreset) return;
@@ -107,7 +105,7 @@
 	<!-- Theme -->
 	<section class="mb-4">
 		<h2 class="h5">Theme</h2>
-		<form {...themeForm.enhance(justSubmit)} class="d-flex gap-2 align-items-center">
+		<form {...themeForm.enhance(toastSubmit('Theme saved'))} class="d-flex gap-2 align-items-center">
 			<input type="hidden" name="key" value="theme" />
 			<select name="value" class="form-select form-select-sm w-auto" value={theme}>
 				<option value="system">System</option>
@@ -146,7 +144,7 @@
 					</div>
 					<div class="d-flex gap-2">
 						<button type="button" class="btn btn-sm btn-outline-secondary" onclick={() => (editProviderId = p.id)}>Edit</button>
-						<form {...deleteProviderAction.for(p.id).enhance(confirmSubmit(`Delete provider "${p.id}"?`))}>
+						<form {...deleteProviderAction.for(p.id).enhance(confirmToastSubmit(`Delete provider "${p.id}"?`, `Provider ${p.id} deleted`))}>
 							<input type="hidden" name="id" value={p.id} />
 							<button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
 						</form>
@@ -154,7 +152,7 @@
 				</div>
 				<div class="card-body">
 					{#if editProviderId === p.id}
-						<form {...saveProvider.for(p.id).enhance(justSubmit)} class="mb-3">
+						<form {...saveProvider.for(p.id).enhance(toastSubmit('Provider saved'))} class="mb-3">
 							<input type="hidden" name="id" value={p.id} />
 							<input type="hidden" name="type" value={p.type} />
 							<div class="mb-2">
@@ -203,13 +201,13 @@
 									<button type="submit" class="btn btn-sm btn-link p-0" disabled={i === providerModels.length - 1} title="Move down">&#8595;</button>
 								</form>
 								{#if data.defaultModel !== `${p.id}/${m.id}`}
-									<form {...saveSetting.for(`default_model:${p.id}/${m.id}`).enhance(justSubmit)} class="m-0">
+									<form {...saveSetting.for(`default_model:${p.id}/${m.id}`).enhance(toastSubmit(`Default model: ${p.id}/${m.id}`))} class="m-0">
 										<input type="hidden" name="key" value="default_model" />
 										<input type="hidden" name="value" value={`${p.id}/${m.id}`} />
 										<button type="submit" class="btn btn-sm btn-link p-0" title="Set as default">&#9733;</button>
 									</form>
 								{/if}
-								<form {...deleteProviderModel.for(`${p.id}-${m.id}`).enhance(confirmSubmit('Delete this model?'))}>
+								<form {...deleteProviderModel.for(`${p.id}-${m.id}`).enhance(confirmToastSubmit('Delete this model?', 'Model deleted'))}>
 									<input type="hidden" name="provider_id" value={p.id} />
 									<input type="hidden" name="model_id" value={m.id} />
 									<button type="submit" class="btn btn-sm btn-link text-danger">Remove</button>
@@ -220,7 +218,7 @@
 					</ul>
 
 					{#if addModelProviderId === p.id}
-						<form {...saveProviderModel.for(p.id).enhance(justSubmit)} class="mt-3 border rounded p-3">
+						<form {...saveProviderModel.for(p.id).enhance(toastSubmit('Model saved'))} class="mt-3 border rounded p-3">
 							<input type="hidden" name="provider_id" value={p.id} />
 							<div class="mb-2">
 								<input name="model_id" bind:value={newModelId} placeholder="Model ID (sent to API)" class="form-control form-control-sm" required />
@@ -260,7 +258,7 @@
 			<div class="card mb-3">
 				<div class="card-header">Add provider</div>
 				<div class="card-body">
-					<form {...saveProvider.enhance(justSubmit)}>
+					<form {...saveProvider.enhance(toastSubmit('Provider added'))}>
 						<div class="mb-2">
 							<input name="id" bind:value={newProviderId} placeholder="Provider ID (e.g. openrouter)" class="form-control form-control-sm" required pattern="[a-z][a-z0-9_-]*" />
 						</div>
@@ -335,7 +333,7 @@
 							This preset includes {data.presets.find((p) => p.id === selectedPreset)?.defaultModels.length ?? 0} curated models.
 						</div>
 					{/if}
-					<form {...addPresetProvider.enhance(justSubmit)}>
+					<form {...addPresetProvider.enhance(toastSubmit('Preset provider added'))}>
 						<input type="hidden" name="id" value={selectedPreset} />
 						<input type="hidden" name="provider_id" value={presetProviderId} />
 						<input type="hidden" name="api_key" value={presetApiKey} />
@@ -353,7 +351,7 @@
 		</div>
 
 		<h6 class="mt-4">Title generation model</h6>
-		<form {...titleModelForm.enhance(justSubmit)} class="d-flex gap-2 align-items-center">
+		<form {...titleModelForm.enhance(toastSubmit('Title model saved'))} class="d-flex gap-2 align-items-center">
 			<input type="hidden" name="key" value="title_model" />
 			<select name="value" class="form-select form-select-sm w-auto">
 				<option value="">Auto (first available)</option>
@@ -380,7 +378,7 @@
 							<strong>{s.name}</strong>
 							<span class="badge text-bg-secondary ms-1">{s.transport}</span>
 						</div>
-							<form {...removeMcpServer.for(s.id).enhance(confirmSubmit(`Delete server "${s.name}"?`))}>
+							<form {...removeMcpServer.for(s.id).enhance(confirmToastSubmit(`Delete server "${s.name}"?`, 'MCP server deleted'))}>
 							<input type="hidden" name="id" value={s.id} />
 							<button type="submit" class="btn btn-sm btn-link text-danger">Delete</button>
 						</form>
@@ -388,7 +386,7 @@
 				{/each}
 			</ul>
 		{/if}
-		<form {...addMcpServer.enhance(justSubmit)} class="mt-2 d-flex gap-2">
+		<form {...addMcpServer.enhance(toastSubmit('MCP server added'))} class="mt-2 d-flex gap-2">
 			<input name="name" placeholder="Name" class="form-control form-control-sm" required />
 			<select name="transport" class="form-select form-select-sm w-auto">
 				<option value="http">HTTP</option>
@@ -416,7 +414,7 @@
 							</form>
 							<strong>{sa.name}</strong>
 						</div>
-							<form {...removeSubAgent.for(sa.id).enhance(async ({ submit }) => { if (!confirm(`Delete sub-agent "${sa.name}"?`)) return; await submit(); })}>
+							<form {...removeSubAgent.for(sa.id).enhance(confirmToastSubmit(`Delete sub-agent "${sa.name}"?`, 'Sub-agent deleted'))}>
 							<input type="hidden" name="id" value={sa.id} />
 							<button type="submit" class="btn btn-sm btn-link text-danger">Delete</button>
 						</form>
@@ -424,7 +422,7 @@
 				{/each}
 			</ul>
 		{/if}
-		<form {...addSubAgent.enhance(justSubmit)} class="mt-2 d-flex flex-column gap-2">
+		<form {...addSubAgent.enhance(toastSubmit('Sub-agent added'))} class="mt-2 d-flex flex-column gap-2">
 			<input name="name" placeholder="Name" class="form-control form-control-sm" required />
 			<input name="description" placeholder="Description" class="form-control form-control-sm" required />
 			<input name="system_prompt" placeholder="System prompt" class="form-control form-control-sm" required />
@@ -435,7 +433,7 @@
 	<!-- System prompt -->
 	<section class="mb-4">
 		<h2 class="h5">System prompt</h2>
-		<form {...systemPromptForm.enhance(justSubmit)}>
+		<form {...systemPromptForm.enhance(toastSubmit('System prompt saved'))}>
 			<input type="hidden" name="key" value="system_prompt" />
 			<textarea name="value" class="form-control" rows="6">{data.systemPrompt}</textarea>
 			<button type="submit" class="btn btn-sm btn-primary mt-2">Save</button>
@@ -445,7 +443,7 @@
 	<!-- User bio -->
 	<section class="mb-4">
 		<h2 class="h5">User bio</h2>
-		<form {...userBioForm.enhance(justSubmit)}>
+		<form {...userBioForm.enhance(toastSubmit('User bio saved'))}>
 			<input type="hidden" name="key" value="user_bio" />
 			<textarea name="value" class="form-control" rows="4">{data.userBio}</textarea>
 			<button type="submit" class="btn btn-sm btn-primary mt-2">Save</button>
@@ -455,16 +453,16 @@
 	<!-- Context compaction -->
 	<section class="mb-4">
 		<h2 class="h5">Context compaction</h2>
-		<form {...thresholdForm.enhance(justSubmit)} class="d-flex gap-2 align-items-center mb-2">
+		<form {...thresholdForm.enhance(toastSubmit('Threshold saved'))} class="d-flex gap-2 align-items-center mb-2">
 			<input type="hidden" name="key" value="context_compaction_threshold" />
-			<label class="small">Threshold (%)</label>
-			<input type="number" name="value" min="0" max="100" value={data.contextCompactionThreshold} class="form-control form-control-sm w-auto" />
+			<label class="small" for="ctx-threshold">Threshold (%)</label>
+			<input id="ctx-threshold" type="number" name="value" min="0" max="100" value={data.contextCompactionThreshold} class="form-control form-control-sm w-auto" />
 			<button type="submit" class="btn btn-sm btn-primary">Save</button>
 		</form>
-		<form {...summaryTokensForm.enhance(justSubmit)} class="d-flex gap-2 align-items-center">
+		<form {...summaryTokensForm.enhance(toastSubmit('Summary budget saved'))} class="d-flex gap-2 align-items-center">
 			<input type="hidden" name="key" value="context_compaction_summary_tokens" />
-			<label class="small">Summary budget (tokens)</label>
-			<input type="number" name="value" min="256" value={data.contextCompactionSummaryTokens} class="form-control form-control-sm w-auto" />
+			<label class="small" for="ctx-summary">Summary budget (tokens)</label>
+			<input id="ctx-summary" type="number" name="value" min="256" value={data.contextCompactionSummaryTokens} class="form-control form-control-sm w-auto" />
 			<button type="submit" class="btn btn-sm btn-primary">Save</button>
 		</form>
 	</section>

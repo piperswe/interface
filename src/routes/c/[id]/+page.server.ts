@@ -41,11 +41,11 @@ async function withRenderedMarkdown(state: ConversationState): Promise<Conversat
 						? await renderMarkdown(m.thinking)
 						: null;
 			const contentHtml =
-				typeof m.contentHtml === 'string' && m.contentHtml.length > 0
+				m.contentHtml && m.contentHtml.length > 0
 					? m.contentHtml
 					: m.content
 						? await renderMarkdown(m.content)
-						: m.contentHtml ?? null;
+						: null;
 			if (m.role === 'user') {
 				return { ...m, contentHtml, thinkingHtml, artifacts };
 			}

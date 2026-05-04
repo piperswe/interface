@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { PageData } from './$types';
 	import { destroy, unarchive } from '$lib/conversations.remote';
-	import { confirmSubmit, justSubmit } from '$lib/form-actions';
+	import { confirmToastSubmit, toastSubmit } from '$lib/form-actions';
 	import { fmtRelative } from '$lib/formatters';
 
 	let { data }: { data: PageData } = $props();
@@ -27,11 +27,11 @@
 						</span>
 					</a>
 					<div class="archive-item-actions d-flex gap-2 flex-shrink-0">
-						<form {...unarchive.for(c.id).enhance(justSubmit)}>
+						<form {...unarchive.for(c.id).enhance(toastSubmit('Conversation unarchived'))}>
 							<input type="hidden" name="conversationId" value={c.id} />
 							<button type="submit" class="btn btn-sm btn-outline-secondary">Unarchive</button>
 						</form>
-						<form {...destroy.for(c.id).enhance(confirmSubmit(`Delete "${c.title}"? This cannot be undone.`))}>
+						<form {...destroy.for(c.id).enhance(confirmToastSubmit(`Delete "${c.title}"? This cannot be undone.`, 'Conversation deleted'))}>
 							<input type="hidden" name="conversationId" value={c.id} />
 							<button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
 						</form>

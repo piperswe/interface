@@ -1,7 +1,8 @@
 import { DurableObject } from 'cloudflare:workers';
-import { routeLLM, routeLLMByGlobalId } from '../llm/route';
+import { routeLLM } from '../llm/route';
 import { compactHistory } from '../llm/context';
 import { formatError } from '../llm/errors';
+import type LLM from '../llm/LLM';
 import type { ChatRequest, ContentBlock, Message, ReasoningEffort, StreamEvent, ToolDefinition, Usage } from '../llm/LLM';
 import { ToolRegistry } from '../tools/registry';
 import type { ToolCitation } from '../tools/registry';
@@ -23,9 +24,11 @@ import type { ReasoningConfig } from '../llm/LLM';
 import { renderMarkdown, renderArtifactCode } from '../markdown';
 import { now as nowMs, uuid } from '../clock';
 import type { AddMessageResult, Artifact, ArtifactType, ConversationState, MessageRow, MetaSnapshot } from '$lib/types/conversation';
-import { getResolvedModel } from '../providers/models';
-import { listAllModels } from '../providers/models';
-import { listAllGlobalModelIds } from '../providers/models';
+import { getResolvedModel, listAllModels } from '../providers/models';
+import { buildGlobalModelId } from '../providers/types';
+import type { ProviderModel, ResolvedModel } from '../providers/types';
+import type { SubAgentRow } from '../sub_agents';
+import type { McpServerRow } from '../mcp/types';
 
 export type { AddMessageResult, Artifact, ArtifactType, ConversationState, MessageRow, MetaSnapshot };
 
@@ -33,8 +36,22 @@ const PING_INTERVAL_MS = 25_000;
 const TITLE_MAX = 60;
 const MAX_TOOL_ITERATIONS = 10;
 const MCP_TOOL_CACHE_TTL_MS = 60_000;
+const CONTEXT_CACHE_TTL_MS = 30_000;
 // SQL fragment used by every history / state fetch on the messages table.
 const COMPLETE_PREDICATE = "status = 'complete' AND deleted_at IS NULL";
+
+// Per-turn snapshot of the D1-backed configuration the generation loop
+// depends on. Cached per-DO with a TTL so a chat turn doesn't issue a
+// dozen serial round trips for static-ish settings. Settings saves
+// don't propagate cross-isolate, but the TTL is short enough that a
+// stale value clears within seconds.
+type ConversationContext = {
+	systemPrompt: string | null;
+	userBio: string | null;
+	allModels: ProviderModel[];
+	subAgents: SubAgentRow[];
+	mcpServers: McpServerRow[];
+};
 
 import type {
 	JsonValue,
@@ -50,26 +67,6 @@ function parseJson<T>(s: string | null): T | null {
 	} catch {
 		return null;
 	}
-}
-
-// Reconstruct an ordered parts timeline for messages persisted before the
-// `parts` column existed. We don't know the original interleaving — fall back
-// to "all text first, then all tool_use, then all tool_result". Anyone who
-// chats with the upgraded DO will get true ordering on subsequent turns.
-function buildLegacyParts(
-	content: string,
-	toolCalls: RecordedToolCall[],
-	toolResults: RecordedToolResult[],
-	thinking: string | null,
-): MessagePart[] {
-	const parts: MessagePart[] = [];
-	if (thinking) parts.push({ type: 'thinking', text: thinking });
-	if (content) parts.push({ type: 'text', text: content });
-	for (const tc of toolCalls) parts.push({ type: 'tool_use', ...tc });
-	for (const tr of toolResults) {
-		parts.push({ type: 'tool_result', toolUseId: tr.toolUseId, content: tr.content, isError: tr.isError });
-	}
-	return parts;
 }
 
 // Append synthetic tool_result entries for any tool_use parts that don't
@@ -209,6 +206,72 @@ const MIGRATIONS: { version: number; up: (sql: SqlStorage) => void }[] = [
 			alterIgnoreExists(sql, 'ALTER TABLE artifacts ADD COLUMN content_html TEXT');
 		},
 	},
+	{
+		version: 3,
+		up: (sql) => {
+			// Backfill `parts` from any row that still has only the legacy
+			// tool_calls/tool_results/thinking columns set, using the same
+			// shape `buildLegacyParts` constructs at read time. Rows that
+			// already have a `parts` JSON keep it.
+			//
+			// `parts_html` is folded into `parts` (the enriched parts JSON
+			// has `textHtml` baked into text/thinking entries; readers tolerate
+			// either shape). For rows where `parts_html` is set but `parts` is
+			// not, copy across.
+			//
+			// Then drop the redundant columns. SQLite (3.35+) supports
+			// `DROP COLUMN`; Cloudflare's DO SQLite is recent enough.
+			sql.exec(
+				`UPDATE messages SET parts = parts_html WHERE parts IS NULL AND parts_html IS NOT NULL`,
+			);
+			// Backfill from legacy tool_calls/tool_results columns for rows
+			// missing `parts` entirely. The JSON shape mirrors `buildLegacyParts`:
+			// thinking → text → tool_use[] → tool_result[].
+			const rows = sql
+				.exec(
+					`SELECT id, content, thinking, tool_calls, tool_results FROM messages
+					 WHERE parts IS NULL AND (thinking IS NOT NULL OR tool_calls IS NOT NULL OR tool_results IS NOT NULL)`,
+				)
+				.toArray() as unknown as Array<{
+				id: string;
+				content: string;
+				thinking: string | null;
+				tool_calls: string | null;
+				tool_results: string | null;
+			}>;
+			for (const r of rows) {
+				const tcs: Array<{ id: string; name: string; input: unknown; thoughtSignature?: string }> = (() => {
+					try {
+						return r.tool_calls ? JSON.parse(r.tool_calls) : [];
+					} catch {
+						return [];
+					}
+				})();
+				const trs: Array<{ toolUseId: string; content: string; isError: boolean }> = (() => {
+					try {
+						return r.tool_results ? JSON.parse(r.tool_results) : [];
+					} catch {
+						return [];
+					}
+				})();
+				const built: Array<Record<string, unknown>> = [];
+				if (r.thinking) built.push({ type: 'thinking', text: r.thinking });
+				if (r.content) built.push({ type: 'text', text: r.content });
+				for (const tc of tcs) built.push({ type: 'tool_use', ...tc });
+				for (const tr of trs)
+					built.push({ type: 'tool_result', toolUseId: tr.toolUseId, content: tr.content, isError: tr.isError });
+				if (built.length > 0) {
+					sql.exec('UPDATE messages SET parts = ? WHERE id = ?', JSON.stringify(built), r.id);
+				}
+			}
+			// Drop the redundant columns. `generation_json` was always-null
+			// after the OpenRouter generation-stats removal.
+			try { sql.exec('ALTER TABLE messages DROP COLUMN tool_calls'); } catch { /* not present */ }
+			try { sql.exec('ALTER TABLE messages DROP COLUMN tool_results'); } catch { /* not present */ }
+			try { sql.exec('ALTER TABLE messages DROP COLUMN parts_html'); } catch { /* not present */ }
+			try { sql.exec('ALTER TABLE messages DROP COLUMN generation_json'); } catch { /* not present */ }
+		},
+	},
 ];
 
 export default class ConversationDurableObject extends DurableObject<Env> {
@@ -219,11 +282,23 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	// reloads) mid-stream gets a complete snapshot — the SQL row's
 	// `content` / `thinking` / `parts` columns are only persisted at
 	// end-of-turn, so we can't rely on them mid-flight.
+	//
+	// `abortController` cancels both the underlying provider HTTP fetch
+	// (`llm.chat({ signal })`) and any in-flight tool execution
+	// (`registry.execute({ signal })`). `startedAt`/`firstTokenAt` are
+	// hoisted onto the mirror so abortGeneration can persist a meta
+	// snapshot for the cut-short row.
 	#inProgress: {
 		messageId: string;
 		content: string;
 		thinking: string;
 		parts: MessagePart[];
+		abortController: AbortController;
+		startedAt: number;
+		firstTokenAt: number;
+		lastChunk: unknown | null;
+		usage: Usage | null;
+		providerID: string | null;
 	} | null = null;
 	#pingInterval: ReturnType<typeof setInterval> | null = null;
 	#encoder = new TextEncoder();
@@ -244,6 +319,8 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	// flows that aren't initiated by an HTTP request — the constructor runs
 	// before any RPC, so we have to look it up from storage.
 	#conversationId: string | null = null;
+	// Per-DO ConversationContext cache. Cleared on TTL expiry.
+	#contextCache: { fetchedAt: number; context: ConversationContext } | null = null;
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -412,7 +489,18 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			messageId,
 		);
 
-		this.#inProgress = { messageId, content: '', thinking: '', parts: trimmed };
+		this.#inProgress = {
+			messageId,
+			content: '',
+			thinking: '',
+			parts: trimmed,
+			abortController: new AbortController(),
+			startedAt: 0,
+			firstTokenAt: 0,
+			lastChunk: null,
+			usage: null,
+			providerID: null,
+		};
 		this.#broadcast('refresh', {});
 
 		this.#resumePromise = this.#resume(conversationId, messageId, model);
@@ -533,7 +621,18 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			now + 1,
 		);
 
-		this.#inProgress = { messageId: assistantId, content: '', thinking: '', parts: [] };
+		this.#inProgress = {
+			messageId: assistantId,
+			content: '',
+			thinking: '',
+			parts: [],
+			abortController: new AbortController(),
+			startedAt: 0,
+			firstTokenAt: 0,
+			lastChunk: null,
+			usage: null,
+			providerID: null,
+		};
 
 		await this.#touchConversation(conversationId, trimmed);
 		this.#broadcast('refresh', {});
@@ -572,15 +671,28 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		// canonical final state for this row, and a stale flush landing
 		// after it would resurrect status='streaming'.
 		this.#cancelFlush();
+		// Cancel the underlying provider stream + any in-flight tool. The
+		// adapters and tools forward `signal` into their `fetch` calls, so the
+		// connection drops without waiting on the next chunk.
+		try {
+			ip.abortController.abort('user');
+		} catch {
+			/* ignore */
+		}
 		// If a tool was in flight when abort fired, parts has a tool_use without
 		// its matching result. Synthesize an error result so future turns don't
 		// reject the history with an unmatched tool_use.
 		normalizeParts(ip.parts, 'Aborted by user before this tool completed.');
 		this.#sql.exec(
-			`UPDATE messages SET content = ?, status = 'complete', thinking = ?, parts = ? WHERE id = ?`,
+			`UPDATE messages SET content = ?, status = 'complete', thinking = ?, parts = ?, started_at = ?, first_token_at = ?, last_chunk_json = ?, usage_json = ?, provider = ? WHERE id = ?`,
 			ip.content,
 			ip.thinking || null,
 			ip.parts.length > 0 ? JSON.stringify(ip.parts) : null,
+			ip.startedAt || null,
+			ip.firstTokenAt || null,
+			ip.lastChunk ? JSON.stringify(ip.lastChunk) : null,
+			ip.usage ? JSON.stringify(ip.usage) : null,
+			ip.providerID,
 			ip.messageId,
 		);
 		this.#inProgress = null;
@@ -741,25 +853,39 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	}
 
 	// Tests inject a fake LLM via this RPC call so they can drive `#generate`
-	// deterministically without hitting a real provider. Each entry in
-	// `script` is one turn's worth of `StreamEvent`s; `chat()` shifts a turn
-	// per call. `null` restores the real `routeLLM`. Production never touches
-	// this.
+	// (and compaction, which routes through the same seam) deterministically
+	// without hitting a real provider. Each entry in `script` is one turn's
+	// worth of `StreamEvent`s; `chat()` shifts a turn per call. `null`
+	// restores the real `routeLLM`. Production never touches this.
+	//
+	// Title generation has its own queue so a `__setLLMOverride([oneTurn])`
+	// in a test isn't pulled by the title-gen background task.
 	__llmOverrideScript: StreamEvent[][] | null = null;
+	__titleLLMOverrideScript: StreamEvent[][] | null = null;
 	// Tests can inspect what the DO sent to the override LLM (e.g. assert
 	// the resumed turn included recovered tool history). Filled in by
 	// `#routeLLM` while the override is active.
 	__llmOverrideCalls: ChatRequest[] = [];
+	__titleLLMOverrideCalls: ChatRequest[] = [];
 
 	async __setLLMOverride(script: StreamEvent[][] | null): Promise<void> {
 		this.__llmOverrideScript = script ? script.map((events) => events.slice()) : null;
 		this.__llmOverrideCalls = [];
 	}
 
-	async #routeLLM(globalId: string): Promise<{ model: string; providerID: string; chat(req: ChatRequest): AsyncIterable<StreamEvent> }> {
-		const script = this.__llmOverrideScript;
+	async __setTitleLLMOverride(script: StreamEvent[][] | null): Promise<void> {
+		this.__titleLLMOverrideScript = script ? script.map((events) => events.slice()) : null;
+		this.__titleLLMOverrideCalls = [];
+	}
+
+	async #routeLLM(
+		globalId: string,
+		opts: { purpose?: 'main' | 'title' } = {},
+	): Promise<{ model: string; providerID: string; chat(req: ChatRequest): AsyncIterable<StreamEvent> }> {
+		const isTitle = opts.purpose === 'title';
+		const script = isTitle ? this.__titleLLMOverrideScript : this.__llmOverrideScript;
 		if (script) {
-			const calls = this.__llmOverrideCalls;
+			const calls = isTitle ? this.__titleLLMOverrideCalls : this.__llmOverrideCalls;
 			return {
 				model: globalId,
 				providerID: 'fake',
@@ -785,28 +911,18 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	}
 
 	async #generate(conversationId: string, assistantId: string, model: string): Promise<void> {
-		const startedAt = nowMs();
-		let firstTokenAt = 0;
-		let lastChunk: unknown | null = null;
-		let usage: Usage | null = null;
+		const ip = this.#inProgress!;
+		ip.startedAt = nowMs();
 
 		// Live mirror of the turn lives on `this.#inProgress.parts` so a
 		// resubscribing client can pick up the timeline as it stands. We
 		// alias it locally for readability.
-		const parts = this.#inProgress!.parts;
-		// Seed the accumulators from any tool entries already in `parts` —
-		// resume hydrates these from the persisted row so the final UPDATE
-		// preserves work the previous activation completed before dying.
-		const accumulatedToolCalls: RecordedToolCall[] = [];
-		const accumulatedToolResults: RecordedToolResult[] = [];
+		const parts = ip.parts;
+		const signal = ip.abortController.signal;
+		// `parts` is the canonical timeline. Citations don't have a place in
+		// the parts shape (they're surfaced separately to the UI), so we
+		// accumulate them as the loop runs.
 		const accumulatedCitations: ToolCitation[] = [];
-		for (const p of parts) {
-			if (p.type === 'tool_use') {
-				accumulatedToolCalls.push({ id: p.id, name: p.name, input: p.input, thoughtSignature: p.thoughtSignature });
-			} else if (p.type === 'tool_result' && !p.streaming) {
-				accumulatedToolResults.push({ toolUseId: p.toolUseId, content: p.content, isError: p.isError });
-			}
-		}
 		const appendText = (delta: string) => {
 			const last = parts[parts.length - 1];
 			if (last && last.type === 'text') {
@@ -824,7 +940,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			}
 		};
 
-		this.#sql.exec('UPDATE messages SET started_at = ? WHERE id = ?', startedAt, assistantId);
+		this.#sql.exec('UPDATE messages SET started_at = ? WHERE id = ?', ip.startedAt, assistantId);
 
 		try {
 			let currentModel = model;
@@ -857,24 +973,32 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 				messages.push(...this.#partsToMessages(parts));
 			}
 
-			// Check whether we need to compact context before sending.
+			// Check whether we need to compact context before sending. The
+			// `usage_json` column has held the canonical `Usage` shape
+			// (`inputTokens`/`cacheReadInputTokens`) since round 1; the older
+			// OpenRouter-style `{promptTokens, promptTokensDetails}` shape is
+			// kept as a fallback for legacy rows.
 			const lastUsageRow = this.#sql
 				.exec(`SELECT usage_json FROM messages WHERE role = 'assistant' AND ${COMPLETE_PREDICATE} ORDER BY created_at DESC LIMIT 1`)
 				.toArray() as unknown as Array<{ usage_json: string | null }>;
 			const lastUsage = lastUsageRow[0]?.usage_json
 				? (parseJson<{
-						promptTokens: number;
 						inputTokens?: number;
+						cacheReadInputTokens?: number;
+						promptTokens?: number;
 						promptTokensDetails?: { cachedTokens?: number };
 					}>(lastUsageRow[0].usage_json) ?? null)
 				: null;
 			const usageForCompaction = lastUsage
 				? {
-						inputTokens: lastUsage.inputTokens ?? lastUsage.promptTokens,
-						cacheReadInputTokens: lastUsage.promptTokensDetails?.cachedTokens,
+						inputTokens: lastUsage.inputTokens ?? lastUsage.promptTokens ?? 0,
+						cacheReadInputTokens:
+							lastUsage.cacheReadInputTokens ?? lastUsage.promptTokensDetails?.cachedTokens,
 					}
 				: null;
-			const compaction = await compactHistory(messages, model, this.env, usageForCompaction);
+			const compaction = await compactHistory(messages, model, this.env, usageForCompaction, {
+				llm: (_env, id) => this.#routeLLM(id) as unknown as Promise<LLM>,
+			});
 			if (compaction.wasCompacted) {
 				const infoPart: MessagePart = {
 					type: 'info',
@@ -914,19 +1038,21 @@ Be concise by default. Expand when the task genuinely calls for depth (design do
 
 The user's bio, preferences, and context are provided separately in the user turn. Use that context when it's actually relevant to the task — don't surface personal details just to demonstrate that you remember them.`;
 
-			const [convoRow, rawSystemPrompt, userBio, allModels] = await Promise.all([
+			const [context, convoRow] = await Promise.all([
+				this.#getContext(),
 				this.env.DB.prepare('SELECT thinking_budget FROM conversations WHERE id = ?')
 					.bind(conversationId)
 					.first<{ thinking_budget: number | null }>(),
-				getSystemPrompt(this.env),
-				getUserBio(this.env),
-				listAllModels(this.env),
 			]);
 			const thinkingBudget = convoRow?.thinking_budget ?? null;
 
-			const resolvedModel = await getResolvedModel(this.env, model);
-			const reasoningType = resolvedModel?.model.reasoningType ?? null;
-			const providerType = resolvedModel?.provider.type ?? null;
+			// Resolve the routed model from the cached models list rather than
+			// hitting D1 again. `getResolvedModel`'s D1 reads happen inside
+			// `#routeLLM`, so the route already has the provider+model bytes
+			// in flight.
+			const resolved: ResolvedModel | null = await getResolvedModel(this.env, model);
+			const reasoningType = resolved?.model.reasoningType ?? null;
+			const providerType = resolved?.provider.type ?? null;
 
 			let reasoning: ReasoningConfig | undefined;
 			let thinking: ChatRequest['thinking'] | undefined;
@@ -949,14 +1075,15 @@ The user's bio, preferences, and context are provided separately in the user tur
 
 			const COMPATIBILITY_NOTE =
 				'Your output is rendered in a UI that uses KaTeX for math typesetting. Dollar signs ($) are treated as LaTeX math delimiters, so be careful with dollar signs in non-math contexts (e.g. prices, currency). To include a literal dollar sign, escape it as \\$.';
-			const effectiveSystemPrompt = rawSystemPrompt ?? DEFAULT_SYSTEM_PROMPT;
-			const systemPrompt = userBio
-				? `${effectiveSystemPrompt}\n\n${COMPATIBILITY_NOTE}\n\nUser bio:\n${userBio}`
+			const effectiveSystemPrompt = context.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+			const systemPrompt = context.userBio
+				? `${effectiveSystemPrompt}\n\n${COMPATIBILITY_NOTE}\n\nUser bio:\n${context.userBio}`
 				: `${effectiveSystemPrompt}\n\n${COMPATIBILITY_NOTE}`;
 
-			const registry = await this.#buildToolRegistry(model);
+			const registry = await this.#buildToolRegistry(model, context);
 			const tools: ToolDefinition[] | undefined = registry.definitions().length > 0 ? registry.definitions() : undefined;
 
+			ip.providerID = llm.providerID;
 			let hitIterationCap = false;
 			for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
 				const turnToolCalls: RecordedToolCall[] = [];
@@ -967,34 +1094,31 @@ The user's bio, preferences, and context are provided separately in the user tur
 				for await (const ev of llm.chat({
 					messages,
 					systemPrompt,
+					signal,
 					...(tools ? { tools } : {}),
 					...(thinking ? { thinking } : {}),
 					...(reasoning ? { reasoning } : {}),
 				})) {
 					if (!this.#inProgress || this.#inProgress.messageId !== assistantId) break;
 					if (ev.type === 'text_delta') {
-						if (!firstTokenAt) firstTokenAt = nowMs();
+						if (!ip.firstTokenAt) ip.firstTokenAt = nowMs();
 						turnText += ev.delta;
 						appendText(ev.delta);
-						if (this.#inProgress && this.#inProgress.messageId === assistantId) {
-							this.#inProgress.content += ev.delta;
-						}
+						ip.content += ev.delta;
 						this.#broadcast('delta', { messageId: assistantId, content: ev.delta });
 						this.#scheduleFlush();
 					} else if (ev.type === 'thinking_delta') {
-						if (this.#inProgress && this.#inProgress.messageId === assistantId) {
-							this.#inProgress.thinking += ev.delta;
-						}
+						ip.thinking += ev.delta;
 						appendThinking(ev.delta);
 						this.#broadcast('thinking_delta', { messageId: assistantId, content: ev.delta });
 						this.#scheduleFlush();
 					} else if (ev.type === 'tool_call') {
 						turnToolCalls.push({ id: ev.id, name: ev.name, input: ev.input, thoughtSignature: ev.thoughtSignature });
 					} else if (ev.type === 'usage') {
-						usage = ev.usage;
+						ip.usage = ev.usage;
 					} else if (ev.type === 'done') {
 						if (ev.raw && typeof ev.raw === 'object') {
-							lastChunk = ev.raw;
+							ip.lastChunk = ev.raw;
 						}
 					} else if (ev.type === 'error') {
 						providerError = ev.message;
@@ -1006,8 +1130,6 @@ The user's bio, preferences, and context are provided separately in the user tur
 				if (providerError) throw new Error(providerError);
 
 				if (turnToolCalls.length === 0) break;
-
-				accumulatedToolCalls.push(...turnToolCalls);
 
 				// Build the assistant message that triggered these tool calls.
 				const assistantBlocks: ContentBlock[] = [];
@@ -1050,6 +1172,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 							env: this.env,
 							conversationId,
 							assistantMessageId: assistantId,
+							signal,
 							emitToolOutput: (chunk: string) => {
 								this.#broadcast('tool_output', {
 									messageId: assistantId,
@@ -1064,14 +1187,6 @@ The user's bio, preferences, and context are provided separately in the user tur
 						call.name,
 						call.input,
 					);
-					const resultRecord: RecordedToolResult = {
-						toolUseId: call.id,
-						content: result.content,
-						isError: result.isError ?? false,
-					};
-					const existingIdx = accumulatedToolResults.findIndex((r) => r.toolUseId === call.id);
-					if (existingIdx >= 0) accumulatedToolResults[existingIdx] = resultRecord;
-					else accumulatedToolResults.push(resultRecord);
 					// Swap the preliminary streaming part for the final result.
 					const partsIdx = parts.findIndex((p) => p.type === 'tool_result' && p.toolUseId === call.id);
 					if (partsIdx >= 0) {
@@ -1089,17 +1204,15 @@ The user's bio, preferences, and context are provided separately in the user tur
 							isError: result.isError ?? false,
 						});
 					}
-					// Persist the running tool_calls/tool_results columns each step
-					// so stream death or DO eviction leaves a row that's still
-					// consistent. We also need content/thinking flushed here so
-					// any debounced delta flush isn't beaten to the row.
+					// Persist the running parts column each step so stream death
+					// or DO eviction leaves a row that's still consistent. We
+					// also need content/thinking flushed here so any debounced
+					// delta flush isn't beaten to the row.
 					this.#cancelFlush();
 					this.#sql.exec(
-						'UPDATE messages SET content = ?, thinking = ?, tool_calls = ?, tool_results = ?, parts = ? WHERE id = ?',
+						'UPDATE messages SET content = ?, thinking = ?, parts = ? WHERE id = ?',
 						this.#inProgress!.content,
 						this.#inProgress!.thinking || null,
-						JSON.stringify(accumulatedToolCalls),
-						JSON.stringify(accumulatedToolResults),
 						JSON.stringify(parts),
 						assistantId,
 					);
@@ -1138,6 +1251,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 				if (pendingModelSwitch && pendingModelSwitch !== currentModel && this.#inProgress?.messageId === assistantId) {
 					currentModel = pendingModelSwitch;
 					llm = await this.#routeLLM(currentModel);
+					ip.providerID = llm.providerID;
 					const infoPart: MessagePart = { type: 'info', text: `Switched to model: ${currentModel}` };
 					parts.push(infoPart);
 					this.#sql.exec(
@@ -1183,12 +1297,15 @@ The user's bio, preferences, and context are provided separately in the user tur
 			// path will re-render on demand.
 			let contentHtml: string | null = null;
 			let thinkingHtml: string | null = null;
-			let partsHtml: string | null = null;
+			// Enrich text/thinking parts with `textHtml` so SSR doesn't have to
+			// re-render on every load. The enriched parts replace the raw
+			// `parts` column — one column, two read paths (live vs cached).
+			let enrichedParts: MessagePart[] = parts;
 			try {
 				contentHtml = finalText ? await renderMarkdown(finalText) : null;
 				thinkingHtml = finalThinking ? await renderMarkdown(finalThinking) : null;
 				if (parts.length > 0) {
-					const renderedParts = await Promise.all(
+					enrichedParts = await Promise.all(
 						parts.map(async (part) => {
 							if (part.type === 'text' || part.type === 'thinking') {
 								return { ...part, textHtml: await renderMarkdown(part.text) };
@@ -1196,32 +1313,28 @@ The user's bio, preferences, and context are provided separately in the user tur
 							return part;
 						}),
 					);
-					partsHtml = JSON.stringify(renderedParts);
 				}
 			} catch {
 				/* fall back to live SSR re-rendering */
 			}
 			this.#sql.exec(
-				`UPDATE messages SET content = ?, status = 'complete', first_token_at = ?, last_chunk_json = ?, usage_json = ?, provider = ?, thinking = ?, tool_calls = ?, tool_results = ?, parts = ?, content_html = ?, thinking_html = ?, parts_html = ? WHERE id = ?`,
+				`UPDATE messages SET content = ?, status = 'complete', first_token_at = ?, last_chunk_json = ?, usage_json = ?, provider = ?, thinking = ?, parts = ?, content_html = ?, thinking_html = ? WHERE id = ?`,
 				finalText,
-				firstTokenAt || null,
-				lastChunk ? JSON.stringify(lastChunk) : null,
-				usage ? JSON.stringify(usage) : null,
+				ip.firstTokenAt || null,
+				ip.lastChunk ? JSON.stringify(ip.lastChunk) : null,
+				ip.usage ? JSON.stringify(ip.usage) : null,
 				llm.providerID,
 				finalThinking || null,
-				accumulatedToolCalls.length > 0 ? JSON.stringify(accumulatedToolCalls) : null,
-				accumulatedToolResults.length > 0 ? JSON.stringify(accumulatedToolResults) : null,
-				parts.length > 0 ? JSON.stringify(parts) : null,
+				enrichedParts.length > 0 ? JSON.stringify(enrichedParts) : null,
 				contentHtml,
 				thinkingHtml,
-				partsHtml,
 				assistantId,
 			);
 			this.#inProgress = null;
 			await this.env.DB.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').bind(nowMs(), conversationId).run();
 			this.#broadcast('meta', {
 				messageId: assistantId,
-				snapshot: { startedAt, firstTokenAt, lastChunk, usage, generation: null },
+				snapshot: { startedAt: ip.startedAt, firstTokenAt: ip.firstTokenAt, lastChunk: ip.lastChunk, usage: ip.usage },
 			});
 			if (accumulatedCitations.length > 0) {
 				this.#broadcast('citations', { messageId: assistantId, citations: accumulatedCitations });
@@ -1240,9 +1353,9 @@ The user's bio, preferences, and context are provided separately in the user tur
 				"UPDATE messages SET content = ?, status = 'error', error = ?, first_token_at = ?, last_chunk_json = ?, usage_json = ? WHERE id = ?",
 				partial,
 				msg,
-				firstTokenAt || null,
-				lastChunk ? JSON.stringify(lastChunk) : null,
-				usage ? JSON.stringify(usage) : null,
+				ip.firstTokenAt || null,
+				ip.lastChunk ? JSON.stringify(ip.lastChunk) : null,
+				ip.usage ? JSON.stringify(ip.usage) : null,
 				assistantId,
 			);
 			this.#inProgress = null;
@@ -1250,10 +1363,32 @@ The user's bio, preferences, and context are provided separately in the user tur
 		}
 	}
 
+	// Per-turn snapshot of the static-ish D1 config (settings + sub-agents
+	// + mcp servers + provider models). Cached per-DO with a 30s TTL so a
+	// chat turn issues at most one round of fetches instead of ~10.
+	async #getContext(): Promise<ConversationContext> {
+		const cached = this.#contextCache;
+		if (cached && nowMs() - cached.fetchedAt < CONTEXT_CACHE_TTL_MS) return cached.context;
+		const [systemPrompt, userBio, allModels, subAgents, mcpServers] = await Promise.all([
+			getSystemPrompt(this.env),
+			getUserBio(this.env),
+			listAllModels(this.env),
+			listSubAgents(this.env),
+			listMcpServers(this.env),
+		]);
+		const context: ConversationContext = { systemPrompt, userBio, allModels, subAgents, mcpServers };
+		this.#contextCache = { fetchedAt: nowMs(), context };
+		return context;
+	}
+
+	#invalidateContextCache(): void {
+		this.#contextCache = null;
+	}
+
 	// Base registry — built-in tools + MCP. Used directly for the parent
 	// loop (extended below with the `agent` tool) and re-built fresh per
 	// sub-agent invocation as the inner tool set.
-	async #buildBaseToolRegistry(): Promise<ToolRegistry> {
+	async #buildBaseToolRegistry(mcpServers: McpServerRow[]): Promise<ToolRegistry> {
 		const registry = new ToolRegistry();
 		registry.register(fetchUrlTool);
 		if (this.env.KAGI_KEY) {
@@ -1264,49 +1399,39 @@ The user's bio, preferences, and context are provided separately in the user tur
 				registry.register(tool);
 			}
 		}
-		// Register HTTP/SSE MCP tools. Stdio transport waits for Phase 0.6 (Sandbox).
 		try {
-			const servers = await listMcpServers(this.env);
-			for (const server of servers) {
-				if (!server.enabled) continue;
-				if ((server.transport === 'http' || server.transport === 'sse') && server.url) {
-					await this.#registerMcpServerTools(registry, server.id, server.name, server.url, server.authJson);
-				}
-			}
+			await Promise.all(
+				mcpServers
+					.filter((s) => s.enabled && (s.transport === 'http' || s.transport === 'sse') && s.url)
+					.map((s) => this.#registerMcpServerTools(registry, s.id, s.name, s.url!, s.authJson)),
+			);
 		} catch {
-			// Tool registry build is best-effort — MCP enumeration failures must not
-			// block the user's chat turn. Server failures surface per-call instead.
+			// MCP enumeration failures are best-effort.
 		}
-		// Register Sandbox SDK tools when the binding is present.
 		if (this.env.SANDBOX) {
 			registerSandboxTools(registry);
 		}
 		return registry;
 	}
 
-	async #buildToolRegistry(model: string): Promise<ToolRegistry> {
-		const registry = await this.#buildBaseToolRegistry();
-		try {
-			const [subAgents, allModels] = await Promise.all([listSubAgents(this.env), listAllModels(this.env)]);
-			const globalIds = allModels.map((m) => `${m.providerId}/${m.id}`);
-			if (globalIds.length > 0) {
-				registry.register(createSwitchModelTool({ availableModelGlobalIds: globalIds }));
-			}
-			const enabledSubAgents = subAgents.filter((sa) => sa.enabled);
-			if (enabledSubAgents.length > 0) {
-				registry.register(createGetModelsTool({ currentModel: model, availableModels: allModels }));
-				const agentTool = createAgentTool(
-					{
-						buildInnerToolRegistry: () => this.#buildBaseToolRegistry(),
-						defaultModel: model,
-						availableModelGlobalIds: globalIds,
-					},
-					subAgents,
-				);
-				if (agentTool) registry.register(agentTool);
-			}
-		} catch {
-			// Sub-agent / model enumeration failures must not block the chat turn.
+	async #buildToolRegistry(model: string, context: ConversationContext): Promise<ToolRegistry> {
+		const registry = await this.#buildBaseToolRegistry(context.mcpServers);
+		const globalIds = context.allModels.map((m) => buildGlobalModelId(m.providerId, m.id));
+		if (globalIds.length > 0) {
+			registry.register(createSwitchModelTool({ availableModelGlobalIds: globalIds }));
+		}
+		const enabledSubAgents = context.subAgents.filter((sa) => sa.enabled);
+		if (enabledSubAgents.length > 0) {
+			registry.register(createGetModelsTool({ currentModel: model, availableModels: context.allModels }));
+			const agentTool = createAgentTool(
+				{
+					buildInnerToolRegistry: () => this.#buildBaseToolRegistry(context.mcpServers),
+					defaultModel: model,
+					availableModelGlobalIds: globalIds,
+				},
+				context.subAgents,
+			);
+			if (agentTool) registry.register(agentTool);
 		}
 		return registry;
 	}
@@ -1359,7 +1484,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 	#readMessages(): MessageRow[] {
 		const rows = this.#sql
 			.exec(
-				`SELECT id, role, content, content_html, model, status, error, created_at, started_at, first_token_at, last_chunk_json, usage_json, generation_json, thinking, thinking_html, tool_calls, tool_results, parts, parts_html
+				`SELECT id, role, content, content_html, model, status, error, created_at, started_at, first_token_at, last_chunk_json, usage_json, thinking, thinking_html, parts
 				 FROM messages
 				 WHERE deleted_at IS NULL
 				 ORDER BY created_at ASC`,
@@ -1377,22 +1502,13 @@ The user's bio, preferences, and context are provided separately in the user tur
 			first_token_at: number | null;
 			last_chunk_json: string | null;
 			usage_json: string | null;
-			generation_json: string | null;
 			thinking: string | null;
 			thinking_html: string | null;
-			tool_calls: string | null;
-			tool_results: string | null;
 			parts: string | null;
-			parts_html: string | null;
 		}>;
 		const artifactsByMessage = this.#readArtifactsByMessage();
 		return rows.map((r) => {
-			const toolCalls = parseJson<RecordedToolCall[]>(r.tool_calls) ?? [];
-			const toolResults = parseJson<RecordedToolResult[]>(r.tool_results) ?? [];
-			const parts =
-				parseJson<MessagePart[]>(r.parts_html) ??
-				parseJson<MessagePart[]>(r.parts) ??
-				buildLegacyParts(r.content, toolCalls, toolResults, r.thinking);
+			const parts = parseJson<MessagePart[]>(r.parts) ?? [];
 			return {
 				id: r.id,
 				role: r.role as 'user' | 'assistant',
@@ -1404,10 +1520,8 @@ The user's bio, preferences, and context are provided separately in the user tur
 				status: r.status as 'complete' | 'streaming' | 'error',
 				error: r.error,
 				createdAt: r.created_at,
-				meta: this.#deriveMeta(r.started_at, r.first_token_at, r.last_chunk_json, r.usage_json, r.generation_json),
+				meta: this.#deriveMeta(r.started_at, r.first_token_at, r.last_chunk_json, r.usage_json),
 				artifacts: artifactsByMessage.get(r.id) ?? [],
-				toolCalls,
-				toolResults,
 				parts,
 			};
 		});
@@ -1520,12 +1634,10 @@ The user's bio, preferences, and context are provided separately in the user tur
 		firstTokenAt: number | null,
 		lastChunkJson: string | null,
 		usageJson: string | null,
-		generationJson: string | null,
 	): MetaSnapshot | null {
-		if (!startedAt && !lastChunkJson && !usageJson && !generationJson) return null;
+		if (!startedAt && !lastChunkJson && !usageJson) return null;
 		let lastChunk: unknown | null = null;
 		let usage: MetaSnapshot['usage'] = null;
-		let generation: unknown | null = null;
 		try {
 			if (lastChunkJson) lastChunk = JSON.parse(lastChunkJson) as unknown;
 		} catch {
@@ -1536,17 +1648,11 @@ The user's bio, preferences, and context are provided separately in the user tur
 		} catch {
 			/* keep null */
 		}
-		try {
-			if (generationJson) generation = JSON.parse(generationJson) as unknown;
-		} catch {
-			/* keep null */
-		}
 		return {
 			startedAt: startedAt ?? 0,
 			firstTokenAt: firstTokenAt ?? 0,
 			lastChunk,
 			usage,
-			generation,
 		};
 	}
 
@@ -1581,14 +1687,16 @@ The user's bio, preferences, and context are provided separately in the user tur
 	async #writeTitle(conversationId: string, input: string, opts: { systemPrompt: string; onlyIfDefault: boolean }): Promise<void> {
 		const collapsed = input.replace(/\s+/g, ' ').trim();
 		// Pick the configured title model, or fall back to the first available model.
-		const globalIds = await listAllGlobalModelIds(this.env);
+		// Use the cached models list rather than hitting D1 again.
+		const context = await this.#getContext();
+		const globalIds = context.allModels.map((m) => buildGlobalModelId(m.providerId, m.id));
 		const configuredTitleModel = await getSetting(this.env, 'title_model');
 		const titleModel = configuredTitleModel && globalIds.includes(configuredTitleModel) ? configuredTitleModel : globalIds[0];
 		if (!titleModel) return; // No models configured, skip title generation
 
 		let title: string;
 		try {
-			const llm = await this.#routeLLM(titleModel);
+			const llm = await this.#routeLLM(titleModel, { purpose: 'title' });
 			let buf = '';
 			for await (const ev of llm.chat({
 				messages: [

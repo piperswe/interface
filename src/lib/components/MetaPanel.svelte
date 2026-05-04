@@ -13,19 +13,23 @@
 			<span class="meta-panel-icon" aria-hidden="true">ⓘ</span>
 		</summary>
 		<dl class="d-grid" style="grid-template-columns: max-content 1fr; gap: 0.15rem 0.75rem">
-			<dt>Prompt tokens</dt>
-			<dd>{fmtNumber(snapshot.usage?.promptTokens)}</dd>
-			<dt>Completion tokens</dt>
-			<dd>{fmtNumber(snapshot.usage?.completionTokens)}</dd>
+			<dt>Input tokens</dt>
+			<dd>{fmtNumber(snapshot.usage?.inputTokens)}</dd>
+			<dt>Output tokens</dt>
+			<dd>{fmtNumber(snapshot.usage?.outputTokens)}</dd>
 			<dt>Total tokens</dt>
 			<dd>{fmtNumber(snapshot.usage?.totalTokens)}</dd>
-			{#if snapshot.usage?.promptTokensDetails?.cachedTokens != null}
+			{#if snapshot.usage?.cacheReadInputTokens != null}
 				<dt>Cached tokens</dt>
-				<dd>{fmtNumber(snapshot.usage.promptTokensDetails.cachedTokens)}</dd>
+				<dd>{fmtNumber(snapshot.usage.cacheReadInputTokens)}</dd>
 			{/if}
-			{#if snapshot.usage?.completionTokensDetails?.reasoningTokens != null}
+			{#if snapshot.usage?.cacheCreationInputTokens != null}
+				<dt>Cache writes</dt>
+				<dd>{fmtNumber(snapshot.usage.cacheCreationInputTokens)}</dd>
+			{/if}
+			{#if snapshot.usage?.thinkingTokens != null}
 				<dt>Reasoning tokens</dt>
-				<dd>{fmtNumber(snapshot.usage.completionTokensDetails.reasoningTokens)}</dd>
+				<dd>{fmtNumber(snapshot.usage.thinkingTokens)}</dd>
 			{/if}
 			<dt>Time to first token</dt>
 			<dd>{fmtMs(ttftMs)}</dd>

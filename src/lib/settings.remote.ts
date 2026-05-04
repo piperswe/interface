@@ -7,7 +7,6 @@ import {
 	deleteSubAgent,
 	isValidSubAgentName,
 	setSubAgentEnabled,
-	updateSubAgent,
 } from '$lib/server/sub_agents';
 import { invalidateThemeCache } from '../hooks.server';
 
@@ -184,47 +183,3 @@ export const toggleSubAgent = form(
 	},
 );
 
-export const editSubAgent = form(
-	'unchecked',
-	async (data: {
-		id?: unknown;
-		description?: unknown;
-		system_prompt?: unknown;
-		model?: unknown;
-		max_iterations?: unknown;
-		allowed_tools?: unknown;
-	}) => {
-		const id = Number.parseInt(String(data.id ?? ''), 10);
-		if (!Number.isFinite(id) || id <= 0) error(400, 'Invalid id');
-		const description = String(data.description ?? '').trim();
-		const systemPrompt = String(data.system_prompt ?? '');
-		const modelRaw = String(data.model ?? '').trim();
-		const maxIterRaw = String(data.max_iterations ?? '').trim();
-		const allowedToolsRaw = String(data.allowed_tools ?? '');
-
-		if (!description) error(400, 'Description is required');
-		if (!systemPrompt.trim()) error(400, 'System prompt is required');
-
-		let maxIterations: number | null = null;
-		if (maxIterRaw) {
-			const n = Number.parseInt(maxIterRaw, 10);
-			if (!Number.isFinite(n) || n < 1 || n > 50) {
-				error(400, 'max_iterations must be an integer between 1 and 50');
-			}
-			maxIterations = n;
-		}
-
-		try {
-			await updateSubAgent(getEnv(), id, {
-				description,
-				systemPrompt,
-				model: modelRaw || null,
-				maxIterations,
-				allowedTools: parseAllowedTools(allowedToolsRaw),
-			});
-		} catch (e) {
-			error(400, e instanceof Error ? e.message : String(e));
-		}
-		redirect(303, '/settings');
-	},
-);
