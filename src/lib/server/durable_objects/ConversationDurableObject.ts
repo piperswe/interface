@@ -76,14 +76,48 @@ function buildLegacyParts(
 // already have a matching result in the timeline. Used on abort and on
 // MAX_TOOL_ITERATIONS exit so we never persist a tool_use without a partner —
 // providers reject any history that contains an unmatched tool_use block.
+//
+// A `tool_result` part with `streaming: true` represents a placeholder that
+// was seeded before the underlying tool execution completed; if it survives
+// to normalization it means the executor never produced a final result
+// (mid-tool DO eviction, abort during execute, etc). Replace those with the
+// synthetic error too.
 function normalizeParts(parts: MessagePart[], reason: string): void {
 	const matched = new Set<string>();
-	for (const p of parts) if (p.type === 'tool_result') matched.add(p.toolUseId);
+	for (const p of parts) {
+		if (p.type === 'tool_result' && !p.streaming) matched.add(p.toolUseId);
+	}
+	for (let i = 0; i < parts.length; i++) {
+		const p = parts[i];
+		if (p.type === 'tool_result' && p.streaming && !matched.has(p.toolUseId)) {
+			parts[i] = { type: 'tool_result', toolUseId: p.toolUseId, content: reason, isError: true };
+			matched.add(p.toolUseId);
+		}
+	}
 	for (const p of parts) {
 		if (p.type !== 'tool_use' || matched.has(p.id)) continue;
 		parts.push({ type: 'tool_result', toolUseId: p.id, content: reason, isError: true });
 		matched.add(p.id);
 	}
+}
+
+// Drop the trailing `text`/`thinking` parts that follow the last
+// `tool_use`/`tool_result` boundary. Used on resume after a DO eviction:
+// any unflushed text/thinking from the dead generation is partial and is
+// cheaper to regenerate than to splice into the LLM history (which would
+// require provider-specific prefill). Tool entries are preserved — those
+// are the expensive thing to redo.
+function trimTrailingPartialOutput(parts: MessagePart[]): MessagePart[] {
+	let cut = parts.length;
+	for (let i = parts.length - 1; i >= 0; i--) {
+		const p = parts[i];
+		if (p.type === 'text' || p.type === 'thinking') {
+			cut = i;
+			continue;
+		}
+		break;
+	}
+	return parts.slice(0, cut);
 }
 
 // Idempotent helper: run ALTER, swallow "duplicate column" errors so the same
@@ -214,16 +248,43 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	// themselves are reused inside the closure so we keep one instance per
 	// server. Refreshed on TTL expiry or when the cached entry is cleared.
 	#mcpCache = new Map<number, { fetchedAt: number; client: McpHttpClient; tools: import('../mcp/types').McpToolDescriptor[] }>();
+	// Concurrency guard for resume-after-eviction. While set, addUserMessage
+	// returns `busy` and detectAndResume is a no-op. Cleared by `#resume`'s
+	// finally block so a failed resume doesn't permanently lock the DO.
+	#resumePromise: Promise<void> | null = null;
+	// Debounce handle for mid-stream content/thinking/parts persistence.
+	// When a DO eviction occurs, the persisted row is at most ~500ms behind
+	// the live `#inProgress` mirror, so resume picks up close to where the
+	// stream died.
+	#flushTimer: ReturnType<typeof setTimeout> | null = null;
+	// Cached conversation id (lazily loaded from `_meta`). Needed by resume
+	// flows that aren't initiated by an HTTP request — the constructor runs
+	// before any RPC, so we have to look it up from storage.
+	#conversationId: string | null = null;
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
 		this.#sql = ctx.storage.sql;
 		ctx.blockConcurrencyWhile(async () => {
 			this.#runMigrations();
-			this.#sql.exec(
-				"UPDATE messages SET status = 'error', error = 'Generation interrupted (Durable Object restart)' WHERE status = 'streaming'",
-			);
+			// If the DO was evicted mid-generation, leave the row as `streaming`
+			// and schedule a near-future alarm. The alarm handler picks up
+			// where the dead generation left off so the user doesn't have to
+			// retry. Resume also runs lazily on `subscribe` / `addUserMessage`;
+			// the alarm is a backstop for the no-traffic case.
+			const interrupted = this.#sql
+				.exec("SELECT id FROM messages WHERE status = 'streaming' LIMIT 1")
+				.toArray() as unknown as Array<{ id: string }>;
+			if (interrupted.length > 0) {
+				await ctx.storage.setAlarm(Date.now() + 200);
+			}
 		});
+	}
+
+	// Cloudflare invokes this when a previously-set alarm fires. Used as the
+	// no-traffic backstop for resume — see the constructor's comment.
+	async alarm(): Promise<void> {
+		await this.#detectAndResume();
 	}
 
 	// Migrations are applied in order, once each, gated by the `_meta` table's
@@ -253,6 +314,193 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		}
 	}
 
+	// `_meta` is a key/value table populated by migration 1. We piggy-back
+	// `'conversation_id'` onto it so resume flows that aren't initiated by an
+	// HTTP request (constructor / alarm) can find the conversation id without
+	// reverse-decoding `ctx.id` (which isn't possible — `idFromName` is
+	// one-way).
+	#getConversationId(): string | null {
+		if (this.#conversationId) return this.#conversationId;
+		const row = this.#sql
+			.exec("SELECT value FROM _meta WHERE key = 'conversation_id'")
+			.toArray() as unknown as Array<{ value: string }>;
+		this.#conversationId = row[0]?.value ?? null;
+		return this.#conversationId;
+	}
+
+	#setConversationId(id: string): void {
+		if (this.#conversationId === id) return;
+		this.#sql.exec(
+			"INSERT INTO _meta (key, value) VALUES ('conversation_id', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+			id,
+		);
+		this.#conversationId = id;
+	}
+
+	// Schedule a debounced write of the in-flight assistant row's
+	// content/thinking/parts. Reduces the volume of state lost to a DO
+	// eviction from "everything since end-of-tool" to "at most 500ms".
+	#scheduleFlush(): void {
+		if (this.#flushTimer || !this.#inProgress) return;
+		this.#flushTimer = setTimeout(() => {
+			this.#flushTimer = null;
+			this.#flushNow();
+		}, 500);
+	}
+
+	#flushNow(): void {
+		if (this.#flushTimer) {
+			clearTimeout(this.#flushTimer);
+			this.#flushTimer = null;
+		}
+		const ip = this.#inProgress;
+		if (!ip) return;
+		this.#sql.exec(
+			'UPDATE messages SET content = ?, thinking = ?, parts = ? WHERE id = ?',
+			ip.content,
+			ip.thinking || null,
+			ip.parts.length > 0 ? JSON.stringify(ip.parts) : null,
+			ip.messageId,
+		);
+	}
+
+	#cancelFlush(): void {
+		if (this.#flushTimer) {
+			clearTimeout(this.#flushTimer);
+			this.#flushTimer = null;
+		}
+	}
+
+	// Detect a streaming row left behind by a previous activation and resume
+	// its generation. Idempotent: if a resume is already in flight, or the DO
+	// is already mid-generation (live `#inProgress`), this is a no-op. Safe
+	// to call from constructor (via alarm), `subscribe`, and
+	// `addUserMessage`.
+	async #detectAndResume(): Promise<void> {
+		if (this.#resumePromise || this.#inProgress) return;
+		const rows = this.#sql
+			.exec("SELECT id, model FROM messages WHERE status = 'streaming' ORDER BY created_at ASC")
+			.toArray() as unknown as Array<{ id: string; model: string | null }>;
+		if (rows.length === 0) return;
+
+		// Defensive: if more than one streaming row exists (shouldn't happen
+		// because addUserMessage gates on `#inProgress`), keep the newest and
+		// stamp the older ones as error.
+		if (rows.length > 1) {
+			for (let i = 0; i < rows.length - 1; i++) {
+				this.#sql.exec(
+					"UPDATE messages SET status = 'error', error = ? WHERE id = ?",
+					'Multiple streaming rows detected during resume.',
+					rows[i].id,
+				);
+			}
+		}
+		const target = rows[rows.length - 1];
+		const messageId = target.id;
+		const model = target.model;
+		if (!model) {
+			this.#sql.exec(
+				"UPDATE messages SET status = 'error', error = ? WHERE id = ?",
+				'Cannot resume generation: model unknown.',
+				messageId,
+			);
+			this.#broadcast('refresh', {});
+			return;
+		}
+
+		const conversationId = this.#getConversationId();
+		if (!conversationId) {
+			this.#sql.exec(
+				"UPDATE messages SET status = 'error', error = ? WHERE id = ?",
+				'Cannot resume generation: conversation id unknown.',
+				messageId,
+			);
+			this.#broadcast('refresh', {});
+			return;
+		}
+
+		// Hydrate `#inProgress` from the persisted row. Trim any trailing
+		// partial text/thinking (those followed the last completed tool round
+		// and were unflushed when the DO died) and normalize any orphan
+		// tool_use blocks so the LLM history is valid.
+		const row = this.#sql
+			.exec('SELECT parts FROM messages WHERE id = ?', messageId)
+			.toArray() as unknown as Array<{ parts: string | null }>;
+		const persistedParts = parseJson<MessagePart[]>(row[0]?.parts ?? null) ?? [];
+		const trimmed = trimTrailingPartialOutput(persistedParts);
+		normalizeParts(trimmed, 'Generation interrupted by Durable Object restart; retrying.');
+
+		this.#sql.exec(
+			"UPDATE messages SET content = '', thinking = NULL, parts = ?, started_at = ? WHERE id = ?",
+			trimmed.length > 0 ? JSON.stringify(trimmed) : null,
+			nowMs(),
+			messageId,
+		);
+
+		this.#inProgress = { messageId, content: '', thinking: '', parts: trimmed };
+		this.#broadcast('refresh', {});
+
+		this.#resumePromise = this.#resume(conversationId, messageId, model);
+		this.ctx.waitUntil(this.#resumePromise);
+	}
+
+	async #resume(conversationId: string, assistantId: string, model: string): Promise<void> {
+		try {
+			await this.#generate(conversationId, assistantId, model);
+		} finally {
+			this.#resumePromise = null;
+		}
+	}
+
+	// Convert a recovered `parts` timeline into the `assistant` + `tool` Message
+	// pairs the LLM expects, so a resumed generation sees the work that was
+	// already done. Mirrors the in-loop construction at the tool execution
+	// site — the persisted `parts` array uses the same shape the live array
+	// does, but the LLM API expects them split across `assistant` (with
+	// tool_use blocks) and `tool` (with tool_result blocks) messages, with
+	// rounds alternating.
+	#partsToMessages(parts: MessagePart[]): Message[] {
+		const out: Message[] = [];
+		let asstBlocks: ContentBlock[] = [];
+		let toolBlocks: ContentBlock[] = [];
+		const flushAssistant = () => {
+			if (asstBlocks.length > 0) {
+				out.push({ role: 'assistant', content: asstBlocks });
+				asstBlocks = [];
+			}
+		};
+		const flushTool = () => {
+			if (toolBlocks.length > 0) {
+				out.push({ role: 'tool', content: toolBlocks });
+				toolBlocks = [];
+			}
+		};
+		for (const p of parts) {
+			if (p.type === 'text') {
+				flushTool();
+				asstBlocks.push({ type: 'text', text: p.text });
+			} else if (p.type === 'thinking') {
+				flushTool();
+				asstBlocks.push({ type: 'thinking', text: p.text });
+			} else if (p.type === 'tool_use') {
+				flushTool();
+				asstBlocks.push({ type: 'tool_use', id: p.id, name: p.name, input: p.input });
+			} else if (p.type === 'tool_result') {
+				flushAssistant();
+				toolBlocks.push({
+					type: 'tool_result',
+					toolUseId: p.toolUseId,
+					content: p.content,
+					...(p.isError ? { isError: true } : {}),
+				});
+			}
+			// `info` parts are UI-only; skip.
+		}
+		flushAssistant();
+		flushTool();
+		return out;
+	}
+
 	getState(): ConversationState {
 		const messages = this.#readMessages();
 		if (this.#inProgress) {
@@ -273,7 +521,14 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	}
 
 	async addUserMessage(conversationId: string, content: string, model: string): Promise<AddMessageResult> {
-		if (this.#inProgress) return { status: 'busy' };
+		this.#setConversationId(conversationId);
+		// If a previous activation died mid-generation, resume that turn
+		// before accepting the new message. The user wouldn't have hit "send"
+		// if the prior generation was already complete, so this is mostly a
+		// safety net for edge cases where the page reloaded just as the user
+		// typed the next message.
+		await this.#detectAndResume();
+		if (this.#inProgress || this.#resumePromise) return { status: 'busy' };
 		const trimmed = content.trim();
 		if (!trimmed) return { status: 'invalid', reason: 'empty' };
 		if (!model) return { status: 'invalid', reason: 'missing model' };
@@ -313,6 +568,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	}
 
 	async regenerateTitle(conversationId: string): Promise<void> {
+		this.#setConversationId(conversationId);
 		const history = this.#sql
 			.exec(`SELECT role, content FROM messages WHERE ${COMPLETE_PREDICATE} ORDER BY created_at ASC`)
 			.toArray() as unknown as Array<{ role: string; content: string }>;
@@ -326,15 +582,21 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	}
 
 	async setThinkingBudget(conversationId: string, budget: number | null): Promise<void> {
+		this.#setConversationId(conversationId);
 		// Per-conversation thinking token budget. AnthropicLLM honors this when
 		// the model supports extended thinking; OpenRouterLLM ignores it.
 		const value = budget != null && budget > 0 ? Math.floor(budget) : null;
 		await this.env.DB.prepare('UPDATE conversations SET thinking_budget = ? WHERE id = ?').bind(value, conversationId).run();
 	}
 
-	async abortGeneration(_conversationId: string): Promise<void> {
+	async abortGeneration(conversationId: string): Promise<void> {
+		this.#setConversationId(conversationId);
 		if (!this.#inProgress) return;
 		const ip = this.#inProgress;
+		// Cancel any pending debounced flush — we're about to write the
+		// canonical final state for this row, and a stale flush landing
+		// after it would resurrect status='streaming'.
+		this.#cancelFlush();
 		// If a tool was in flight when abort fired, parts has a tool_use without
 		// its matching result. Synthesize an error result so future turns don't
 		// reject the history with an unmatched tool_use.
@@ -358,6 +620,8 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	// they don't keep streaming on an already-vanished conversation.
 	async destroy(): Promise<void> {
 		this.#inProgress = null;
+		this.#cancelFlush();
+		this.#conversationId = null;
 		for (const sub of this.#subscribers) {
 			try {
 				sub.controller.close();
@@ -400,6 +664,11 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			},
 		});
 
+		// If a previous activation died mid-generation, resume now that a
+		// client is here to watch. The resume's broadcast events will reach
+		// the new subscriber via the normal `#broadcast` path.
+		void this.#detectAndResume();
+
 		return stream;
 	}
 
@@ -431,18 +700,25 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	// per call. `null` restores the real `routeLLM`. Production never touches
 	// this.
 	__llmOverrideScript: StreamEvent[][] | null = null;
+	// Tests can inspect what the DO sent to the override LLM (e.g. assert
+	// the resumed turn included recovered tool history). Filled in by
+	// `#routeLLM` while the override is active.
+	__llmOverrideCalls: ChatRequest[] = [];
 
 	async __setLLMOverride(script: StreamEvent[][] | null): Promise<void> {
 		this.__llmOverrideScript = script ? script.map((events) => events.slice()) : null;
+		this.__llmOverrideCalls = [];
 	}
 
 	async #routeLLM(model: string): Promise<{ model: string; providerID: string; chat(req: ChatRequest): AsyncIterable<StreamEvent> }> {
 		const script = this.__llmOverrideScript;
 		if (script) {
+			const calls = this.__llmOverrideCalls;
 			return {
 				model,
 				providerID: 'fake',
-				async *chat(_req: ChatRequest): AsyncIterable<StreamEvent> {
+				async *chat(req: ChatRequest): AsyncIterable<StreamEvent> {
+					calls.push(req);
 					const turn = script.shift();
 					if (!turn) {
 						yield { type: 'error', message: 'FakeLLM: ran out of scripted turns' };
@@ -462,13 +738,23 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		let usage: ChatUsage | null = null;
 		let lastGenerationId: string | null = null;
 
-		const accumulatedToolCalls: RecordedToolCall[] = [];
-		const accumulatedToolResults: RecordedToolResult[] = [];
-		const accumulatedCitations: ToolCitation[] = [];
 		// Live mirror of the turn lives on `this.#inProgress.parts` so a
 		// resubscribing client can pick up the timeline as it stands. We
 		// alias it locally for readability.
 		const parts = this.#inProgress!.parts;
+		// Seed the accumulators from any tool entries already in `parts` —
+		// resume hydrates these from the persisted row so the final UPDATE
+		// preserves work the previous activation completed before dying.
+		const accumulatedToolCalls: RecordedToolCall[] = [];
+		const accumulatedToolResults: RecordedToolResult[] = [];
+		const accumulatedCitations: ToolCitation[] = [];
+		for (const p of parts) {
+			if (p.type === 'tool_use') {
+				accumulatedToolCalls.push({ id: p.id, name: p.name, input: p.input });
+			} else if (p.type === 'tool_result' && !p.streaming) {
+				accumulatedToolResults.push({ toolUseId: p.toolUseId, content: p.content, isError: p.isError });
+			}
+		}
 		const appendText = (delta: string) => {
 			const last = parts[parts.length - 1];
 			if (last && last.type === 'text') {
@@ -500,6 +786,16 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 				role: m.role === 'assistant' ? 'assistant' : 'user',
 				content: m.content,
 			}));
+
+			// Resume case: if `parts` was hydrated from a persisted row that
+			// contains completed tool rounds, the LLM needs to see those
+			// tool_use/tool_result pairs so it continues from after them
+			// instead of redoing the work. Splice them in as synthetic prior
+			// assistant + tool messages.
+			const recoveredHasTools = parts.some((p) => p.type === 'tool_use' || p.type === 'tool_result');
+			if (recoveredHasTools) {
+				messages.push(...this.#partsToMessages(parts));
+			}
 
 			// Check whether we need to compact context before sending.
 			const lastUsageRow = this.#sql
@@ -628,12 +924,14 @@ The user's bio, preferences, and context are provided separately in the user tur
 							this.#inProgress.content += ev.delta;
 						}
 						this.#broadcast('delta', { messageId: assistantId, content: ev.delta });
+						this.#scheduleFlush();
 					} else if (ev.type === 'thinking_delta') {
 						if (this.#inProgress && this.#inProgress.messageId === assistantId) {
 							this.#inProgress.thinking += ev.delta;
 						}
 						appendThinking(ev.delta);
 						this.#broadcast('thinking_delta', { messageId: assistantId, content: ev.delta });
+						this.#scheduleFlush();
 					} else if (ev.type === 'tool_call') {
 						turnToolCalls.push({ id: ev.id, name: ev.name, input: ev.input });
 					} else if (ev.type === 'usage') {
@@ -733,9 +1031,13 @@ The user's bio, preferences, and context are provided separately in the user tur
 					}
 					// Persist the running tool_calls/tool_results columns each step
 					// so stream death or DO eviction leaves a row that's still
-					// consistent.
+					// consistent. We also need content/thinking flushed here so
+					// any debounced delta flush isn't beaten to the row.
+					this.#cancelFlush();
 					this.#sql.exec(
-						'UPDATE messages SET tool_calls = ?, tool_results = ?, parts = ? WHERE id = ?',
+						'UPDATE messages SET content = ?, thinking = ?, tool_calls = ?, tool_results = ?, parts = ? WHERE id = ?',
+						this.#inProgress!.content,
+						this.#inProgress!.thinking || null,
 						JSON.stringify(accumulatedToolCalls),
 						JSON.stringify(accumulatedToolResults),
 						JSON.stringify(parts),
@@ -791,8 +1093,12 @@ The user's bio, preferences, and context are provided separately in the user tur
 
 			if (!this.#inProgress || this.#inProgress.messageId !== assistantId) {
 				// Aborted by user — don't overwrite the row already persisted by abortGeneration.
+				this.#cancelFlush();
 				return;
 			}
+			// Cancel any pending debounced flush so a stale write doesn't land
+			// after the canonical final UPDATE below resets status to complete.
+			this.#cancelFlush();
 			const finalText = this.#inProgress.content;
 			const finalThinking = this.#inProgress.thinking;
 			// Pre-render the heavy markdown / Shiki / KaTeX pipeline once at
@@ -853,8 +1159,10 @@ The user's bio, preferences, and context are provided separately in the user tur
 		} catch (e) {
 			if (!this.#inProgress || this.#inProgress.messageId !== assistantId) {
 				// Already aborted and cleaned up by abortGeneration.
+				this.#cancelFlush();
 				return;
 			}
+			this.#cancelFlush();
 			const msg = formatError(e);
 			const partial = this.#inProgress.content;
 			this.#sql.exec(

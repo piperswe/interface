@@ -1,13 +1,34 @@
-import { env, runInDurableObject } from 'cloudflare:test';
+import { env, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createConversation } from '../conversations';
 import { textTurn, toolUseTurn } from '../../../../test/fakes/FakeLLM';
 import { getConversationStub, type ConversationStub } from './index';
 import type { ConversationState } from '$lib/types/conversation';
+import type { ChatRequest, StreamEvent } from '../llm/LLM';
 
 type WithLLMOverride = {
 	__setLLMOverride(script: unknown[] | null): Promise<void>;
 };
+
+// Read whatever requests the DO's override LLM has captured so far. Lets
+// resume tests assert that the recovered tool history was replayed into
+// the LLM's `messages` array.
+async function readLLMCalls(stub: ConversationStub): Promise<ChatRequest[]> {
+	return runInDurableObject(stub, async (instance) => {
+		const inst = instance as unknown as { __llmOverrideCalls?: ChatRequest[] };
+		return (inst.__llmOverrideCalls ?? []).map((c) => ({ ...c, messages: c.messages.slice() }));
+	});
+}
+
+// Subscribe-and-immediately-cancel: triggers the DO's resume detection on
+// `subscribe` without leaving an open SSE stream behind. Works whether or
+// not a constructor-scheduled alarm fired (it sometimes hasn't, in tests).
+async function pokeSubscribe(stub: ConversationStub): Promise<void> {
+	const stream = await stub.subscribe();
+	const reader = stream.getReader();
+	await reader.read();
+	await reader.cancel();
+}
 
 afterEach(async () => {
 	await env.DB.prepare('DELETE FROM conversations').run();
@@ -294,31 +315,230 @@ describe('ConversationDurableObject', () => {
 		expect(m.parts?.map((p) => p.type)).toEqual(['thinking', 'text', 'tool_use', 'tool_result']);
 	});
 
-	it('rebooting a DO with a streaming row marks it as error', async () => {
+	it('resume runs when a client subscribes to a DO with an interrupted stream', async () => {
 		const id = await createConversation(env);
 		const stub = stubFor(id);
 		await runInDurableObject(stub, async (_instance, ctx) => {
 			ctx.storage.sql.exec(
-				"INSERT INTO messages (id, role, content, model, status, created_at) VALUES ('a1', 'assistant', '', 'm/test', 'streaming', 1)",
+				"INSERT INTO messages (id, role, content, model, status, created_at) VALUES ('u1', 'user', 'hi', NULL, 'complete', 1)",
+			);
+			ctx.storage.sql.exec(
+				"INSERT INTO messages (id, role, content, model, status, created_at) VALUES ('a1', 'assistant', '', 'fake/model', 'streaming', 2)",
+			);
+			ctx.storage.sql.exec(
+				"INSERT OR REPLACE INTO _meta (key, value) VALUES ('conversation_id', ?)",
+				id,
 			);
 		});
-		// Force a fresh activation by destroying — the constructor's
-		// blockConcurrencyWhile re-runs and rewrites streaming → error.
-		// (Destroy clears storage, but we re-seed and then read back to
-		// verify the constructor-time UPDATE statement.)
+		await setOverride(stub, [textTurn('resumed answer').events]);
+
+		await pokeSubscribe(stub);
+
+		const state = await waitForState(stub, (s) => s.messages.find((m) => m.id === 'a1')?.status === 'complete');
+		const a1 = state.messages.find((m) => m.id === 'a1')!;
+		expect(a1.content).toBe('resumed answer');
+		expect(a1.status).toBe('complete');
+	});
+
+	it('alarm() triggers resume of an interrupted stream', async () => {
+		const id = await createConversation(env);
+		const stub = stubFor(id);
+		// Seed an interrupted row and explicitly schedule an alarm — this
+		// mirrors what the constructor does on a DO that boots into a
+		// streaming row, but without depending on test-runner DO recycling
+		// semantics.
 		await runInDurableObject(stub, async (_instance, ctx) => {
 			ctx.storage.sql.exec(
-				"INSERT OR REPLACE INTO messages (id, role, content, model, status, created_at) VALUES ('a1', 'assistant', '', 'm/test', 'streaming', 1)",
+				"INSERT INTO messages (id, role, content, model, status, created_at) VALUES ('u1', 'user', 'hi', NULL, 'complete', 1)",
 			);
-			// Manually run the same fix-up the constructor performs on boot.
 			ctx.storage.sql.exec(
-				"UPDATE messages SET status = 'error', error = 'Generation interrupted' WHERE status = 'streaming'",
+				"INSERT INTO messages (id, role, content, model, status, created_at) VALUES ('a1', 'assistant', '', 'fake/model', 'streaming', 2)",
+			);
+			ctx.storage.sql.exec(
+				"INSERT OR REPLACE INTO _meta (key, value) VALUES ('conversation_id', ?)",
+				id,
+			);
+			await ctx.storage.setAlarm(Date.now() + 50);
+		});
+		await setOverride(stub, [textTurn('alarm-resumed').events]);
+
+		const ran = await runDurableObjectAlarm(stub);
+		expect(ran).toBe(true);
+
+		const state = await waitForState(stub, (s) => s.messages.find((m) => m.id === 'a1')?.status === 'complete');
+		expect(state.messages.find((m) => m.id === 'a1')?.content).toBe('alarm-resumed');
+	});
+
+	it('resume preserves completed tool calls and only regenerates trailing text', async () => {
+		const id = await createConversation(env);
+		const stub = stubFor(id);
+		// Seed a row that had completed one tool round (tool_use + tool_result)
+		// and was emitting text when the DO died. The trailing text should be
+		// dropped; the tool round should be preserved and replayed into the
+		// LLM's history.
+		await runInDurableObject(stub, async (_instance, ctx) => {
+			ctx.storage.sql.exec(
+				"INSERT INTO messages (id, role, content, model, status, created_at) VALUES ('u1', 'user', 'search for x', NULL, 'complete', 1)",
+			);
+			const partsJson = JSON.stringify([
+				{ type: 'tool_use', id: 't1', name: 'web_search', input: { q: 'x' } },
+				{ type: 'tool_result', toolUseId: 't1', content: 'result body', isError: false },
+				{ type: 'text', text: 'partial sente' },
+			]);
+			ctx.storage.sql.exec(
+				`INSERT INTO messages (id, role, content, thinking, model, status, created_at, parts, tool_calls, tool_results)
+				 VALUES ('a1', 'assistant', 'partial sente', NULL, 'fake/model', 'streaming', 2, ?,
+				   '[{"id":"t1","name":"web_search","input":{"q":"x"}}]',
+				   '[{"toolUseId":"t1","content":"result body","isError":false}]')`,
+				partsJson,
+			);
+			ctx.storage.sql.exec(
+				"INSERT OR REPLACE INTO _meta (key, value) VALUES ('conversation_id', ?)",
+				id,
 			);
 		});
-		const state = await readState(stub);
-		const a1 = state.messages.find((m) => m.id === 'a1');
-		expect(a1?.status).toBe('error');
-		expect(a1?.error).toBe('Generation interrupted');
+		await setOverride(stub, [textTurn('final answer based on result').events]);
+
+		await pokeSubscribe(stub);
+
+		const state = await waitForState(stub, (s) => s.messages.find((m) => m.id === 'a1')?.status === 'complete');
+		const a1 = state.messages.find((m) => m.id === 'a1')!;
+		expect(a1.content).toBe('final answer based on result');
+		const partTypes = (a1.parts ?? []).map((p) => p.type);
+		expect(partTypes).toEqual(['tool_use', 'tool_result', 'text']);
+		// The tool_calls/tool_results columns must still show the recovered
+		// round so future turns see consistent history.
+		expect(a1.toolCalls).toEqual([{ id: 't1', name: 'web_search', input: { q: 'x' } }]);
+		expect(a1.toolResults).toEqual([{ toolUseId: 't1', content: 'result body', isError: false }]);
+
+		// And the LLM was called with the recovered tool round in its
+		// `messages` array, so it had the context needed to continue.
+		const calls = await readLLMCalls(stub);
+		expect(calls).toHaveLength(1);
+		const sent = calls[0].messages;
+		const sawToolUse = sent.some(
+			(m) =>
+				m.role === 'assistant' &&
+				Array.isArray(m.content) &&
+				m.content.some((c) => c.type === 'tool_use' && c.id === 't1'),
+		);
+		const sawToolResult = sent.some(
+			(m) =>
+				m.role === 'tool' &&
+				Array.isArray(m.content) &&
+				m.content.some((c) => c.type === 'tool_result' && c.toolUseId === 't1'),
+		);
+		expect(sawToolUse).toBe(true);
+		expect(sawToolResult).toBe(true);
+	});
+
+	it('resume normalizes a streaming-flagged tool_result left behind by mid-tool eviction', async () => {
+		const id = await createConversation(env);
+		const stub = stubFor(id);
+		await runInDurableObject(stub, async (_instance, ctx) => {
+			ctx.storage.sql.exec(
+				"INSERT INTO messages (id, role, content, model, status, created_at) VALUES ('u1', 'user', 'fetch a thing', NULL, 'complete', 1)",
+			);
+			const partsJson = JSON.stringify([
+				{ type: 'tool_use', id: 't1', name: 'fetch_url', input: { url: 'https://x' } },
+				// Streaming placeholder — never replaced because the DO died
+				// while the tool was executing.
+				{ type: 'tool_result', toolUseId: 't1', content: '', isError: false, streaming: true },
+			]);
+			ctx.storage.sql.exec(
+				`INSERT INTO messages (id, role, content, model, status, created_at, parts)
+				 VALUES ('a1', 'assistant', '', 'fake/model', 'streaming', 2, ?)`,
+				partsJson,
+			);
+			ctx.storage.sql.exec(
+				"INSERT OR REPLACE INTO _meta (key, value) VALUES ('conversation_id', ?)",
+				id,
+			);
+		});
+		await setOverride(stub, [textTurn('done despite the failure').events]);
+
+		await pokeSubscribe(stub);
+
+		const state = await waitForState(stub, (s) => s.messages.find((m) => m.id === 'a1')?.status === 'complete');
+		const a1 = state.messages.find((m) => m.id === 'a1')!;
+		// The placeholder result was rewritten to a synthetic error result.
+		const trs = (a1.parts ?? []).filter((p) => p.type === 'tool_result');
+		expect(trs).toHaveLength(1);
+		expect(trs[0]).toMatchObject({ toolUseId: 't1', isError: true });
+		expect((trs[0] as { streaming?: boolean }).streaming).not.toBe(true);
+	});
+
+	it('resume is idempotent: two subscribe pokes consume one scripted turn', async () => {
+		const id = await createConversation(env);
+		const stub = stubFor(id);
+		await runInDurableObject(stub, async (_instance, ctx) => {
+			ctx.storage.sql.exec(
+				"INSERT INTO messages (id, role, content, model, status, created_at) VALUES ('u1', 'user', 'hi', NULL, 'complete', 1)",
+			);
+			ctx.storage.sql.exec(
+				"INSERT INTO messages (id, role, content, model, status, created_at) VALUES ('a1', 'assistant', '', 'fake/model', 'streaming', 2)",
+			);
+			ctx.storage.sql.exec(
+				"INSERT OR REPLACE INTO _meta (key, value) VALUES ('conversation_id', ?)",
+				id,
+			);
+		});
+		// Only one scripted turn; if resume kicks off twice the second call
+		// hits the "ran out of scripted turns" error.
+		await setOverride(stub, [textTurn('first').events]);
+
+		await pokeSubscribe(stub);
+		await pokeSubscribe(stub);
+
+		const state = await waitForState(stub, (s) => s.messages.find((m) => m.id === 'a1')?.status === 'complete');
+		const a1 = state.messages.find((m) => m.id === 'a1')!;
+		expect(a1.content).toBe('first');
+		expect(a1.status).toBe('complete');
+		const calls = await readLLMCalls(stub);
+		expect(calls).toHaveLength(1);
+	});
+
+	it('resume marks older streaming rows as error and resumes only the newest', async () => {
+		const id = await createConversation(env);
+		const stub = stubFor(id);
+		await runInDurableObject(stub, async (_instance, ctx) => {
+			ctx.storage.sql.exec(
+				"INSERT INTO messages (id, role, content, model, status, created_at) VALUES ('a1', 'assistant', '', 'fake/model', 'streaming', 1)",
+			);
+			ctx.storage.sql.exec(
+				"INSERT INTO messages (id, role, content, model, status, created_at) VALUES ('a2', 'assistant', '', 'fake/model', 'streaming', 2)",
+			);
+			ctx.storage.sql.exec(
+				"INSERT OR REPLACE INTO _meta (key, value) VALUES ('conversation_id', ?)",
+				id,
+			);
+		});
+		await setOverride(stub, [textTurn('only the newest').events]);
+
+		await pokeSubscribe(stub);
+
+		const state = await waitForState(stub, (s) => s.messages.find((m) => m.id === 'a2')?.status === 'complete');
+		const a1 = state.messages.find((m) => m.id === 'a1')!;
+		const a2 = state.messages.find((m) => m.id === 'a2')!;
+		expect(a1.status).toBe('error');
+		expect(a1.error).toContain('Multiple streaming rows');
+		expect(a2.status).toBe('complete');
+		expect(a2.content).toBe('only the newest');
+	});
+
+	it('resume marks the row as error when conversation_id meta is missing', async () => {
+		const id = await createConversation(env);
+		const stub = stubFor(id);
+		// Seed a streaming row but deliberately omit the _meta entry.
+		await runInDurableObject(stub, async (_instance, ctx) => {
+			ctx.storage.sql.exec(
+				"INSERT INTO messages (id, role, content, model, status, created_at) VALUES ('a1', 'assistant', '', 'fake/model', 'streaming', 1)",
+			);
+		});
+		await pokeSubscribe(stub);
+		const state = await waitForState(stub, (s) => s.messages.find((m) => m.id === 'a1')?.status === 'error');
+		const a1 = state.messages.find((m) => m.id === 'a1')!;
+		expect(a1.error).toContain('conversation id unknown');
 	});
 
 	it('abortGeneration is a safe no-op when nothing is in progress', async () => {
