@@ -43,7 +43,7 @@ export type Artifact = {
 export type JsonValue = any;
 
 export type ToolCallRecord = { id: string; name: string; input: JsonValue };
-export type ToolResultRecord = { toolUseId: string; content: string; isError: boolean };
+export type ToolResultRecord = { toolUseId: string; content: string; isError: boolean; streaming?: boolean };
 
 // Ordered timeline of an assistant turn: thinking, text segments, tool
 // invocations, and their results, in the sequence the model produced them.
@@ -59,6 +59,7 @@ export type ToolResultPart = {
 	toolUseId: string;
 	content: string;
 	isError: boolean;
+	streaming?: boolean;
 };
 export type InfoPart = { type: 'info'; text: string };
 export type MessagePart = TextPart | ThinkingPart | ToolUsePart | ToolResultPart | InfoPart;

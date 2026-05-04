@@ -103,4 +103,18 @@ describe('groupParts', () => {
 			expect(groups[0].mixed).toBe(false);
 		}
 	});
+	it('keeps a bundle active when a tool result is still streaming', () => {
+		const parts: MessagePart[] = [
+			{ type: 'thinking', text: 'pre' },
+			{ type: 'tool_use', id: 't1', name: 'x', input: {} },
+		];
+		const results = buildResultsMap([
+			{ type: 'tool_result', toolUseId: 't1', content: 'partial…', isError: false, streaming: true },
+		]);
+		const groups = groupParts(parts, true, results);
+		expect(groups[0].kind).toBe('bundle');
+		if (groups[0].kind === 'bundle') {
+			expect(groups[0].hasActive).toBe(true);
+		}
+	});
 });

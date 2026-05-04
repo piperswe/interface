@@ -569,19 +569,58 @@ The user's bio, preferences, and context are provided separately in the user tur
 						name: call.name,
 						input: call.input,
 					});
-					const result = await registry.execute({ env: this.env, conversationId, assistantMessageId: assistantId }, call.name, call.input);
+					// Seed a preliminary streaming tool_result so the UI shows the
+					// call as active while output arrives. Replaced with the final
+					// result once execution completes.
+					parts.push({ type: 'tool_result', toolUseId: call.id, content: '', isError: false, streaming: true });
+					this.#broadcast('tool_result', {
+						messageId: assistantId,
+						toolUseId: call.id,
+						content: '',
+						isError: false,
+						streaming: true,
+					});
+					const result = await registry.execute(
+						{
+							env: this.env,
+							conversationId,
+							assistantMessageId: assistantId,
+							emitToolOutput: (chunk: string) => {
+								this.#broadcast('tool_output', {
+									messageId: assistantId,
+									toolUseId: call.id,
+									chunk,
+								});
+							},
+						},
+						call.name,
+						call.input,
+					);
 					const resultRecord: RecordedToolResult = {
 						toolUseId: call.id,
 						content: result.content,
 						isError: result.isError ?? false,
 					};
-					accumulatedToolResults.push(resultRecord);
-					parts.push({
-						type: 'tool_result',
-						toolUseId: call.id,
-						content: result.content,
-						isError: result.isError ?? false,
-					});
+					const existingIdx = accumulatedToolResults.findIndex((r) => r.toolUseId === call.id);
+					if (existingIdx >= 0) accumulatedToolResults[existingIdx] = resultRecord;
+					else accumulatedToolResults.push(resultRecord);
+					// Swap the preliminary streaming part for the final result.
+					const partsIdx = parts.findIndex((p) => p.type === 'tool_result' && p.toolUseId === call.id);
+					if (partsIdx >= 0) {
+						parts[partsIdx] = {
+							type: 'tool_result',
+							toolUseId: call.id,
+							content: result.content,
+							isError: result.isError ?? false,
+						};
+					} else {
+						parts.push({
+							type: 'tool_result',
+							toolUseId: call.id,
+							content: result.content,
+							isError: result.isError ?? false,
+						});
+					}
 					if (result.citations) accumulatedCitations.push(...result.citations);
 					if (result.artifacts) {
 						for (const a of result.artifacts) {

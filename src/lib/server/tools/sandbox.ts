@@ -1,5 +1,5 @@
-import { getSandbox } from '@cloudflare/sandbox';
-import type { Sandbox } from '@cloudflare/sandbox';
+import { getSandbox, parseSSEStream } from '@cloudflare/sandbox';
+import type { Sandbox, ExecEvent, ExecResult } from '@cloudflare/sandbox';
 import type { Tool, ToolContext, ToolExecutionResult } from './registry';
 
 // ---------------------------------------------------------------------------
@@ -51,6 +51,20 @@ async function ensureSshKey(ctx: ToolContext): Promise<void> {
 	sshKeyInjected.add(ctx.conversationId);
 }
 
+function formatExecResult(result: ExecResult): ToolExecutionResult {
+	const lines: string[] = [`exitCode: ${result.exitCode}`, `success: ${result.success}`];
+	if (result.stdout) {
+		lines.push('', '--- stdout ---', result.stdout);
+	}
+	if (result.stderr) {
+		lines.push('', '--- stderr ---', result.stderr);
+	}
+	return {
+		content: lines.join('\n'),
+		isError: !result.success,
+	};
+}
+
 // ---------------------------------------------------------------------------
 // sandbox_exec
 // ---------------------------------------------------------------------------
@@ -95,26 +109,37 @@ export const sandboxExecTool: Tool = {
 		try {
 			await ensureSshKey(ctx);
 			const sandbox = getConversationSandbox(ctx);
+			if (ctx.emitToolOutput) {
+				const stream = await sandbox.execStream(args.command, {
+					...(args.cwd ? { cwd: args.cwd } : {}),
+					...(args.env ? { env: args.env } : {}),
+					...(args.stdin ? { stdin: args.stdin } : {}),
+					...(args.timeout ? { timeout: args.timeout } : {}),
+					...(ctx.signal ? { signal: ctx.signal } : {}),
+				});
+				let result: ExecResult | undefined;
+				for await (const ev of parseSSEStream<ExecEvent>(stream, ctx.signal)) {
+					if (ev.type === 'stdout' || ev.type === 'stderr') {
+						if (ev.data) ctx.emitToolOutput(ev.data);
+					} else if (ev.type === 'complete') {
+						result = ev.result;
+						break;
+					} else if (ev.type === 'error') {
+						return { content: ev.error ?? 'Exec stream error', isError: true };
+					}
+				}
+				if (!result) {
+					return { content: 'Exec stream ended without completion', isError: true };
+				}
+				return formatExecResult(result);
+			}
 			const result = await sandbox.exec(args.command, {
 				...(args.cwd ? { cwd: args.cwd } : {}),
 				...(args.env ? { env: args.env } : {}),
 				...(args.stdin ? { stdin: args.stdin } : {}),
 				...(args.timeout ? { timeout: args.timeout } : {}),
 			});
-			const lines: string[] = [
-				`exitCode: ${result.exitCode}`,
-				`success: ${result.success}`,
-			];
-			if (result.stdout) {
-				lines.push('', '--- stdout ---', result.stdout);
-			}
-			if (result.stderr) {
-				lines.push('', '--- stderr ---', result.stderr);
-			}
-			return {
-				content: lines.join('\n'),
-				isError: !result.success,
-			};
+			return formatExecResult(result);
 		} catch (e) {
 			return {
 				content: e instanceof Error ? e.message : String(e),

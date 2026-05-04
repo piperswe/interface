@@ -34,9 +34,13 @@ export function groupParts(parts: MessagePart[], streaming: boolean, results: Ma
 			groups.push({ kind: 'standalone', part: bundle[0].part, index: bundle[0].index });
 		} else {
 			const hasActive = bundle.some(({ part, index }) => {
-				if (part.type === 'thinking') return streaming && index === parts.length - 1;
-				if (part.type === 'tool_use') return streaming && !results.get((part as ToolUsePart).id);
-				return false;
+			if (part.type === 'thinking') return streaming && index === parts.length - 1;
+			if (part.type === 'tool_use') {
+				const result = results.get((part as ToolUsePart).id);
+				if (!result) return streaming;
+				return streaming && result.streaming;
+			}
+			return false;
 			});
 			const mixed = bundle.some((b) => b.part.type === 'tool_use');
 			groups.push({
