@@ -24,6 +24,7 @@ const ALLOWED_SETTING_KEYS = new Set([
 	'model_list',
 	'system_prompt',
 	'user_bio',
+	'cf_ai_gateway_id',
 ]);
 
 type Theme = 'system' | 'light' | 'dark';

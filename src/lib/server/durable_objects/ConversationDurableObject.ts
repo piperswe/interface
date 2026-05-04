@@ -16,7 +16,7 @@ import { listMcpServers } from '../mcp_servers';
 import { listSubAgents } from '../sub_agents';
 import { createAgentTool } from '../tools/agent';
 import { createGetModelsTool } from '../tools/get_models';
-import { getModelList, getSystemPrompt, getUserBio } from '../settings';
+import { getCloudflareAIGatewayId, getModelList, getSystemPrompt, getUserBio } from '../settings';
 import { registerSandboxTools } from '../tools/sandbox';
 import { getSandbox } from '@cloudflare/sandbox';
 import type { Sandbox } from '@cloudflare/sandbox';
@@ -710,7 +710,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		this.__llmOverrideCalls = [];
 	}
 
-	#routeLLM(model: string): { model: string; providerID: string; chat(req: ChatRequest): AsyncIterable<StreamEvent> } {
+	async #routeLLM(model: string): Promise<{ model: string; providerID: string; chat(req: ChatRequest): AsyncIterable<StreamEvent> }> {
 		const script = this.__llmOverrideScript;
 		if (script) {
 			const calls = this.__llmOverrideCalls;
@@ -728,7 +728,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 				},
 			};
 		}
-		return routeLLM(this.env, model);
+		return await routeLLM(this.env, model);
 	}
 
 	async #generate(conversationId: string, assistantId: string, model: string): Promise<void> {
@@ -775,7 +775,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		this.#sql.exec('UPDATE messages SET started_at = ? WHERE id = ?', startedAt, assistantId);
 
 		try {
-			const llm = this.#routeLLM(model);
+			const llm = await this.#routeLLM(model);
 			const history = this.#sql
 				.exec(
 					`SELECT role, content FROM messages WHERE id != ? AND ${COMPLETE_PREDICATE} ORDER BY created_at ASC`,
@@ -856,13 +856,14 @@ Be concise by default. Expand when the task genuinely calls for depth (design do
 
 The user's bio, preferences, and context are provided separately in the user turn. Use that context when it's actually relevant to the task — don't surface personal details just to demonstrate that you remember them.`;
 
-			const [convoRow, rawSystemPrompt, userBio, modelList] = await Promise.all([
+			const [convoRow, rawSystemPrompt, userBio, modelList, cfGatewayId] = await Promise.all([
 				this.env.DB.prepare('SELECT thinking_budget FROM conversations WHERE id = ?')
 					.bind(conversationId)
 					.first<{ thinking_budget: number | null }>(),
 				getSystemPrompt(this.env),
 				getUserBio(this.env),
 				getModelList(this.env),
+				getCloudflareAIGatewayId(this.env),
 			]);
 			const thinkingBudget = convoRow?.thinking_budget ?? null;
 
@@ -873,10 +874,12 @@ The user's bio, preferences, and context are provided separately in the user tur
 			let thinking: ChatRequest['thinking'] | undefined;
 
 			// Translate the per-conversation thinking budget into the right
-			// provider shape. Native Anthropic uses the legacy `thinking`
-			// field; everything else uses `reasoning`. Only one is set so
+			// provider shape. Anthropic — whether direct (ANTHROPIC_KEY) or
+			// routed through AI Gateway — uses the legacy `thinking` field;
+			// everything else uses `reasoning`. Only one is set so
 			// AnthropicLLM never has to disambiguate.
-			const isNativeAnthropic = isAnthropicModel(model) && typeof this.env.ANTHROPIC_KEY === 'string';
+			const isNativeAnthropic =
+				isAnthropicModel(model) && (typeof this.env.ANTHROPIC_KEY === 'string' || cfGatewayId != null);
 			if (thinkingBudget != null && thinkingBudget > 0) {
 				if (isNativeAnthropic) {
 					thinking = { type: 'enabled', budgetTokens: thinkingBudget };
@@ -1540,7 +1543,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 		const collapsed = input.replace(/\s+/g, ' ').trim();
 		let title: string;
 		try {
-			const llm = routeLLM(this.env, TITLE_MODEL);
+			const llm = await routeLLM(this.env, TITLE_MODEL);
 			let buf = '';
 			for await (const ev of llm.chat({
 				messages: [

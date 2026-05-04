@@ -55,8 +55,9 @@ export type CompactionUsage = {
 };
 
 export type CompactionDeps = {
-	// LLM factory; defaults to `routeLLM`. Tests inject a fake.
-	llm?: (env: Env, model: string) => LLM;
+	// LLM factory; defaults to `routeLLM`. Tests inject a fake. May return
+	// either an `LLM` synchronously or a `Promise<LLM>` — both are awaited.
+	llm?: (env: Env, model: string) => LLM | Promise<LLM>;
 };
 
 export async function compactHistory(
@@ -117,7 +118,7 @@ export async function compactHistory(
 
 	let summary: string;
 	try {
-		const llm = (deps.llm ?? routeLLM)(env, model);
+		const llm = await (deps.llm ?? routeLLM)(env, model);
 		let buf = '';
 		for await (const ev of llm.chat({
 			messages: [
