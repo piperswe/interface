@@ -612,6 +612,60 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		this.#broadcast('refresh', {});
 	}
 
+	// Retry from any message: soft-deletes all messages after the anchor user
+	// message (or after the target if it's a user message), then starts a new
+	// generation. For assistant messages the anchor is the immediately preceding
+	// user message; for user messages the message itself is the anchor.
+	async retryFromMessage(conversationId: string, messageId: string, model: string): Promise<AddMessageResult> {
+		this.#setConversationId(conversationId);
+		if (this.#inProgress || this.#resumePromise) return { status: 'busy' };
+		if (!model) return { status: 'invalid', reason: 'missing model' };
+
+		const msgRows = this.#sql
+			.exec('SELECT id, role, created_at FROM messages WHERE id = ? AND deleted_at IS NULL', messageId)
+			.toArray() as unknown as Array<{ id: string; role: string; created_at: number }>;
+
+		if (msgRows.length === 0) return { status: 'invalid', reason: 'message not found' };
+		const msg = msgRows[0];
+
+		let anchorCreatedAt: number;
+		if (msg.role === 'user') {
+			anchorCreatedAt = msg.created_at;
+		} else {
+			const userRows = this.#sql
+				.exec(
+					"SELECT created_at FROM messages WHERE role = 'user' AND created_at < ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1",
+					msg.created_at,
+				)
+				.toArray() as unknown as Array<{ created_at: number }>;
+			if (userRows.length === 0) return { status: 'invalid', reason: 'no preceding user message' };
+			anchorCreatedAt = userRows[0].created_at;
+		}
+
+		const now = nowMs();
+		this.#sql.exec(
+			'UPDATE messages SET deleted_at = ? WHERE created_at > ? AND deleted_at IS NULL',
+			now,
+			anchorCreatedAt,
+		);
+
+		const assistantId = uuid();
+		this.#sql.exec(
+			"INSERT INTO messages (id, role, content, model, status, created_at) VALUES (?, 'assistant', '', ?, 'streaming', ?)",
+			assistantId,
+			model,
+			now + 1,
+		);
+
+		this.#inProgress = { messageId: assistantId, content: '', thinking: '', parts: [] };
+		this.#broadcast('refresh', {});
+
+		await this.env.DB.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').bind(now, conversationId).run();
+
+		this.ctx.waitUntil(this.#generate(conversationId, assistantId, model));
+		return { status: 'started' };
+	}
+
 	// Wipe all DO storage. Cloudflare doesn't expose a "delete this DO from
 	// the namespace" API, but `ctx.storage.deleteAll()` drops every row in
 	// the SQLite store, so the next time something resolves this DO id it'll
