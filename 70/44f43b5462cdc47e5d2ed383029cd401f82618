@@ -1,0 +1,93 @@
+migrations/0005_providers_models.sql
+  4f36f2e164771080 1-30
+src/lib/providers.remote.ts
+  4f36f2e164771080 1-254
+src/lib/server/tools/agent.ts
+  4f36f2e164771080 10,27-29,33-34,47,51,53-54,81,103,105,128
+src/lib/server/providers/migrate.ts
+  4f36f2e164771080 1-53
+src/routes/c/[id]/+page.svelte
+  4f36f2e164771080 55,57-59
+src/app.d.ts
+  4f36f2e164771080 35-37
+src/lib/server/durable_objects/ConversationDurableObject.ts
+  4f36f2e164771080 2,17,25-27,469,695,700,713-720,726-727,741,766,847,853,857-859,868,922,924,926-927,946,958,964,1201,1204-1205,1210,1432-1434,1436,1441,1446,1493-1497,1500
+src/lib/components/AppShell.svelte
+  4f36f2e164771080 98
+src/lib/server/providers/presets.ts
+  4f36f2e164771080 1-44,51,54,56,58-87
+src/lib/components/ComposeForm.svelte
+  4f36f2e164771080 8,23,33,38-39,53-54,56-67,77-78,150-172,174,176,179-182,184-187,221,341-342,354-363
+src/lib/server/tools/get_models.ts
+  4f36f2e164771080 1-2,4,9,24,26-27,29-40
+src/lib/server/settings.test.ts
+  4f36f2e164771080 57,59,64,70
+src/lib/types/conversation.ts
+  4f36f2e164771080 13-24,54,65
+src/lib/server/llm/route.test.ts
+  4f36f2e164771080 3-5,7,10-21,24-31,33,36-37
+src/lib/server/tools/get_models.test.ts
+  4f36f2e164771080 8,10,12-13,18-21,24,26-27,30,38
+src/lib/components/MetaPanel.svelte
+  4f36f2e164771080 3,17,19,22-29
+src/lib/server/providers/models.ts
+  4f36f2e164771080 1-252
+src/lib/server/llm/context.test.ts
+  4f36f2e164771080 6-7,13-14,19-20,23-25,33-34,44,51,53,59,65,72,84,95,106,112,116-117,130,138,149
+src/routes/settings/+page.svelte
+  4f36f2e164771080 4-11,23,33,35-41,43-50,52-58,60-61,63-73,77-81,84-91,94-101,104-105,107-110,112-117,121-131,133,136-190,192-216,218-271,273-369,371,377-385,388-390,392,394-401,403,405-408,413-418,421-423,426-427,431-433,436-437,441-444,446-448,450,452-454
+src/lib/server/llm/LLM.ts
+  4f36f2e164771080 15,80
+wrangler.jsonc
+  4f36f2e164771080 55-57
+src/routes/settings/+page.server.ts
+  4f36f2e164771080 9,12-14,20-31,36-38,43
+src/lib/settings.remote.ts
+  4f36f2e164771080 26
+src/lib/server/providers/store.ts
+  4f36f2e164771080 1-135
+src/lib/server/llm/route.ts
+  4f36f2e164771080 1-2,4,7-33,37-41,44-46
+src/lib/server/llm/AnthropicLLM.ts
+  4f36f2e164771080 20-27
+src/lib/server/tools/agent.test.ts
+  4f36f2e164771080 287,306-307
+wrangler.test.jsonc
+  4f36f2e164771080 55
+src/lib/form-actions.ts
+  4f36f2e164771080 6-8
+src/lib/server/settings.ts
+  4f36f2e164771080 72,74-76
+migrations/0006_model_sort_order.sql
+  4f36f2e164771080 1-4
+src/lib/server/providers/types.ts
+  4f36f2e164771080 1-22
+src/lib/server/llm/context.ts
+  4f36f2e164771080 2-3,58-59,64,74-75,121
+src/routes/c/[id]/+page.server.ts
+  4f36f2e164771080 4-5,68,70,72,81
+src/lib/server/llm/OpenAILLM.ts
+  4f36f2e164771080 1,7-9,11-20,26,28-42,48,56,61-69,72,90,94-104,119-122,126-127,129-135,137-138,157,161,163,167-173,218-228
+src/lib/server/providers/fetch.ts
+  4f36f2e164771080 1-57
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "7044f43b5462cdc47e5d2ed383029cd401f82618",
+  "prompts": {
+    "4f36f2e164771080": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_20bbce6dfffe5eWWrXPhmROPS4",
+        "model": "openrouter/z-ai/glm-5.1"
+      },
+      "human_author": "Piper McCorkle",
+      "messages": [],
+      "total_additions": 1898,
+      "total_deletions": 1126,
+      "accepted_lines": 1694,
+      "overriden_lines": 9
+    }
+  }
+}
