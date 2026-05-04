@@ -17,7 +17,7 @@ import type { PageServerLoad } from './$types';
 export const load: PageServerLoad = async ({ platform }) => {
 	if (!platform) error(500, 'Cloudflare platform bindings unavailable');
 	const env = platform.env;
-	const [mcpServers, subAgents, providers, allModels, threshold, summaryTokens, systemPrompt, userBio, defaultModel] =
+	const [mcpServers, subAgents, providers, allModels, threshold, summaryTokens, systemPrompt, userBio, defaultModel, titleModel] =
 		await Promise.all([
 			listMcpServers(env),
 			listSubAgents(env),
@@ -28,6 +28,7 @@ export const load: PageServerLoad = async ({ platform }) => {
 			getSystemPrompt(env),
 			getUserBio(env),
 			getSetting(env, 'default_model'),
+			getSetting(env, 'title_model'),
 		]);
 	return {
 		secretKeys: describeSecretKeys(env),
@@ -41,5 +42,6 @@ export const load: PageServerLoad = async ({ platform }) => {
 		systemPrompt: systemPrompt ?? '',
 		userBio: userBio ?? '',
 		defaultModel: defaultModel ?? '',
+		titleModel: titleModel ?? '',
 	};
 };
