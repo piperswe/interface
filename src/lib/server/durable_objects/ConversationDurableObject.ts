@@ -766,14 +766,24 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			const llm = await this.#routeLLM(model);
 			const history = this.#sql
 				.exec(
-					`SELECT role, content FROM messages WHERE id != ? AND ${COMPLETE_PREDICATE} ORDER BY created_at ASC`,
+					`SELECT role, content, parts FROM messages WHERE id != ? AND ${COMPLETE_PREDICATE} ORDER BY created_at ASC`,
 					assistantId,
 				)
-				.toArray() as unknown as Array<{ role: string; content: string }>;
-			let messages: Message[] = history.map((m) => ({
-				role: m.role === 'assistant' ? 'assistant' : 'user',
-				content: m.content,
-			}));
+				.toArray() as unknown as Array<{ role: string; content: string; parts: string | null }>;
+			let messages: Message[] = [];
+			for (const m of history) {
+				if (m.role === 'assistant') {
+					const parsedParts = parseJson<MessagePart[]>(m.parts) ?? [];
+					const hasToolParts = parsedParts.some((p) => p.type === 'tool_use' || p.type === 'tool_result');
+					if (hasToolParts) {
+						messages.push(...this.#partsToMessages(parsedParts));
+					} else {
+						messages.push({ role: 'assistant', content: m.content });
+					}
+				} else {
+					messages.push({ role: 'user', content: m.content });
+				}
+			}
 
 			// Resume case: if `parts` was hydrated from a persisted row that
 			// contains completed tool rounds, the LLM needs to see those
