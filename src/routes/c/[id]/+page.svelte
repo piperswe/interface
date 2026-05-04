@@ -8,6 +8,8 @@
 	import { attachConversationStream } from '$lib/conversation-stream';
 	import { createStreamingMarkdownRunner } from '$lib/streaming-markdown';
 	import { archive, destroy, regenerateTitle } from '$lib/conversations.remote';
+	import { confirmSubmit, justSubmit } from '$lib/form-actions';
+	import { clickOutside } from '$lib/click-outside';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -16,7 +18,12 @@
 	let convState: ConversationState = $state(untrack(() => data.initialState));
 	let currentConversationId = $state(untrack(() => data.conversation.id));
 	let scrollEl: HTMLDivElement | null = $state(null);
+	let menuEl: HTMLDetailsElement | null = $state(null);
 	let stickToBottom = $state(true);
+
+	function closeMenu() {
+		if (menuEl?.open) menuEl.open = false;
+	}
 
 	$effect(() => {
 		const id = data.conversation.id;
@@ -104,8 +111,20 @@
 		el.addEventListener('scroll', onScroll, { passive: true });
 		return () => el.removeEventListener('scroll', onScroll);
 	});
+	// Track the size of the last message so the auto-scroll only fires when
+	// content actually grows, not on every reactive re-evaluation of `messages`.
+	const scrollSignature = $derived(
+		(() => {
+			const last = convState.messages.at(-1);
+			if (!last) return `${convState.messages.length}:0:0`;
+			const lastPart = last.parts?.at(-1);
+			const partLen =
+				lastPart && (lastPart.type === 'text' || lastPart.type === 'thinking') ? lastPart.text.length : 0;
+			return `${convState.messages.length}:${last.content.length}:${partLen}:${last.status}`;
+		})(),
+	);
 	$effect(() => {
-		void convState.messages;
+		void scrollSignature;
 		const el = scrollEl;
 		if (!el || !stickToBottom) return;
 		const handle = requestAnimationFrame(() => {
@@ -136,22 +155,17 @@
 			aria-label="Regenerate title"
 		>↻</button>
 		{#if totalCost > 0}<span class="conversation-cost small text-muted font-monospace">Cost: {fmtCost(totalCost)}</span>{/if}
-		<details class="conversation-menu">
+		<details bind:this={menuEl} class="conversation-menu" use:clickOutside={closeMenu}>
 			<summary class="title-action-button btn btn-sm" aria-label="Conversation actions" title="More actions">⋯</summary>
 			<div class="conversation-menu-panel" role="menu">
-				<form
-					{...archive.for(data.conversation.id).enhance(async ({ submit }) => {
-						await submit();
-					})}
-				>
+				<form {...archive.for(data.conversation.id).enhance(justSubmit)}>
 					<input type="hidden" name="conversationId" value={data.conversation.id} />
 					<button type="submit" class="conversation-menu-item" role="menuitem">Archive</button>
 				</form>
 				<form
-					{...destroy.for(data.conversation.id).enhance(async ({ submit }) => {
-						if (!confirm(`Delete "${data.conversation.title}"? This cannot be undone.`)) return;
-						await submit();
-					})}
+					{...destroy
+						.for(data.conversation.id)
+						.enhance(confirmSubmit(`Delete "${data.conversation.title}"? This cannot be undone.`))}
 				>
 					<input type="hidden" name="conversationId" value={data.conversation.id} />
 					<button type="submit" class="conversation-menu-item danger" role="menuitem">Delete</button>

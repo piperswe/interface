@@ -4,7 +4,7 @@ import { THINKING_PRESETS, describeBudget, presetFor } from './thinking-presets'
 describe('THINKING_PRESETS', () => {
 	it('starts with Off and ascends through Extra high', () => {
 		expect(THINKING_PRESETS[0]).toEqual({ id: 'off', label: 'Off', budget: null });
-		expect(THINKING_PRESETS.at(-1)?.id).toBe('extra-high');
+		expect(THINKING_PRESETS.at(-1)?.id).toBe('xhigh');
 		// Budgets (excluding Off) are strictly increasing.
 		const budgets = THINKING_PRESETS.slice(1).map((p) => p.budget!);
 		const sorted = [...budgets].sort((a, b) => a - b);
@@ -26,7 +26,7 @@ describe('presetFor', () => {
 		expect(presetFor(1024)?.id).toBe('low');
 		expect(presetFor(4096)?.id).toBe('medium');
 		expect(presetFor(16384)?.id).toBe('high');
-		expect(presetFor(32768)?.id).toBe('extra-high');
+		expect(presetFor(32768)?.id).toBe('xhigh');
 	});
 	it('returns null for non-matching positive budgets (custom)', () => {
 		expect(presetFor(1234)).toBeNull();

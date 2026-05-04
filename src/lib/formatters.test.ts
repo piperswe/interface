@@ -22,10 +22,12 @@ describe('fmtNumber', () => {
 });
 
 describe('fmtCost', () => {
-	it('formats numbers with 6-decimal precision and a leading $', () => {
-		expect(fmtCost(0.0125)).toBe('$0.012500');
-		expect(fmtCost(1)).toBe('$1.000000');
-		expect(fmtCost(0)).toBe('$0.000000');
+	it('auto-scales decimals based on magnitude', () => {
+		expect(fmtCost(0.0001)).toBe('$0.000100');
+		expect(fmtCost(0.0125)).toBe('$0.0125');
+		expect(fmtCost(0.5)).toBe('$0.5000');
+		expect(fmtCost(1)).toBe('$1.00');
+		expect(fmtCost(0)).toBe('$0');
 	});
 	it('returns em dash for non-numbers', () => {
 		expect(fmtCost(undefined)).toBe('—');

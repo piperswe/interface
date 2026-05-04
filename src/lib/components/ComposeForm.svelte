@@ -9,6 +9,7 @@
 	import { sendMessage, setThinkingBudget, abortGeneration } from '$lib/conversations.remote';
 	import { invalidateAll } from '$app/navigation';
 	import { untrack } from 'svelte';
+	import { clickOutside } from '$lib/click-outside';
 	import type { Preset } from './thinking-presets';
 
 	let {
@@ -28,6 +29,16 @@
 	let formEl: HTMLFormElement | null = $state(null);
 	let optionsEl: HTMLDetailsElement | null = $state(null);
 	let selectedModel = $state(untrack(() => defaultModel));
+
+	// If the selection is no longer in the curated list (operator deleted it
+	// in /settings, or the conversation was loaded with a stale default),
+	// snap to the first available model so submit doesn't 400.
+	$effect(() => {
+		if (models.length === 0) return;
+		if (!models.some((m) => m.slug === selectedModel)) {
+			selectedModel = models[0].slug;
+		}
+	});
 
 	let activePresetId = $state(untrack(() => presetFor(thinkingBudget)?.id ?? 'custom'));
 	let customInput = $state(
@@ -78,15 +89,9 @@
 		await invalidateAll();
 	}
 
-	function onDocPointerDown(e: PointerEvent) {
-		if (!optionsEl?.open) return;
-		if (e.target instanceof Node && optionsEl.contains(e.target)) return;
-		optionsEl.open = false;
+	function closeOptions() {
+		if (optionsEl?.open) optionsEl.open = false;
 	}
-	$effect(() => {
-		document.addEventListener('pointerdown', onDocPointerDown);
-		return () => document.removeEventListener('pointerdown', onDocPointerDown);
-	});
 </script>
 
 <form
@@ -109,7 +114,7 @@
 		class="form-control border-0 shadow-none bg-transparent p-1"
 	></textarea>
 	<div class="d-flex align-items-center gap-2 flex-wrap">
-		<details bind:this={optionsEl} class="compose-options">
+		<details bind:this={optionsEl} class="compose-options" use:clickOutside={closeOptions}>
 			<summary class="compose-options-button" aria-label="Model and options">
 				<span class="compose-options-model">{currentLabel}</span>
 				<span class="compose-options-sep" aria-hidden="true">·</span>

@@ -16,9 +16,15 @@ export type ToolArtifactSpec = {
 	content: string;
 };
 
+// Discriminator for the cause of a tool failure. The string is also part of
+// the failure `content` so the model sees it; callers can branch on this when
+// deciding whether to retry. Keep the set small and stable.
+export type ToolErrorCode = 'not_found' | 'execution_failure' | 'invalid_input';
+
 export type ToolExecutionResult = {
 	content: string;
 	isError?: boolean;
+	errorCode?: ToolErrorCode;
 	citations?: ToolCitation[];
 	artifacts?: ToolArtifactSpec[];
 };
@@ -60,7 +66,7 @@ export class ToolRegistry {
 	async execute(ctx: ToolContext, name: string, input: unknown): Promise<ToolExecutionResult> {
 		const tool = this.#tools.get(name);
 		if (!tool) {
-			return { content: `Unknown tool: ${name}`, isError: true };
+			return { content: `Unknown tool: ${name}`, isError: true, errorCode: 'not_found' };
 		}
 		try {
 			return await tool.execute(ctx, input);
@@ -68,6 +74,7 @@ export class ToolRegistry {
 			return {
 				content: e instanceof Error ? e.message : String(e),
 				isError: true,
+				errorCode: 'execution_failure',
 			};
 		}
 	}

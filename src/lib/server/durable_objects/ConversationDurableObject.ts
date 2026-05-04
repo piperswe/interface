@@ -22,6 +22,8 @@ import { getSandbox } from '@cloudflare/sandbox';
 import type { Sandbox } from '@cloudflare/sandbox';
 import { reasoningTypeFor } from '../models/config';
 import type { ReasoningConfig } from '../llm/LLM';
+import { renderMarkdown, renderArtifactCode } from '../markdown';
+import { now as nowMs, uuid } from '../clock';
 import type { AddMessageResult, Artifact, ArtifactType, ConversationState, MessageRow, MetaSnapshot } from '$lib/types/conversation';
 
 export type { AddMessageResult, Artifact, ArtifactType, ConversationState, MessageRow, MetaSnapshot };
@@ -31,6 +33,8 @@ const TITLE_MAX = 60;
 const MAX_TOOL_ITERATIONS = 10;
 const TITLE_MODEL = 'deepseek/deepseek-v4-flash';
 const MCP_TOOL_CACHE_TTL_MS = 60_000;
+// SQL fragment used by every history / state fetch on the messages table.
+const COMPLETE_PREDICATE = "status = 'complete' AND deleted_at IS NULL";
 
 import type {
 	JsonValue,
@@ -82,6 +86,97 @@ function normalizeParts(parts: MessagePart[], reason: string): void {
 	}
 }
 
+// Idempotent helper: run ALTER, swallow "duplicate column" errors so the same
+// migration can be safely replayed on a DO that pre-dates the schema
+// versioning table.
+function alterIgnoreExists(sql: SqlStorage, stmt: string): void {
+	try {
+		sql.exec(stmt);
+	} catch {
+		// column already exists
+	}
+}
+
+// Versioned schema migrations. Append-only — never edit a published entry.
+// Migration 1 is the legacy CREATE+ALTER bundle; all DOs that pre-date the
+// `_meta` table will pass through it on first boot, but each ALTER swallows
+// "column exists" errors so it's safe.
+const MIGRATIONS: { version: number; up: (sql: SqlStorage) => void }[] = [
+	{
+		version: 1,
+		up: (sql) => {
+			sql.exec(`
+				CREATE TABLE IF NOT EXISTS messages (
+					id TEXT PRIMARY KEY,
+					role TEXT NOT NULL,
+					content TEXT NOT NULL,
+					model TEXT,
+					status TEXT NOT NULL,
+					error TEXT,
+					created_at INTEGER NOT NULL,
+					started_at INTEGER,
+					first_token_at INTEGER,
+					last_chunk_json TEXT,
+					usage_json TEXT,
+					generation_json TEXT,
+					provider TEXT,
+					thinking TEXT,
+					tool_calls TEXT,
+					tool_results TEXT,
+					parent_id TEXT,
+					deleted_at INTEGER,
+					artifact_ids TEXT,
+					parts TEXT
+				)
+			`);
+			sql.exec(`
+				CREATE TABLE IF NOT EXISTS artifacts (
+					id TEXT PRIMARY KEY,
+					message_id TEXT NOT NULL,
+					type TEXT NOT NULL,
+					name TEXT,
+					language TEXT,
+					version INTEGER NOT NULL DEFAULT 1,
+					content TEXT NOT NULL,
+					created_at INTEGER NOT NULL
+				)
+			`);
+			alterIgnoreExists(sql, 'ALTER TABLE artifacts ADD COLUMN language TEXT');
+			sql.exec('CREATE INDEX IF NOT EXISTS idx_artifacts_message ON artifacts(message_id)');
+			for (const stmt of [
+				'ALTER TABLE messages ADD COLUMN started_at INTEGER',
+				'ALTER TABLE messages ADD COLUMN first_token_at INTEGER',
+				'ALTER TABLE messages ADD COLUMN last_chunk_json TEXT',
+				'ALTER TABLE messages ADD COLUMN usage_json TEXT',
+				'ALTER TABLE messages ADD COLUMN generation_json TEXT',
+				'ALTER TABLE messages ADD COLUMN provider TEXT',
+				'ALTER TABLE messages ADD COLUMN thinking TEXT',
+				'ALTER TABLE messages ADD COLUMN tool_calls TEXT',
+				'ALTER TABLE messages ADD COLUMN tool_results TEXT',
+				'ALTER TABLE messages ADD COLUMN parent_id TEXT',
+				'ALTER TABLE messages ADD COLUMN deleted_at INTEGER',
+				'ALTER TABLE messages ADD COLUMN artifact_ids TEXT',
+				'ALTER TABLE messages ADD COLUMN parts TEXT',
+			]) {
+				alterIgnoreExists(sql, stmt);
+			}
+		},
+	},
+	{
+		version: 2,
+		up: (sql) => {
+			// Server-rendered HTML cached alongside the raw content, so page
+			// loads don't have to re-run marked + Shiki + KaTeX. Populated at
+			// generation completion; null for legacy rows (the SSR path falls
+			// back to live rendering when missing).
+			alterIgnoreExists(sql, 'ALTER TABLE messages ADD COLUMN content_html TEXT');
+			alterIgnoreExists(sql, 'ALTER TABLE messages ADD COLUMN thinking_html TEXT');
+			alterIgnoreExists(sql, 'ALTER TABLE messages ADD COLUMN parts_html TEXT');
+			alterIgnoreExists(sql, 'ALTER TABLE artifacts ADD COLUMN content_html TEXT');
+		},
+	},
+];
+
 function usageToOpenRouter(usage: Usage): ChatUsage {
 	return {
 		promptTokens: usage.inputTokens,
@@ -124,74 +219,38 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		super(ctx, env);
 		this.#sql = ctx.storage.sql;
 		ctx.blockConcurrencyWhile(async () => {
-			this.#sql.exec(`
-				CREATE TABLE IF NOT EXISTS messages (
-					id TEXT PRIMARY KEY,
-					role TEXT NOT NULL,
-					content TEXT NOT NULL,
-					model TEXT,
-					status TEXT NOT NULL,
-					error TEXT,
-					created_at INTEGER NOT NULL,
-					started_at INTEGER,
-					first_token_at INTEGER,
-					last_chunk_json TEXT,
-					usage_json TEXT,
-					generation_json TEXT,
-					provider TEXT,
-					thinking TEXT,
-					tool_calls TEXT,
-					tool_results TEXT,
-					parent_id TEXT,
-					deleted_at INTEGER,
-					artifact_ids TEXT,
-					parts TEXT
-				)
-			`);
-			this.#sql.exec(`
-				CREATE TABLE IF NOT EXISTS artifacts (
-					id TEXT PRIMARY KEY,
-					message_id TEXT NOT NULL,
-					type TEXT NOT NULL,
-					name TEXT,
-					language TEXT,
-					version INTEGER NOT NULL DEFAULT 1,
-					content TEXT NOT NULL,
-					created_at INTEGER NOT NULL
-				)
-			`);
-			for (const stmt of ['ALTER TABLE artifacts ADD COLUMN language TEXT']) {
-				try {
-					this.#sql.exec(stmt);
-				} catch {
-					// column already exists
-				}
-			}
-			this.#sql.exec(`CREATE INDEX IF NOT EXISTS idx_artifacts_message ON artifacts(message_id)`);
-			// Idempotent ALTERs for existing DOs that pre-date these columns.
-			for (const stmt of [
-				'ALTER TABLE messages ADD COLUMN started_at INTEGER',
-				'ALTER TABLE messages ADD COLUMN first_token_at INTEGER',
-				'ALTER TABLE messages ADD COLUMN last_chunk_json TEXT',
-				'ALTER TABLE messages ADD COLUMN usage_json TEXT',
-				'ALTER TABLE messages ADD COLUMN generation_json TEXT',
-				'ALTER TABLE messages ADD COLUMN provider TEXT',
-				'ALTER TABLE messages ADD COLUMN thinking TEXT',
-				'ALTER TABLE messages ADD COLUMN tool_calls TEXT',
-				'ALTER TABLE messages ADD COLUMN tool_results TEXT',
-				'ALTER TABLE messages ADD COLUMN parent_id TEXT',
-				'ALTER TABLE messages ADD COLUMN deleted_at INTEGER',
-				'ALTER TABLE messages ADD COLUMN artifact_ids TEXT',
-				'ALTER TABLE messages ADD COLUMN parts TEXT',
-			]) {
-				try {
-					this.#sql.exec(stmt);
-				} catch {
-					// column already exists
-				}
-			}
-			this.#sql.exec("UPDATE messages SET status = 'error', error = 'Generation interrupted' WHERE status = 'streaming'");
+			this.#runMigrations();
+			this.#sql.exec(
+				"UPDATE messages SET status = 'error', error = 'Generation interrupted (Durable Object restart)' WHERE status = 'streaming'",
+			);
 		});
+	}
+
+	// Migrations are applied in order, once each, gated by the `_meta` table's
+	// `schema_version` row. Adding a migration:
+	//   1. Append a new entry to MIGRATIONS with the next version number.
+	//   2. Don't edit existing entries — DOs already at version N skip them.
+	//   3. The numeric version is the source of truth; the comments are just
+	//      for humans.
+	#runMigrations(): void {
+		this.#sql.exec(`
+			CREATE TABLE IF NOT EXISTS _meta (
+				key TEXT PRIMARY KEY,
+				value TEXT NOT NULL
+			)
+		`);
+		const row = this.#sql
+			.exec("SELECT value FROM _meta WHERE key = 'schema_version'")
+			.toArray() as unknown as Array<{ value: string }>;
+		const current = row[0] ? Number.parseInt(row[0].value, 10) || 0 : 0;
+		for (const m of MIGRATIONS) {
+			if (m.version <= current) continue;
+			m.up(this.#sql);
+			this.#sql.exec(
+				"INSERT INTO _meta (key, value) VALUES ('schema_version', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+				String(m.version),
+			);
+		}
 	}
 
 	getState(): ConversationState {
@@ -219,14 +278,22 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		if (!trimmed) return { status: 'invalid', reason: 'empty' };
 		if (!model) return { status: 'invalid', reason: 'missing model' };
 
-		const now = Date.now();
-		const userId = crypto.randomUUID();
-		const assistantId = crypto.randomUUID();
+		const now = nowMs();
+		const userId = uuid();
+		const assistantId = uuid();
 
+		// Pre-render the user message so the page load doesn't have to.
+		let userContentHtml: string | null = null;
+		try {
+			userContentHtml = await renderMarkdown(trimmed);
+		} catch {
+			/* SSR will re-render on demand */
+		}
 		this.#sql.exec(
-			"INSERT INTO messages (id, role, content, model, status, created_at) VALUES (?, 'user', ?, NULL, 'complete', ?)",
+			"INSERT INTO messages (id, role, content, content_html, model, status, created_at) VALUES (?, 'user', ?, ?, NULL, 'complete', ?)",
 			userId,
 			trimmed,
+			userContentHtml,
 			now,
 		);
 		this.#sql.exec(
@@ -247,35 +314,14 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 
 	async regenerateTitle(conversationId: string): Promise<void> {
 		const history = this.#sql
-			.exec("SELECT role, content FROM messages WHERE status = 'complete' AND deleted_at IS NULL ORDER BY created_at ASC")
+			.exec(`SELECT role, content FROM messages WHERE ${COMPLETE_PREDICATE} ORDER BY created_at ASC`)
 			.toArray() as unknown as Array<{ role: string; content: string }>;
 		const transcript = history.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n\n');
-		const collapsed = transcript.replace(/\s+/g, ' ').trim();
-		try {
-			const llm = routeLLM(this.env, TITLE_MODEL);
-			let title = '';
-			for await (const ev of llm.chat({
-				messages: [
-					{
-						role: 'system',
-						content:
-							'You are a title generator. Given a conversation transcript, generate a short, clear, descriptive title (2-6 words) that summarises the overall topic or intent. Reply with the title only — no quotes, no explanation.',
-					},
-					{ role: 'user', content: collapsed.slice(0, 4000) },
-				],
-				maxTokens: 30,
-				temperature: 0.5,
-			})) {
-				if (ev.type === 'text_delta') title += ev.delta;
-				if (ev.type === 'error') throw new Error(ev.message);
-			}
-			title = title.trim().replace(/^"|"$/g, '').slice(0, TITLE_MAX);
-			if (!title) throw new Error('empty title from LLM');
-			await this.env.DB.prepare('UPDATE conversations SET title = ? WHERE id = ?').bind(title, conversationId).run();
-		} catch (e) {
-			const fallback = collapsed.length <= TITLE_MAX ? collapsed : collapsed.slice(0, TITLE_MAX).trimEnd() + '…';
-			await this.env.DB.prepare('UPDATE conversations SET title = ? WHERE id = ?').bind(fallback, conversationId).run();
-		}
+		await this.#writeTitle(conversationId, transcript.slice(0, 4000), {
+			systemPrompt:
+				'You are a title generator. Given a conversation transcript, generate a short, clear, descriptive title (2-6 words) that summarises the overall topic or intent. Reply with the title only — no quotes, no explanation.',
+			onlyIfDefault: false,
+		});
 		this.#broadcast('refresh', {});
 	}
 
@@ -380,7 +426,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	}
 
 	async #generate(conversationId: string, assistantId: string, model: string): Promise<void> {
-		const startedAt = Date.now();
+		const startedAt = nowMs();
 		let firstTokenAt = 0;
 		let lastChunk: ChatStreamChunk | null = null;
 		let usage: ChatUsage | null = null;
@@ -416,7 +462,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			const llm = routeLLM(this.env, model);
 			const history = this.#sql
 				.exec(
-					"SELECT role, content FROM messages WHERE id != ? AND status = 'complete' AND deleted_at IS NULL ORDER BY created_at ASC",
+					`SELECT role, content FROM messages WHERE id != ? AND ${COMPLETE_PREDICATE} ORDER BY created_at ASC`,
 					assistantId,
 				)
 				.toArray() as unknown as Array<{ role: string; content: string }>;
@@ -428,7 +474,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			// Check whether we need to compact context before sending.
 			const lastUsageRow = this.#sql
 				.exec(
-					"SELECT usage_json FROM messages WHERE role = 'assistant' AND status = 'complete' AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1",
+					`SELECT usage_json FROM messages WHERE role = 'assistant' AND ${COMPLETE_PREDICATE} ORDER BY created_at DESC LIMIT 1`,
 				)
 				.toArray() as unknown as Array<{ usage_json: string | null }>;
 			const lastUsage = lastUsageRow[0]?.usage_json
@@ -540,7 +586,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 				})) {
 					if (!this.#inProgress || this.#inProgress.messageId !== assistantId) break;
 					if (ev.type === 'text_delta') {
-						if (!firstTokenAt) firstTokenAt = Date.now();
+						if (!firstTokenAt) firstTokenAt = nowMs();
 						turnText += ev.delta;
 						appendText(ev.delta);
 						if (this.#inProgress && this.#inProgress.messageId === assistantId) {
@@ -676,8 +722,33 @@ The user's bio, preferences, and context are provided separately in the user tur
 			}
 			const finalText = this.#inProgress.content;
 			const finalThinking = this.#inProgress.thinking;
+			// Pre-render the heavy markdown / Shiki / KaTeX pipeline once at
+			// generation completion so subsequent page loads don't re-render
+			// every assistant message on every navigation. Best-effort: we
+			// fall through to a null write if anything throws, and the SSR
+			// path will re-render on demand.
+			let contentHtml: string | null = null;
+			let thinkingHtml: string | null = null;
+			let partsHtml: string | null = null;
+			try {
+				contentHtml = finalText ? await renderMarkdown(finalText) : null;
+				thinkingHtml = finalThinking ? await renderMarkdown(finalThinking) : null;
+				if (parts.length > 0) {
+					const renderedParts = await Promise.all(
+						parts.map(async (part) => {
+							if (part.type === 'text' || part.type === 'thinking') {
+								return { ...part, textHtml: await renderMarkdown(part.text) };
+							}
+							return part;
+						}),
+					);
+					partsHtml = JSON.stringify(renderedParts);
+				}
+			} catch {
+				/* fall back to live SSR re-rendering */
+			}
 			this.#sql.exec(
-				`UPDATE messages SET content = ?, status = 'complete', first_token_at = ?, last_chunk_json = ?, usage_json = ?, provider = ?, thinking = ?, tool_calls = ?, tool_results = ?, parts = ? WHERE id = ?`,
+				`UPDATE messages SET content = ?, status = 'complete', first_token_at = ?, last_chunk_json = ?, usage_json = ?, provider = ?, thinking = ?, tool_calls = ?, tool_results = ?, parts = ?, content_html = ?, thinking_html = ?, parts_html = ? WHERE id = ?`,
 				finalText,
 				firstTokenAt || null,
 				lastChunk ? JSON.stringify(lastChunk) : null,
@@ -687,10 +758,13 @@ The user's bio, preferences, and context are provided separately in the user tur
 				accumulatedToolCalls.length > 0 ? JSON.stringify(accumulatedToolCalls) : null,
 				accumulatedToolResults.length > 0 ? JSON.stringify(accumulatedToolResults) : null,
 				parts.length > 0 ? JSON.stringify(parts) : null,
+				contentHtml,
+				thinkingHtml,
+				partsHtml,
 				assistantId,
 			);
 			this.#inProgress = null;
-			await this.env.DB.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').bind(Date.now(), conversationId).run();
+			await this.env.DB.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').bind(nowMs(), conversationId).run();
 			this.#broadcast('meta', {
 				messageId: assistantId,
 				snapshot: { startedAt, firstTokenAt, lastChunk, usage, generation: null },
@@ -790,14 +864,14 @@ The user's bio, preferences, and context are provided separately in the user tur
 	): Promise<void> {
 		try {
 			const cached = this.#mcpCache.get(serverId);
-			const fresh = cached && Date.now() - cached.fetchedAt < MCP_TOOL_CACHE_TTL_MS;
+			const fresh = cached && nowMs() - cached.fetchedAt < MCP_TOOL_CACHE_TTL_MS;
 			let entry: { fetchedAt: number; client: McpHttpClient; tools: import('../mcp/types').McpToolDescriptor[] };
 			if (fresh && cached) {
 				entry = cached;
 			} else {
 				const client = new McpHttpClient({ url, authJson });
 				const tools = await client.listTools();
-				entry = { fetchedAt: Date.now(), client, tools };
+				entry = { fetchedAt: nowMs(), client, tools };
 				this.#mcpCache.set(serverId, entry);
 			}
 			const callClient = entry.client;
@@ -829,7 +903,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 	#readMessages(): MessageRow[] {
 		const rows = this.#sql
 			.exec(
-				`SELECT id, role, content, model, status, error, created_at, started_at, first_token_at, last_chunk_json, usage_json, generation_json, thinking, tool_calls, tool_results, parts
+				`SELECT id, role, content, content_html, model, status, error, created_at, started_at, first_token_at, last_chunk_json, usage_json, generation_json, thinking, thinking_html, tool_calls, tool_results, parts, parts_html
 				 FROM messages
 				 WHERE deleted_at IS NULL
 				 ORDER BY created_at ASC`,
@@ -838,6 +912,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 			id: string;
 			role: string;
 			content: string;
+			content_html: string | null;
 			model: string | null;
 			status: string;
 			error: string | null;
@@ -848,20 +923,27 @@ The user's bio, preferences, and context are provided separately in the user tur
 			usage_json: string | null;
 			generation_json: string | null;
 			thinking: string | null;
+			thinking_html: string | null;
 			tool_calls: string | null;
 			tool_results: string | null;
 			parts: string | null;
+			parts_html: string | null;
 		}>;
 		const artifactsByMessage = this.#readArtifactsByMessage();
 		return rows.map((r) => {
 			const toolCalls = parseJson<RecordedToolCall[]>(r.tool_calls) ?? [];
 			const toolResults = parseJson<RecordedToolResult[]>(r.tool_results) ?? [];
-			const parts = parseJson<MessagePart[]>(r.parts) ?? buildLegacyParts(r.content, toolCalls, toolResults, r.thinking);
+			const parts =
+				parseJson<MessagePart[]>(r.parts_html) ??
+				parseJson<MessagePart[]>(r.parts) ??
+				buildLegacyParts(r.content, toolCalls, toolResults, r.thinking);
 			return {
 				id: r.id,
 				role: r.role as 'user' | 'assistant',
 				content: r.content,
+				contentHtml: r.content_html,
 				thinking: r.thinking,
+				thinkingHtml: r.thinking_html,
 				model: r.model,
 				status: r.status as 'complete' | 'streaming' | 'error',
 				error: r.error,
@@ -877,7 +959,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 
 	#readArtifactsByMessage(): Map<string, Artifact[]> {
 		const rows = this.#sql
-			.exec(`SELECT id, message_id, type, name, language, version, content, created_at FROM artifacts ORDER BY created_at ASC`)
+			.exec(`SELECT id, message_id, type, name, language, version, content, content_html, created_at FROM artifacts ORDER BY created_at ASC`)
 			.toArray() as unknown as Array<{
 			id: string;
 			message_id: string;
@@ -886,6 +968,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 			language: string | null;
 			version: number;
 			content: string;
+			content_html: string | null;
 			created_at: number;
 		}>;
 		const map = new Map<string, Artifact[]>();
@@ -899,6 +982,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 				language: r.language,
 				version: r.version,
 				content: r.content,
+				contentHtml: r.content_html,
 				createdAt: r.created_at,
 			});
 			map.set(r.message_id, list);
@@ -913,15 +997,26 @@ The user's bio, preferences, and context are provided separately in the user tur
 		language?: string | null;
 		content: string;
 	}): Promise<Artifact> {
-		const id = crypto.randomUUID();
-		const now = Date.now();
+		const id = uuid();
+		const now = nowMs();
 		const versionRow = this.#sql
 			.exec('SELECT MAX(version) AS v FROM artifacts WHERE message_id = ?', input.messageId)
 			.toArray() as unknown as Array<{ v: number | null }>;
 		const version = (versionRow[0]?.v ?? 0) + 1;
+		// Pre-render to HTML once at insert so SSR doesn't re-tokenise on every load.
+		let contentHtml: string | null = null;
+		try {
+			if (input.type === 'code') {
+				contentHtml = await renderArtifactCode(input.content, input.language ?? 'text');
+			} else if (input.type === 'markdown') {
+				contentHtml = await renderMarkdown(input.content);
+			}
+		} catch {
+			/* SSR will re-render on demand */
+		}
 		this.#sql.exec(
-			`INSERT INTO artifacts (id, message_id, type, name, language, version, content, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			`INSERT INTO artifacts (id, message_id, type, name, language, version, content, content_html, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			id,
 			input.messageId,
 			input.type,
@@ -929,6 +1024,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 			input.language ?? null,
 			version,
 			input.content,
+			contentHtml,
 			now,
 		);
 		// Update artifact_ids on the parent message.
@@ -954,6 +1050,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 			language: input.language ?? null,
 			version,
 			content: input.content,
+			contentHtml,
 			createdAt: now,
 		};
 		this.#broadcast('artifact', { artifact });
@@ -1030,7 +1127,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 	}
 
 	async #touchConversation(conversationId: string, firstMessageContent: string): Promise<void> {
-		const now = Date.now();
+		const now = nowMs();
 		// Always update the timestamp; the title update is handled separately
 		// via waitUntil so it doesn't block the main flow.
 		await this.env.DB.prepare(
@@ -1046,45 +1143,47 @@ The user's bio, preferences, and context are provided separately in the user tur
 	}
 
 	async #generateTitle(conversationId: string, firstMessageContent: string): Promise<void> {
-		const collapsed = firstMessageContent.replace(/\s+/g, ' ').trim();
+		await this.#writeTitle(conversationId, firstMessageContent, {
+			systemPrompt:
+				'You are a title generator. Given the user message, generate a short, clear, descriptive title (2-6 words) that summarises its topic or intent. Reply with the title only — no quotes, no explanation.',
+			onlyIfDefault: true,
+		});
+	}
+
+	// Run the title-generator LLM, normalize its output, and persist to D1.
+	// `onlyIfDefault` guards the auto-generated path so a user-edited title
+	// isn't clobbered by a slow waitUntil() catching up. `regenerateTitle`
+	// passes false because the user explicitly asked for a refresh.
+	async #writeTitle(
+		conversationId: string,
+		input: string,
+		opts: { systemPrompt: string; onlyIfDefault: boolean },
+	): Promise<void> {
+		const collapsed = input.replace(/\s+/g, ' ').trim();
+		let title: string;
 		try {
 			const llm = routeLLM(this.env, TITLE_MODEL);
-			let title = '';
+			let buf = '';
 			for await (const ev of llm.chat({
 				messages: [
-					{
-						role: 'system',
-						content:
-							'You are a title generator. Given the user message, generate a short, clear, descriptive title (2-6 words) that summarises its topic or intent. Reply with the title only — no quotes, no explanation.',
-					},
+					{ role: 'system', content: opts.systemPrompt },
 					{ role: 'user', content: collapsed },
 				],
 				maxTokens: 30,
 				temperature: 0.5,
 			})) {
-				if (ev.type === 'text_delta') title += ev.delta;
+				if (ev.type === 'text_delta') buf += ev.delta;
 				if (ev.type === 'error') throw new Error(ev.message);
 			}
-			title = title.trim().replace(/^"|"$/g, '').slice(0, TITLE_MAX);
+			title = buf.trim().replace(/^"|"$/g, '').slice(0, TITLE_MAX);
 			if (!title) throw new Error('empty title from LLM');
-			await this.env.DB.prepare(
-				`UPDATE conversations
-					SET title = CASE WHEN title = 'New conversation' THEN ? ELSE title END
-					WHERE id = ?`,
-			)
-				.bind(title, conversationId)
-				.run();
-		} catch (e) {
-			// Fall back to truncation on any error.
-			const fallback = collapsed.length <= TITLE_MAX ? collapsed : collapsed.slice(0, TITLE_MAX).trimEnd() + '…';
-			await this.env.DB.prepare(
-				`UPDATE conversations
-					SET title = CASE WHEN title = 'New conversation' THEN ? ELSE title END
-					WHERE id = ?`,
-			)
-				.bind(fallback, conversationId)
-				.run();
+		} catch {
+			title = collapsed.length <= TITLE_MAX ? collapsed : collapsed.slice(0, TITLE_MAX).trimEnd() + '…';
 		}
+		const sql = opts.onlyIfDefault
+			? `UPDATE conversations SET title = CASE WHEN title = 'New conversation' THEN ? ELSE title END WHERE id = ?`
+			: 'UPDATE conversations SET title = ? WHERE id = ?';
+		await this.env.DB.prepare(sql).bind(title, conversationId).run();
 	}
 
 	#sseFrame(event: string, data: unknown, id?: number): Uint8Array {

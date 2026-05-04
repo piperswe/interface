@@ -2,6 +2,8 @@
 // to via the built-in `agent` tool. Storage is D1; the inner agent loop lives
 // in `tools/agent.ts`. See migration 0004.
 
+import { now as nowMs } from './clock';
+
 const SINGLE_USER_ID = 1;
 
 // Sub-agent names appear inside the `agent` tool's enum schema and as the
@@ -121,7 +123,7 @@ export async function createSubAgent(
 	}
 	if (!input.description.trim()) throw new Error('Description is required');
 	if (!input.systemPrompt.trim()) throw new Error('System prompt is required');
-	const now = Date.now();
+	const now = nowMs();
 	const toolsJson = input.allowedTools && input.allowedTools.length > 0 ? JSON.stringify(input.allowedTools) : null;
 	const result = await env.DB.prepare(
 		`INSERT INTO sub_agents (user_id, name, description, system_prompt, model, max_iterations, tools_json, enabled, created_at, updated_at)
@@ -194,7 +196,7 @@ export async function updateSubAgent(
 	}
 	if (sets.length === 0) return;
 	sets.push('updated_at = ?');
-	values.push(Date.now());
+	values.push(nowMs());
 	values.push(id, userId);
 	await env.DB.prepare(`UPDATE sub_agents SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`)
 		.bind(...values)

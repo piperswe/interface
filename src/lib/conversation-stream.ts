@@ -46,12 +46,15 @@ export function patchMessage(
 export function appendDeltaPart(parts: MessagePart[], kind: 'text' | 'thinking', delta: string): MessagePart[] {
 	const last = parts[parts.length - 1];
 	if (last && last.type === kind) {
+		// Mutate the trailing same-kind part in place. Returning a fresh outer
+		// array signals reactivity but avoids reallocating the part itself per
+		// streamed token (5000 tokens × array spread + object copy adds up).
 		// Preserve existing textHtml so the UI doesn't flicker to raw text
 		// while the streaming-markdown renderer picks up the new revision.
-		return [
-			...parts.slice(0, -1),
-			{ type: kind, text: last.text + delta, textHtml: (last as { textHtml?: string }).textHtml },
-		];
+		const next = parts.slice();
+		const prev = next[next.length - 1] as { type: 'text' | 'thinking'; text: string; textHtml?: string };
+		next[next.length - 1] = { type: kind, text: prev.text + delta, textHtml: prev.textHtml };
+		return next;
 	}
 	return [...parts, { type: kind, text: delta }];
 }
