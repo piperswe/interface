@@ -36,7 +36,7 @@
 		try {
 			closeDrawer();
 			const { id } = await createNewConversation();
-			await goto(`/c/${id}`);
+			await goto(`/c/${id}`, { invalidateAll: true });
 		} finally {
 			creatingChat = false;
 		}

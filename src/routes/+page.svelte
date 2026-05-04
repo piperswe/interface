@@ -9,7 +9,7 @@
 		busy = true;
 		try {
 			const { id } = await createNewConversation();
-			await goto(`/c/${id}`);
+			await goto(`/c/${id}`, { invalidateAll: true });
 		} finally {
 			busy = false;
 		}
