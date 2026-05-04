@@ -33,6 +33,12 @@ const TITLE_MAX = 60;
 const MAX_TOOL_ITERATIONS = 10;
 const TITLE_MODEL = 'deepseek/deepseek-v4-flash';
 const MCP_TOOL_CACHE_TTL_MS = 60_000;
+// Per-cell budget for the largest tool-result-bearing columns (`tool_results`,
+// `parts`, `parts_html`). workerd's SQLite throws SQLITE_TOOBIG once a value
+// crosses ~2 MB; we keep ~500 KB of headroom for JSON/HTML inflation. The
+// per-result cap in the tool registry (MAX_TOOL_RESULT_BYTES) handles the
+// single-large-blob case; this budget catches accumulation across many calls.
+export const MAX_ROW_PAYLOAD_BYTES = 1.5 * 1024 * 1024;
 // SQL fragment used by every history / state fetch on the messages table.
 const COMPLETE_PREDICATE = "status = 'complete' AND deleted_at IS NULL";
 
@@ -83,6 +89,43 @@ function normalizeParts(parts: MessagePart[], reason: string): void {
 		if (p.type !== 'tool_use' || matched.has(p.id)) continue;
 		parts.push({ type: 'tool_result', toolUseId: p.id, content: reason, isError: true });
 		matched.add(p.id);
+	}
+}
+
+// Largest of the tool-result-bearing JSON payloads. We size the budget against
+// the worst single cell rather than their sum because the cell limit is
+// per-value, not per-row.
+function maxToolResultPayloadBytes(toolResults: RecordedToolResult[], parts: MessagePart[]): number {
+	return Math.max(JSON.stringify(toolResults).length, JSON.stringify(parts).length);
+}
+
+// Walk tool results oldest-first and replace .content with a small stub until
+// the serialized payload fits under MAX_ROW_PAYLOAD_BYTES. Mutates both arrays
+// in place so the matching ToolResultPart in `parts` stays consistent. The
+// in-memory `messages[]` fed to the LLM mid-turn is built separately and is
+// untouched, so the model still sees full content for the current turn — only
+// reload/regenerate sees the stub.
+export function elideOversizedToolResults(
+	toolCalls: RecordedToolCall[],
+	toolResults: RecordedToolResult[],
+	parts: MessagePart[],
+): void {
+	if (maxToolResultPayloadBytes(toolResults, parts) <= MAX_ROW_PAYLOAD_BYTES) return;
+	const nameById = new Map(toolCalls.map((c) => [c.id, c.name]));
+	for (let i = 0; i < toolResults.length; i++) {
+		const r = toolResults[i];
+		const name = nameById.get(r.toolUseId) ?? 'unknown';
+		const stub = `[result for ${name} elided — exceeded row size budget]`;
+		if (r.content === stub) continue;
+		toolResults[i] = { ...r, content: stub };
+		const partIdx = parts.findIndex((p) => p.type === 'tool_result' && p.toolUseId === r.toolUseId);
+		if (partIdx >= 0) {
+			const part = parts[partIdx];
+			if (part.type === 'tool_result') {
+				parts[partIdx] = { ...part, content: stub };
+			}
+		}
+		if (maxToolResultPayloadBytes(toolResults, parts) <= MAX_ROW_PAYLOAD_BYTES) return;
 	}
 }
 
@@ -731,6 +774,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 					// Persist the running tool_calls/tool_results columns each step
 					// so stream death or DO eviction leaves a row that's still
 					// consistent.
+					elideOversizedToolResults(accumulatedToolCalls, accumulatedToolResults, parts);
 					this.#sql.exec(
 						'UPDATE messages SET tool_calls = ?, tool_results = ?, parts = ? WHERE id = ?',
 						JSON.stringify(accumulatedToolCalls),
@@ -792,6 +836,10 @@ The user's bio, preferences, and context are provided separately in the user tur
 			}
 			const finalText = this.#inProgress.content;
 			const finalThinking = this.#inProgress.thinking;
+			// Elide before rendering so `parts_html` mirrors whatever ends up
+			// in `parts` — otherwise we'd re-render full content into HTML and
+			// then write the stubbed parts, mismatching the two columns.
+			elideOversizedToolResults(accumulatedToolCalls, accumulatedToolResults, parts);
 			// Pre-render the heavy markdown / Shiki / KaTeX pipeline once at
 			// generation completion so subsequent page loads don't re-render
 			// every assistant message on every navigation. Best-effort: we

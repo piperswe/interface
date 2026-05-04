@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
-import { ToolRegistry, type Tool } from './registry';
+import { MAX_TOOL_RESULT_BYTES, ToolRegistry, type Tool } from './registry';
 
 const echoTool: Tool = {
 	definition: {
@@ -68,5 +68,27 @@ describe('ToolRegistry', () => {
 	it('register() returns the registry for chaining', () => {
 		const registry = new ToolRegistry();
 		expect(registry.register(echoTool)).toBe(registry);
+	});
+
+	it('truncates oversized result content with a marker', async () => {
+		const oversized = 'x'.repeat(MAX_TOOL_RESULT_BYTES * 2);
+		const bigTool: Tool = {
+			definition: { name: 'big', description: '', inputSchema: { type: 'object' } },
+			async execute() {
+				return { content: oversized };
+			},
+		};
+		const registry = new ToolRegistry().register(bigTool);
+		const result = await registry.execute(ctx, 'big', {});
+		expect(result.content.length).toBeLessThan(oversized.length);
+		expect(result.content.length).toBeLessThanOrEqual(MAX_TOOL_RESULT_BYTES + 64);
+		expect(result.content.startsWith('x'.repeat(1024))).toBe(true);
+		expect(result.content).toMatch(/truncated, original \d+ bytes/);
+	});
+
+	it('passes through results under the cap untouched', async () => {
+		const registry = new ToolRegistry().register(echoTool);
+		const result = await registry.execute(ctx, 'echo', { text: 'hi' });
+		expect(result.content).toBe('hi');
 	});
 });
