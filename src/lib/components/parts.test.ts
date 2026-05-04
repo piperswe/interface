@@ -117,4 +117,41 @@ describe('groupParts', () => {
 			expect(groups[0].hasActive).toBe(true);
 		}
 	});
+	it('uses a stable key based only on the first part index', () => {
+		const parts: MessagePart[] = [
+			{ type: 'thinking', text: 'a' },
+			{ type: 'tool_use', id: 't1', name: 'x', input: {} },
+			{ type: 'tool_result', toolUseId: 't1', content: 'ok', isError: false },
+		];
+		const groups = groupParts(parts, false, buildResultsMap(parts));
+		expect(groups[0].kind).toBe('bundle');
+		if (groups[0].kind === 'bundle') {
+			expect(groups[0].key).toBe('bundle-0');
+		}
+	});
+	it('marks only the last bundle as isLast', () => {
+		const parts: MessagePart[] = [
+			{ type: 'thinking', text: 'pre' },
+			{ type: 'tool_use', id: 't1', name: 'x', input: {} },
+			{ type: 'text', text: 'answer' },
+			{ type: 'thinking', text: 'a' },
+			{ type: 'tool_use', id: 't2', name: 'y', input: {} },
+		];
+		const groups = groupParts(parts, false, new Map());
+		const bundles = groups.filter((g) => g.kind === 'bundle');
+		expect(bundles).toHaveLength(2);
+		expect((bundles[0] as { isLast: boolean }).isLast).toBe(false);
+		expect((bundles[1] as { isLast: boolean }).isLast).toBe(true);
+	});
+	it('marks the only bundle as isLast', () => {
+		const parts: MessagePart[] = [
+			{ type: 'thinking', text: 'a' },
+			{ type: 'tool_use', id: 't1', name: 'x', input: {} },
+		];
+		const groups = groupParts(parts, true, new Map());
+		expect(groups[0].kind).toBe('bundle');
+		if (groups[0].kind === 'bundle') {
+			expect(groups[0].isLast).toBe(true);
+		}
+	});
 });
