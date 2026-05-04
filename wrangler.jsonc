@@ -17,12 +17,28 @@
 			"new_sqlite_classes": ["ConversationDurableObject"],
 			"tag": "v1",
 		},
+		{
+			"new_sqlite_classes": ["Sandbox"],
+			"tag": "v2",
+		},
+	],
+	"containers": [
+		{
+			"class_name": "Sandbox",
+			"image": "./Dockerfile",
+			"instance_type": "lite",
+			"max_instances": 10,
+		},
 	],
 	"durable_objects": {
 		"bindings": [
 			{
 				"class_name": "ConversationDurableObject",
 				"name": "CONVERSATION_DURABLE_OBJECT",
+			},
+			{
+				"class_name": "Sandbox",
+				"name": "SANDBOX",
 			},
 		],
 	},

@@ -10,12 +10,14 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 
 const WORKER_PATH = '.svelte-kit/cloudflare/_worker.js';
+
 const DO_EXPORT =
-	"\nexport { default as ConversationDurableObject } from '../../src/lib/server/durable_objects/ConversationDurableObject.ts';\n";
+	"\nexport { default as ConversationDurableObject } from '../../src/lib/server/durable_objects/ConversationDurableObject.ts';\n" +
+	"export { Sandbox } from '@cloudflare/sandbox';\n";
 
 const content = readFileSync(WORKER_PATH, 'utf8');
 if (content.includes('ConversationDurableObject')) {
 	process.exit(0);
 }
 writeFileSync(WORKER_PATH, content + DO_EXPORT);
-console.log('postbuild: appended ConversationDurableObject export to _worker.js');
+console.log('postbuild: appended ConversationDurableObject and Sandbox exports to _worker.js');

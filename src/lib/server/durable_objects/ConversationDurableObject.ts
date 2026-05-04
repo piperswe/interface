@@ -16,6 +16,8 @@ import { listSubAgents } from '../sub_agents';
 import { createAgentTool } from '../tools/agent';
 import { createGetModelsTool } from '../tools/get_models';
 import { getModelList, getSystemPrompt, getUserBio } from '../settings';
+import { registerSandboxTools } from '../tools/sandbox';
+import { getSandbox } from '@cloudflare/sandbox';
 import { reasoningTypeFor } from '../models/config';
 import type { ReasoningConfig } from '../llm/LLM';
 import type { AddMessageResult, Artifact, ArtifactType, ConversationState, MessageRow, MetaSnapshot } from '$lib/types/conversation';
@@ -293,6 +295,15 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		this.#subscribers.clear();
 		this.#stopPingIfEmpty();
 		await this.ctx.storage.deleteAll();
+		// Tear down the conversation's sandbox container (best-effort).
+		if (this.env.SANDBOX) {
+			try {
+				const sandbox = getSandbox(this.env.SANDBOX, this.ctx.id.toString());
+				await sandbox.destroy();
+			} catch {
+				/* ignore */
+			}
+		}
 	}
 
 	async subscribe(): Promise<ReadableStream<Uint8Array>> {
@@ -657,6 +668,10 @@ The user's bio, preferences, and context are provided separately in the user tur
 		} catch {
 			// Tool registry build is best-effort — MCP enumeration failures must not
 			// block the user's chat turn. Server failures surface per-call instead.
+		}
+		// Register Sandbox SDK tools when the binding is present.
+		if (this.env.SANDBOX) {
+			registerSandboxTools(registry);
 		}
 		return registry;
 	}

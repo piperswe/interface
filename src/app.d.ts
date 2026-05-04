@@ -6,6 +6,8 @@
 // API keys read at runtime by `routeLLM` / settings). Add new optional secrets
 // to this list when introducing them.
 
+import type { Sandbox } from '@cloudflare/sandbox';
+
 declare global {
 	namespace App {
 		// Surfaced via `event.platform.env` in load functions, hooks, +server.ts,
@@ -36,6 +38,9 @@ declare global {
 			DEEPSEEK_KEY?: string;
 			KAGI_KEY?: string;
 			YNAB_TOKEN?: string;
+			// Optional Sandbox binding. When present, conversation-scoped
+			// sandbox tools are registered in the tool registry.
+			SANDBOX?: DurableObjectNamespace<Sandbox>;
 		}
 	}
 }
