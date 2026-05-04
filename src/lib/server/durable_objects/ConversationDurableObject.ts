@@ -587,6 +587,77 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		this.#broadcast('refresh', {});
 	}
 
+	async compactContext(conversationId: string): Promise<{ compacted: boolean; droppedCount: number }> {
+		this.#setConversationId(conversationId);
+		if (this.#inProgress || this.#resumePromise) return { compacted: false, droppedCount: 0 };
+
+		const lastModelRow = this.#sql
+			.exec(`SELECT model FROM messages WHERE role = 'assistant' AND ${COMPLETE_PREDICATE} ORDER BY created_at DESC LIMIT 1`)
+			.toArray() as unknown as Array<{ model: string | null }>;
+		const model = lastModelRow[0]?.model;
+		if (!model) return { compacted: false, droppedCount: 0 };
+
+		const history = this.#sql
+			.exec(`SELECT id, role, content, parts FROM messages WHERE ${COMPLETE_PREDICATE} ORDER BY created_at ASC`)
+			.toArray() as unknown as Array<{ id: string; role: string; content: string; parts: string | null }>;
+
+		// Build LLM message array while tracking which DB row ID each LLM message came from.
+		const rowIdAtLLMIndex: string[] = [];
+		const messages: Message[] = [];
+		for (const row of history) {
+			if (row.role === 'assistant') {
+				const parsedParts = parseJson<MessagePart[]>(row.parts) ?? [];
+				const hasToolParts = parsedParts.some((p) => p.type === 'tool_use' || p.type === 'tool_result');
+				if (hasToolParts) {
+					const converted = this.#partsToMessages(parsedParts);
+					for (const _ of converted) rowIdAtLLMIndex.push(row.id);
+					messages.push(...converted);
+				} else {
+					rowIdAtLLMIndex.push(row.id);
+					messages.push({ role: 'assistant', content: row.content });
+				}
+			} else if (row.role === 'user') {
+				rowIdAtLLMIndex.push(row.id);
+				messages.push({ role: 'user', content: row.content });
+			}
+		}
+
+		const compaction = await compactHistory(messages, model, this.env, null, {}, true);
+		if (!compaction.wasCompacted || !compaction.summary) return { compacted: false, droppedCount: 0 };
+
+		// Map dropped LLM message count to DB row IDs to soft-delete.
+		const rowsToDelete = new Set<string>();
+		let llmCount = 0;
+		for (const rowId of rowIdAtLLMIndex) {
+			if (llmCount >= compaction.droppedCount) break;
+			rowsToDelete.add(rowId);
+			llmCount++;
+		}
+
+		const now = nowMs();
+		for (const id of rowsToDelete) {
+			this.#sql.exec('UPDATE messages SET deleted_at = ? WHERE id = ?', now, id);
+		}
+
+		// Insert a visible info message summarising what was compacted.
+		const summaryId = uuid();
+		const infoPart: MessagePart = {
+			type: 'info',
+			text: `Context compacted: summarized ${rowsToDelete.size} earlier messages. Summary: ${compaction.summary}`,
+		};
+		this.#sql.exec(
+			"INSERT INTO messages (id, role, content, model, status, parts, created_at) VALUES (?, 'assistant', ?, ?, 'complete', ?, ?)",
+			summaryId,
+			compaction.summary,
+			model,
+			JSON.stringify([infoPart]),
+			now + 1,
+		);
+
+		this.#broadcast('refresh', {});
+		return { compacted: true, droppedCount: rowsToDelete.size };
+	}
+
 	// Wipe all DO storage. Cloudflare doesn't expose a "delete this DO from
 	// the namespace" API, but `ctx.storage.deleteAll()` drops every row in
 	// the SQLite store, so the next time something resolves this DO id it'll

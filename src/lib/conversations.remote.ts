@@ -78,6 +78,15 @@ export const abortGeneration = command('unchecked', async (conversationId: strin
 	return { ok: true as const };
 });
 
+// Command: manually compact the conversation context. Summarises older messages
+// using an LLM call, removes them from the active history, and inserts a summary
+// info message. Returns whether compaction actually occurred.
+export const compactContext = command('unchecked', async (conversationId: string) => {
+	const stub = stubFor(conversationId);
+	const result = await stub.compactContext(conversationId);
+	return result;
+});
+
 // Form: archive a conversation. Soft-delete only — the row stays in D1 and
 // the DO storage is untouched, so unarchive restores everything.
 export const archive = form('unchecked', async (data: { conversationId?: unknown; redirectTo?: unknown }) => {
