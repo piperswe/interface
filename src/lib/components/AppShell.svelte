@@ -7,6 +7,7 @@
 <script lang="ts">
 	import { fmtRelative, recencyBandLabel } from '$lib/formatters';
 	import type { Snippet } from 'svelte';
+	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { createNewConversation, archive } from '$lib/conversations.remote';
@@ -81,7 +82,8 @@
 
 	function onResizerDown(e: MouseEvent) {
 		if (!appShellEl) return;
-		const currentWidth = appShellEl.offsetWidth;
+		const style = getComputedStyle(appShellEl);
+		const currentWidth = parseFloat(style.getPropertyValue('--sidebar-width'));
 		beginResize(currentWidth, e.clientX);
 	}
 
@@ -93,9 +95,10 @@
 			// ignore
 		}
 	}
+	onMount(() => {
+		restoreWidth();
+	});
 </script>
-
-<svelte:window onload={restoreWidth} />
 
 <div class="app-shell" bind:this={appShellEl}>
 	<input type="checkbox" id="sidebar-toggle" class="sidebar-toggle" />
@@ -297,11 +300,17 @@
 		cursor: col-resize;
 		z-index: 10;
 		background: transparent;
+		border: none;
+		padding: 0;
+		margin: 0;
+		appearance: none;
+		outline: none;
+		opacity: 0;
 	}
 
 	.sidebar-resizer:hover {
 		background: var(--accent);
-		opacity: 0.35;
+		opacity: 0.15;
 	}
 
 	.app-main-header {
