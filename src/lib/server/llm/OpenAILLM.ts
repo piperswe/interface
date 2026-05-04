@@ -91,17 +91,15 @@ export class OpenAILLM implements LLM {
 							if (tc.id) existing.id = tc.id;
 							if (tc.function?.name) existing.name = tc.function.name;
 							if (tc.function?.arguments) existing.args += tc.function.arguments;
-							// Some gateways (e.g. Cloudflare AI Gateway for Gemini) include a
-							// `thought_signature` field that must be preserved for tool calling
-							// to work correctly on subsequent turns.
-							const extra = tc as unknown as Record<string, unknown>;
-							if (typeof extra.thought_signature === 'string') {
-								existing.thoughtSignature = extra.thought_signature;
-							}
-							const fnExtra = tc.function as unknown as Record<string, unknown> | undefined;
-							if (typeof fnExtra?.thought_signature === 'string') {
-								existing.thoughtSignature = fnExtra.thought_signature;
-							}
+							// Gemini (via its OpenAI-compat endpoint or AI Gateway) attaches
+							// a thought signature to tool calls under
+							// `extra_content.google.thought_signature`. The signature must
+							// be echoed back on the assistant tool_call in subsequent turns
+							// or the API rejects with a 400 "Function call is missing a
+							// thought_signature" error. See
+							// https://ai.google.dev/gemini-api/docs/thought-signatures
+							const sig = extractThoughtSignature(tc as unknown as Record<string, unknown>);
+							if (sig) existing.thoughtSignature = sig;
 							partialToolCalls.set(idx, existing);
 							yield {
 								type: 'tool_call_delta',
@@ -216,20 +214,18 @@ function toOpenAIMessages(systemPrompt: string | undefined, messages: Message[])
 		const toolCalls = blocks
 			.filter((b): b is ContentBlock & { type: 'tool_use' } => b.type === 'tool_use')
 			.map((b) => {
-				const fn: Record<string, unknown> = {
-					name: b.name,
-					arguments: JSON.stringify(b.input ?? {}),
-				};
-				if (b.thoughtSignature) {
-					fn.thought_signature = b.thoughtSignature;
-				}
 				const call: Record<string, unknown> = {
 					id: b.id,
 					type: 'function',
-					function: fn,
+					function: { name: b.name, arguments: JSON.stringify(b.input ?? {}) },
 				};
+				// Gemini's OpenAI-compat surface requires the thought signature to
+				// round-trip on the assistant tool_call under
+				// `extra_content.google.thought_signature` — see
+				// https://ai.google.dev/gemini-api/docs/thought-signatures.
+				// Other providers ignore unknown fields.
 				if (b.thoughtSignature) {
-					call.thought_signature = b.thoughtSignature;
+					call.extra_content = { google: { thought_signature: b.thoughtSignature } };
 				}
 				return call;
 			});
@@ -249,6 +245,26 @@ function flattenToText(blocks: ContentBlock[]): string {
 			return '';
 		})
 		.join('');
+}
+
+// Pull a Gemini thought signature out of a streaming tool_call delta or a
+// non-streaming message tool_call. The signature lives at
+// `extra_content.google.thought_signature` per Google's OpenAI-compat schema.
+// We accept a few looser shapes too in case a gateway lifts the field.
+function extractThoughtSignature(obj: Record<string, unknown> | undefined | null): string | null {
+	if (!obj) return null;
+	const extra = obj.extra_content as Record<string, unknown> | undefined;
+	const google = extra?.google as Record<string, unknown> | undefined;
+	const sig = google?.thought_signature;
+	if (typeof sig === 'string' && sig.length > 0) return sig;
+	// Fallback: some intermediaries place it directly on the tool_call or
+	// inside the function object. Keep these as defensive last-resorts.
+	const direct = obj.thought_signature;
+	if (typeof direct === 'string' && direct.length > 0) return direct;
+	const fn = obj.function as Record<string, unknown> | undefined;
+	const fnSig = fn?.thought_signature;
+	if (typeof fnSig === 'string' && fnSig.length > 0) return fnSig;
+	return null;
 }
 
 function toOpenAITools(tools: ToolDefinition[]): ChatCompletionTool[] {
