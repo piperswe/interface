@@ -65,16 +65,17 @@ export async function compactHistory(
 	env: Env,
 	lastUsage: CompactionUsage | null,
 	deps: CompactionDeps = {},
+	force = false,
 ): Promise<CompactionResult> {
 	const threshold = await getContextCompactionThreshold(env);
-	if (threshold === 0) {
+	if (threshold === 0 && !force) {
 		return { messages, wasCompacted: false, summary: null, droppedCount: 0 };
 	}
 
 	const resolved = await getResolvedModel(env, modelGlobalId);
 	const contextWindow = resolved?.model.maxContextLength ?? 128_000;
 	const summaryTokens = await getContextCompactionSummaryTokens(env);
-	const maxAllowed = Math.floor(contextWindow * (threshold / 100));
+	const maxAllowed = Math.floor(contextWindow * ((force ? 50 : threshold) / 100));
 
 	// Estimate current token count. When the prior turn reported usage, prefer
 	// it over a fresh re-count, but subtract cached tokens so heavily-cached
@@ -85,7 +86,7 @@ export async function compactHistory(
 	// Add safety margin for the new assistant response.
 	estimated += 1024;
 
-	if (estimated <= maxAllowed) {
+	if (!force && estimated <= maxAllowed) {
 		return { messages, wasCompacted: false, summary: null, droppedCount: 0 };
 	}
 

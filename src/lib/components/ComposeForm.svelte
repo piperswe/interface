@@ -6,7 +6,7 @@
 
 <script lang="ts">
 	import type { ProviderModel } from '$lib/server/providers/types';
-	import { sendMessage, setThinkingBudget, abortGeneration } from '$lib/conversations.remote';
+	import { sendMessage, setThinkingBudget, abortGeneration, compactContext } from '$lib/conversations.remote';
 	import { invalidateAll } from '$app/navigation';
 	import { untrack } from 'svelte';
 	import { clickOutside } from '$lib/click-outside';
@@ -18,12 +18,14 @@
 		defaultModel,
 		thinkingBudget,
 		busy,
+		contextUsed = 0,
 	}: {
 		conversationId: string;
 		models: ProviderModel[];
 		defaultModel: string;
 		thinkingBudget: number | null;
 		busy: boolean;
+		contextUsed?: number;
 	} = $props();
 
 	let formEl: HTMLFormElement | null = $state(null);
@@ -99,6 +101,23 @@
 	async function onStop() {
 		await abortGeneration(conversationId);
 		await invalidateAll();
+	}
+
+	const contextMax = $derived(currentModel?.maxContextLength ?? 0);
+	const contextPct = $derived(contextMax > 0 && contextUsed > 0 ? Math.min(1, contextUsed / contextMax) : 0);
+	const showMeter = $derived(contextMax > 0 && contextUsed > 0);
+
+	async function onCompact() {
+		if (busy) return;
+		const confirmed = window.confirm(
+			`Compact context?\n\nThis will summarize your ${contextUsed.toLocaleString()} tokens of conversation history to free up context space. Older messages will be replaced with a summary.\n\nContinue?`,
+		);
+		if (!confirmed) return;
+		const result = await compactContext(conversationId);
+		await invalidateAll();
+		if (!result.compacted) {
+			window.alert('Nothing to compact — the conversation is too short or already compact.');
+		}
 	}
 
 	function closeOptions() {
@@ -218,20 +237,45 @@
 				</div>
 			</div>
 		</details>
-		{#if busy}
-			<button type="button" class="send btn btn-primary rounded-circle d-flex align-items-center justify-content-center flex-shrink-0" onclick={onStop} aria-label="Stop">
-				<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="width: 18px; height: 18px">
-					<rect x="6" y="6" width="12" height="12" rx="2" />
-				</svg>
-			</button>
-		{:else}
-			<button type="submit" class="send btn btn-primary rounded-circle d-flex align-items-center justify-content-center flex-shrink-0" disabled={busy} aria-label="Send">
-				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width: 18px; height: 18px">
-					<line x1="12" y1="19" x2="12" y2="5" />
-					<polyline points="5 12 12 5 19 12" />
-				</svg>
-			</button>
-		{/if}
+		<div class="compose-actions d-flex align-items-center gap-2">
+			{#if showMeter}
+				<button
+					type="button"
+					class="context-meter"
+					onclick={onCompact}
+					disabled={busy}
+					title={`Context: ${contextUsed.toLocaleString()} / ${contextMax.toLocaleString()} tokens (${Math.round(contextPct * 100)}%) — click to compact`}
+					aria-label={`Context ${Math.round(contextPct * 100)}% full — click to compact`}
+				>
+					<svg viewBox="0 0 36 36" class="context-ring" aria-hidden="true">
+						<circle class="context-ring-bg" cx="18" cy="18" r="15.9155" />
+						<circle
+							class="context-ring-fill"
+							cx="18"
+							cy="18"
+							r="15.9155"
+							stroke-dasharray="{contextPct * 100} {100 - contextPct * 100}"
+							stroke-dashoffset="25"
+							style="--pct: {contextPct}"
+						/>
+					</svg>
+				</button>
+			{/if}
+			{#if busy}
+				<button type="button" class="send btn btn-primary rounded-circle d-flex align-items-center justify-content-center flex-shrink-0" onclick={onStop} aria-label="Stop">
+					<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="width: 18px; height: 18px">
+						<rect x="6" y="6" width="12" height="12" rx="2" />
+					</svg>
+				</button>
+			{:else}
+				<button type="submit" class="send btn btn-primary rounded-circle d-flex align-items-center justify-content-center flex-shrink-0" disabled={busy} aria-label="Send">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width: 18px; height: 18px">
+						<line x1="12" y1="19" x2="12" y2="5" />
+						<polyline points="5 12 12 5 19 12" />
+					</svg>
+				</button>
+			{/if}
+		</div>
 	</div>
 </form>
 
@@ -399,12 +443,66 @@
 		padding: 0.25rem 0.5rem 0 calc(0.5rem + 14px + 0.5rem);
 	}
 
+	.compose-actions {
+		margin-left: auto;
+		flex-shrink: 0;
+	}
+
+	.context-meter {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 28px;
+		height: 28px;
+		padding: 0;
+		background: none;
+		border: none;
+		cursor: pointer;
+		border-radius: 50%;
+		flex-shrink: 0;
+		transition: opacity 120ms ease;
+		opacity: 0.7;
+	}
+
+	.context-meter:hover:not([disabled]) {
+		opacity: 1;
+	}
+
+	.context-meter[disabled] {
+		cursor: not-allowed;
+		opacity: 0.35;
+	}
+
+	.context-ring {
+		width: 28px;
+		height: 28px;
+		transform: rotate(-90deg);
+	}
+
+	.context-ring-bg {
+		fill: none;
+		stroke: var(--border);
+		stroke-width: 3;
+	}
+
+	.context-ring-fill {
+		fill: none;
+		stroke-width: 3;
+		stroke-linecap: round;
+		transition: stroke-dasharray 400ms ease, stroke 400ms ease;
+		/* green → yellow → red based on percentage */
+		stroke: color-mix(
+			in oklch,
+			oklch(0.65 0.22 145) calc((1 - var(--pct, 0)) * 100%),
+			oklch(0.62 0.25 25) calc(var(--pct, 0) * 100%)
+		);
+	}
+
 	.send {
 		width: 36px;
 		height: 36px;
 		min-height: 36px;
 		padding: 0;
-		margin-left: auto;
 	}
 
 	@media (max-width: 600px) {
