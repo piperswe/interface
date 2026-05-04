@@ -2,6 +2,8 @@
 // (seeded by migration 0002). Phase 6 multi-user reads the user_id from the
 // session.
 
+import { now as nowMs } from './clock';
+
 const SINGLE_USER_ID = 1;
 
 export type SettingRow = {
@@ -18,7 +20,7 @@ export async function getSetting(env: Env, key: string, userId: number = SINGLE_
 }
 
 export async function setSetting(env: Env, key: string, value: string, userId: number = SINGLE_USER_ID): Promise<void> {
-	const now = Date.now();
+	const now = nowMs();
 	await env.DB.prepare(
 		`INSERT INTO settings (user_id, key, value, updated_at)
 		 VALUES (?, ?, ?, ?)
@@ -79,28 +81,33 @@ export async function getModelList(env: Env, userId: number = SINGLE_USER_ID): P
 // Provider keys are stored in Worker secrets (per Phase 0a Open Question 5
 // default — envelope encryption deferred to Phase 6 multi-user). The Settings
 // UI surfaces only "configured / not configured" status; actual key edits
-// happen via `wrangler secret put`.
-export type SecretKeyName = 'OPENROUTER_KEY' | 'ANTHROPIC_KEY' | 'OPENAI_KEY' | 'GOOGLE_KEY' | 'DEEPSEEK_KEY' | 'KAGI_KEY' | 'SANDBOX_SSH_KEY';
-
-export type SecretKeyStatus = {
-	name: SecretKeyName;
-	configured: boolean;
-};
-
-export const KNOWN_SECRET_KEYS: SecretKeyName[] = [
+// happen via `wrangler secret put`. Single source of truth for the optional-
+// secret set — keep this list in sync with the optional fields declared on
+// `Cloudflare.Env` in src/app.d.ts.
+export const KNOWN_SECRET_KEYS = [
 	'OPENROUTER_KEY',
 	'ANTHROPIC_KEY',
 	'OPENAI_KEY',
 	'GOOGLE_KEY',
 	'DEEPSEEK_KEY',
 	'KAGI_KEY',
+	'YNAB_TOKEN',
 	'SANDBOX_SSH_KEY',
-];
+] as const;
+
+export type SecretKeyName = (typeof KNOWN_SECRET_KEYS)[number];
+
+export type SecretKeyStatus = {
+	name: SecretKeyName;
+	configured: boolean;
+};
 
 export function describeSecretKeys(env: Env): SecretKeyStatus[] {
-	return KNOWN_SECRET_KEYS.map((name) => ({
-		name,
-		configured: typeof (env as unknown as Record<string, unknown>)[name] === 'string'
-			&& ((env as unknown as Record<string, string>)[name] ?? '').length > 0,
-	}));
+	return KNOWN_SECRET_KEYS.map((name) => {
+		const raw = (env as unknown as Record<string, unknown>)[name];
+		return {
+			name,
+			configured: typeof raw === 'string' && raw.length > 0,
+		};
+	});
 }

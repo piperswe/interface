@@ -68,6 +68,9 @@ export type ChatRequest = {
 	cacheControl?: CacheControl;
 	temperature?: number;
 	maxTokens?: number;
+	// Cancellation signal forwarded to the underlying provider fetch. Adapters
+	// honor this where the SDK supports it; cancellation is best-effort.
+	signal?: AbortSignal;
 };
 
 export type StreamEvent =

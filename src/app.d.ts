@@ -32,11 +32,15 @@ declare global {
 			// adapter's bundled worker file isn't a TS-resolvable module.
 			// `getConversationStub()` in `$lib/server/durable_objects` returns
 			// the typed view; reach for that instead of the binding directly.
-			ANTHROPIC_KEY?: string;
-			OPENAI_KEY?: string;
-			GOOGLE_KEY?: string;
-			DEEPSEEK_KEY?: string;
-			KAGI_KEY?: string;
+			// Keep these in sync with `KNOWN_SECRET_KEYS` in
+		// $lib/server/settings — the Settings UI iterates that list to
+		// render configuration status, and we miss any key that isn't in
+		// both places.
+		ANTHROPIC_KEY?: string;
+		OPENAI_KEY?: string;
+		GOOGLE_KEY?: string;
+		DEEPSEEK_KEY?: string;
+		KAGI_KEY?: string;
 		YNAB_TOKEN?: string;
 		// Optional Sandbox binding. When present, conversation-scoped
 		// sandbox tools are registered in the tool registry.

@@ -8,6 +8,7 @@
 		removeSubAgent,
 		toggleSubAgent,
 	} from '$lib/settings.remote';
+	import { confirmSubmit, justSubmit } from '$lib/form-actions';
 	import { page } from '$app/state';
 	import { untrack } from 'svelte';
 	import type { ReasoningType } from '$lib/server/models/config';
@@ -73,19 +74,8 @@
 		}));
 	}
 
-	function deleteHandler(name: string) {
-		return async ({ submit }: { submit: () => Promise<unknown> }) => {
-			if (!confirm(`Delete MCP server "${name}"?`)) return;
-			await submit();
-		};
-	}
-
-	function deleteSubAgentHandler(name: string) {
-		return async ({ submit }: { submit: () => Promise<unknown> }) => {
-			if (!confirm(`Delete sub-agent "${name}"?`)) return;
-			await submit();
-		};
-	}
+	const deleteServer = (name: string) => confirmSubmit(`Delete MCP server "${name}"?`);
+	const deleteSubAgentBy = (name: string) => confirmSubmit(`Delete sub-agent "${name}"?`);
 </script>
 
 <svelte:head>
@@ -97,7 +87,7 @@
 
 	<section class="settings-section border rounded p-3 bg-body" aria-labelledby="appearance">
 		<h2 id="appearance" class="fs-6 fw-semibold m-0 mb-2">Appearance</h2>
-		<form {...themeForm.enhance(async ({ submit }) => { await submit(); })}>
+		<form {...themeForm.enhance(justSubmit)}>
 			<input type="hidden" name="key" value="theme" />
 			<label for="theme-select" class="form-label">Theme</label>
 			<div class="d-flex gap-2">
@@ -154,7 +144,7 @@
 								{s.transport.toUpperCase()} · {s.url ?? s.command ?? '—'}
 							</div>
 						</div>
-						<form {...removeMcpServer.for(s.id).enhance(deleteHandler(s.name))}>
+						<form {...removeMcpServer.for(s.id).enhance(deleteServer(s.name))}>
 							<input type="hidden" name="id" value={s.id} />
 							<button type="submit" class="btn btn-sm btn-outline-secondary">Delete</button>
 						</form>
@@ -167,7 +157,7 @@
 				Add server
 			</summary>
 			<form
-				{...addMcpServer.enhance(async ({ submit }) => { await submit(); })}
+				{...addMcpServer.enhance(justSubmit)}
 				class="d-flex flex-column gap-2 mt-2"
 			>
 				<label class="form-label">
@@ -219,12 +209,12 @@
 								{a.enabled ? 'enabled' : 'disabled'}
 							</span>
 							<span class="flex-fill"></span>
-							<form {...toggleSubAgent.for(a.id).enhance(async ({ submit }) => { await submit(); })}>
+							<form {...toggleSubAgent.for(a.id).enhance(justSubmit)}>
 								<input type="hidden" name="id" value={a.id} />
 								<input type="hidden" name="enabled" value={a.enabled ? 'false' : 'true'} />
 								<button type="submit" class="btn btn-sm btn-outline-secondary">{a.enabled ? 'Disable' : 'Enable'}</button>
 							</form>
-							<form {...removeSubAgent.for(a.id).enhance(deleteSubAgentHandler(a.name))}>
+							<form {...removeSubAgent.for(a.id).enhance(deleteSubAgentBy(a.name))}>
 								<input type="hidden" name="id" value={a.id} />
 								<button type="submit" class="btn btn-sm btn-outline-secondary">Delete</button>
 							</form>
@@ -244,7 +234,7 @@
 				Add sub-agent
 			</summary>
 			<form
-				{...addSubAgent.enhance(async ({ submit }) => { await submit(); })}
+				{...addSubAgent.enhance(justSubmit)}
 				class="d-flex flex-column gap-2 mt-2"
 			>
 				<label class="form-label">
@@ -324,7 +314,7 @@
 		<p class="text-muted small m-0 mb-2">
 			Injected as a system message at the start of every chat. Leave blank to use the default.
 		</p>
-		<form {...systemPromptForm.enhance(async ({ submit }) => { await submit(); })}>
+		<form {...systemPromptForm.enhance(justSubmit)}>
 			<input type="hidden" name="key" value="system_prompt" />
 			<textarea
 				name="value"
@@ -342,7 +332,7 @@
 		<p class="text-muted small m-0 mb-2">
 			Appended to the system message to give the AI context about you.
 		</p>
-		<form {...userBioForm.enhance(async ({ submit }) => { await submit(); })}>
+		<form {...userBioForm.enhance(justSubmit)}>
 			<input type="hidden" name="key" value="user_bio" />
 			<textarea
 				name="value"
@@ -360,7 +350,7 @@
 		<p class="text-muted small m-0 mb-2">
 			Models available in the composer dropdown.
 		</p>
-		<form {...modelListForm.enhance(async ({ submit }) => { await submit(); })}>
+		<form {...modelListForm.enhance(justSubmit)}>
 			<input type="hidden" name="key" value="model_list" />
 			<input type="hidden" name="value" value={serializedModels} />
 			{#if models.length > 0}
@@ -438,7 +428,7 @@
 			When estimated token usage exceeds this percentage of the model's context
 			window, older messages are summarized to make room. 0 = disabled.
 		</p>
-		<form {...thresholdForm.enhance(async ({ submit }) => { await submit(); })}>
+		<form {...thresholdForm.enhance(justSubmit)}>
 			<input type="hidden" name="key" value="context_compaction_threshold" />
 			<div class="d-flex gap-2 align-items-center">
 				<label for="threshold-input" class="form-label m-0">Threshold</label>
@@ -457,7 +447,7 @@
 				<button type="submit" class="btn btn-primary">Save</button>
 			</div>
 		</form>
-		<form {...summaryTokensForm.enhance(async ({ submit }) => { await submit(); })} class="mt-3">
+		<form {...summaryTokensForm.enhance(justSubmit)} class="mt-3">
 			<input type="hidden" name="key" value="context_compaction_summary_tokens" />
 			<div class="d-flex gap-2 align-items-center">
 				<label for="summary-tokens-input" class="form-label m-0">Summary budget</label>

@@ -1,3 +1,4 @@
+import { now as nowMs } from './clock';
 import type { McpServerRow } from './mcp/types';
 
 const SINGLE_USER_ID = 1;
@@ -61,7 +62,7 @@ export async function createMcpServer(
 	input: CreateMcpServerInput,
 	userId: number = SINGLE_USER_ID,
 ): Promise<number> {
-	const now = Date.now();
+	const now = nowMs();
 	const result = await env.DB.prepare(
 		`INSERT INTO mcp_servers (user_id, name, transport, url, command, env_json, auth_json, enabled, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)

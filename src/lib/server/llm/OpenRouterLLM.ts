@@ -2,6 +2,7 @@ import { OpenRouter } from '@openrouter/sdk';
 import type { ChatFunctionTool, ChatMessages, ChatStreamChunk } from '@openrouter/sdk/models';
 import type LLM from './LLM';
 import type { ChatRequest, ContentBlock, Message, StreamEvent, ToolDefinition } from './LLM';
+import { formatError } from './errors';
 
 export class OpenRouterLLM implements LLM {
 	#client: OpenRouter;
@@ -25,17 +26,20 @@ export class OpenRouterLLM implements LLM {
 				messages.unshift({ role: 'system', content: request.systemPrompt });
 			}
 			const tools = request.tools && request.tools.length > 0 ? toOpenRouterTools(request.tools) : undefined;
-			const stream = await this.#client.chat.send({
-				chatRequest: {
-					messages,
-					model: this.model,
-					stream: true,
-					...(tools ? { tools } : {}),
-					...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
-					...(request.maxTokens !== undefined ? { maxTokens: request.maxTokens } : {}),
-					...(request.reasoning ? { reasoning: request.reasoning as unknown as import('@openrouter/sdk/models').Reasoning } : {}),
+			const stream = await this.#client.chat.send(
+				{
+					chatRequest: {
+						messages,
+						model: this.model,
+						stream: true,
+						...(tools ? { tools } : {}),
+						...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
+						...(request.maxTokens !== undefined ? { maxTokens: request.maxTokens } : {}),
+						...(request.reasoning ? { reasoning: request.reasoning as unknown as import('@openrouter/sdk/models').Reasoning } : {}),
+					},
 				},
-			});
+				request.signal ? { signal: request.signal } : undefined,
+			);
 
 			for await (const chunk of stream) {
 				lastChunk = chunk;
@@ -67,19 +71,8 @@ export class OpenRouterLLM implements LLM {
 
 				if (chunk.usage) yield* yieldUsage(chunk.usage);
 
-				if (choice.finishReason) {
-					for (const tc of partialToolCalls.values()) {
-						if (tc.id && tc.name) {
-							let input: unknown = {};
-							try {
-								input = JSON.parse(tc.args || '{}');
-							} catch {
-								input = { _raw: tc.args };
-							}
-							yield { type: 'tool_call', id: tc.id, name: tc.name, input };
-						}
-					}
-					partialToolCalls.clear();
+				if (choice.finishReason && !emittedDone) {
+					yield* finalizeToolCalls(partialToolCalls);
 					emittedDone = true;
 					yield { type: 'done', finishReason: choice.finishReason, raw: lastChunk };
 				}
@@ -88,24 +81,29 @@ export class OpenRouterLLM implements LLM {
 			// Some providers omit finishReason on the final chunk. Guarantee a
 			// done event so the consumer can finalise correctly.
 			if (!emittedDone) {
-				for (const tc of partialToolCalls.values()) {
-					if (tc.id && tc.name) {
-						let input: unknown = {};
-						try {
-							input = JSON.parse(tc.args || '{}');
-						} catch {
-							input = { _raw: tc.args };
-						}
-						yield { type: 'tool_call', id: tc.id, name: tc.name, input };
-					}
-				}
-				partialToolCalls.clear();
+				yield* finalizeToolCalls(partialToolCalls);
 				yield { type: 'done', raw: lastChunk };
 			}
 		} catch (e) {
 			yield { type: 'error', message: formatError(e) };
 		}
 	}
+}
+
+function* finalizeToolCalls(
+	partial: Map<number, { id: string; name: string; args: string }>,
+): IterableIterator<StreamEvent> {
+	for (const tc of partial.values()) {
+		if (!tc.id || !tc.name) continue;
+		let input: unknown = {};
+		try {
+			input = JSON.parse(tc.args || '{}');
+		} catch {
+			input = { _raw: tc.args };
+		}
+		yield { type: 'tool_call', id: tc.id, name: tc.name, input };
+	}
+	partial.clear();
 }
 
 function* yieldUsage(usage: NonNullable<ChatStreamChunk['usage']>): IterableIterator<StreamEvent> {
@@ -192,14 +190,3 @@ function toOpenRouterTools(tools: ToolDefinition[]): ChatFunctionTool[] {
 	);
 }
 
-function formatError(e: unknown): string {
-	if (e instanceof Error && e.message) return e.message.slice(0, 500);
-	if (typeof e === 'object' && e !== null) {
-		try {
-			return JSON.stringify(e).slice(0, 500);
-		} catch {
-			/* fall through */
-		}
-	}
-	return String(e).slice(0, 500);
-}

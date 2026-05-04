@@ -1,3 +1,4 @@
+import { now, uuid } from './clock';
 import type { Conversation } from '$lib/types/conversation';
 
 export type { Conversation };
@@ -19,10 +20,10 @@ export async function listArchivedConversations(env: Env): Promise<Conversation[
 }
 
 export async function createConversation(env: Env): Promise<string> {
-	const id = crypto.randomUUID();
-	const now = Date.now();
+	const id = uuid();
+	const ts = now();
 	await env.DB.prepare(`INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, 'New conversation', ?, ?)`)
-		.bind(id, now, now)
+		.bind(id, ts, ts)
 		.run();
 	return id;
 }
@@ -38,7 +39,7 @@ export async function getConversation(env: Env, id: string): Promise<Conversatio
 
 export async function archiveConversation(env: Env, id: string): Promise<void> {
 	await env.DB.prepare('UPDATE conversations SET archived_at = ? WHERE id = ?')
-		.bind(Date.now(), id)
+		.bind(now(), id)
 		.run();
 }
 

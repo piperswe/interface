@@ -38,9 +38,11 @@ export type Artifact = {
 
 // Tool inputs are JSON values from the model. Typed permissively (`any`) so
 // the DurableObjectStub<> RPC type checks resolve — Cloudflare's Serializable<>
-// rejects `unknown` field types.
+// rejects `unknown` field types. `JsonRecord` narrows to a recursive shape
+// for code that constructs values; the wire type stays `any` so RPC works.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type JsonValue = any;
+export type JsonRecord = string | number | boolean | null | JsonRecord[] | { [k: string]: JsonRecord };
 
 export type ToolCallRecord = { id: string; name: string; input: JsonValue };
 export type ToolResultRecord = { toolUseId: string; content: string; isError: boolean; streaming?: boolean };

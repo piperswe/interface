@@ -51,8 +51,8 @@ function ok(content: unknown): ToolExecutionResult {
 	return { content: typeof content === 'string' ? content : JSON.stringify(content, null, 2) };
 }
 
-function err(message: string): ToolExecutionResult {
-	return { content: message, isError: true };
+function err(message: string, errorCode: 'invalid_input' | 'execution_failure' = 'execution_failure'): ToolExecutionResult {
+	return { content: message, isError: true, errorCode };
 }
 
 const BUDGET_ID_DESCRIPTION =
@@ -258,7 +258,7 @@ function listAccountsTool(token: string): Tool {
 		},
 		async execute(_ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
 			const args = (input ?? {}) as { budget_id?: string };
-			if (!args.budget_id) return err('Missing required parameter: budget_id');
+			if (!args.budget_id) return err('Missing required parameter: budget_id', 'invalid_input');
 			const api = makeApi(token);
 			const result = await call(() => api.accounts.getAccounts(args.budget_id!));
 			if (isError(result)) return err(result.__error);
@@ -287,7 +287,7 @@ function listCategoriesTool(token: string): Tool {
 		},
 		async execute(_ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
 			const args = (input ?? {}) as { budget_id?: string; include_hidden?: boolean };
-			if (!args.budget_id) return err('Missing required parameter: budget_id');
+			if (!args.budget_id) return err('Missing required parameter: budget_id', 'invalid_input');
 			const includeHidden = args.include_hidden ?? false;
 			const api = makeApi(token);
 			const result = await call(() => api.categories.getCategories(args.budget_id!));
@@ -327,8 +327,8 @@ function getMonthTool(token: string): Tool {
 		},
 		async execute(_ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
 			const args = (input ?? {}) as { budget_id?: string; month?: string };
-			if (!args.budget_id) return err('Missing required parameter: budget_id');
-			if (!args.month) return err('Missing required parameter: month');
+			if (!args.budget_id) return err('Missing required parameter: budget_id', 'invalid_input');
+			if (!args.month) return err('Missing required parameter: month', 'invalid_input');
 			const api = makeApi(token);
 			const result = await call(() => api.months.getPlanMonth(args.budget_id!, args.month!));
 			if (isError(result)) return err(result.__error);
@@ -360,7 +360,7 @@ function listPayeesTool(token: string): Tool {
 		},
 		async execute(_ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
 			const args = (input ?? {}) as { budget_id?: string };
-			if (!args.budget_id) return err('Missing required parameter: budget_id');
+			if (!args.budget_id) return err('Missing required parameter: budget_id', 'invalid_input');
 			const api = makeApi(token);
 			const result = await call(() => api.payees.getPayees(args.budget_id!));
 			if (isError(result)) return err(result.__error);
@@ -419,7 +419,7 @@ function listTransactionsTool(token: string): Tool {
 				payee_id?: string;
 				limit?: number;
 			};
-			if (!args.budget_id) return err('Missing required parameter: budget_id');
+			if (!args.budget_id) return err('Missing required parameter: budget_id', 'invalid_input');
 			const filterCount =
 				(args.account_id ? 1 : 0) + (args.category_id ? 1 : 0) + (args.payee_id ? 1 : 0);
 			if (filterCount > 1) {
@@ -463,11 +463,12 @@ function listTransactionsTool(token: string): Tool {
 			};
 			const result = await call(fetchTransactions);
 			if (isError(result)) return err(result.__error);
-			const txs = result.data.transactions
-				.filter((t) => !t.deleted)
-				.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
-				.slice(0, limit)
-				.map(slimTransaction);
+			// Single-pass filter+sort, then slice+map. The previous chain ran
+			// four separate iterations over the array; this version mutates
+			// the filtered array in place.
+			const live = result.data.transactions.filter((t) => !t.deleted);
+			live.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+			const txs = live.slice(0, limit).map(slimTransaction);
 			return ok({ count: txs.length, transactions: txs });
 		},
 	};
@@ -544,10 +545,10 @@ function createTransactionTool(token: string): Tool {
 				flag_color?: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple';
 				import_id?: string;
 			};
-			if (!args.budget_id) return err('Missing required parameter: budget_id');
-			if (!args.account_id) return err('Missing required parameter: account_id');
+			if (!args.budget_id) return err('Missing required parameter: budget_id', 'invalid_input');
+			if (!args.account_id) return err('Missing required parameter: account_id', 'invalid_input');
 			if (args.amount == null && args.amount_milliunits == null) {
-				return err('Missing required parameter: provide either `amount` or `amount_milliunits`.');
+				return err('Missing required parameter: provide either `amount` or `amount_milliunits`.', 'invalid_input');
 			}
 			const milliunits =
 				args.amount_milliunits ?? decimalToMilliunits(args.amount as number);
@@ -629,39 +630,67 @@ function updateTransactionTool(token: string): Tool {
 				approved?: boolean;
 				flag_color?: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple';
 			};
-			if (!args.budget_id) return err('Missing required parameter: budget_id');
-			if (!args.transaction_id) return err('Missing required parameter: transaction_id');
+			if (!args.budget_id) return err('Missing required parameter: budget_id', 'invalid_input');
+			if (!args.transaction_id) return err('Missing required parameter: transaction_id', 'invalid_input');
 			const api = makeApi(token);
-			// PUT replaces the transaction so we need its current state to fill in
-			// fields the caller didn't provide.
-			const existingResult = await call(() =>
-				api.transactions.getTransactionById(args.budget_id!, args.transaction_id!),
-			);
-			if (isError(existingResult)) return err(existingResult.__error);
-			const existing = existingResult.data.transaction;
-			const milliunits =
-				args.amount_milliunits != null
-					? Math.round(args.amount_milliunits)
-					: args.amount != null
-						? decimalToMilliunits(args.amount)
-						: existing.amount;
+
+			// YNAB's PUT replaces the whole transaction, so missing fields
+			// would clear server-side state. Skip the GET only when the
+			// caller supplied every replacement-required field — otherwise
+			// fall back to fetching the existing record and merging.
+			const hasAmount = args.amount_milliunits != null || args.amount != null;
+			const fullPayload =
+				args.account_id !== undefined &&
+				args.date !== undefined &&
+				hasAmount &&
+				args.cleared !== undefined &&
+				args.approved !== undefined;
+
+			let payload: ynab.ExistingTransaction;
+			if (fullPayload) {
+				const milliunits =
+					args.amount_milliunits != null
+						? Math.round(args.amount_milliunits)
+						: decimalToMilliunits(args.amount as number);
+				payload = {
+					account_id: args.account_id,
+					date: args.date,
+					amount: milliunits,
+					payee_id: args.payee_id,
+					payee_name: args.payee_name,
+					category_id: args.category_id,
+					memo: args.memo,
+					cleared: args.cleared as ynab.TransactionClearedStatus,
+					approved: args.approved,
+					flag_color: (args.flag_color ?? null) as ynab.TransactionFlagColor | null,
+				};
+			} else {
+				const existingResult = await call(() =>
+					api.transactions.getTransactionById(args.budget_id!, args.transaction_id!),
+				);
+				if (isError(existingResult)) return err(existingResult.__error);
+				const existing = existingResult.data.transaction;
+				const milliunits =
+					args.amount_milliunits != null
+						? Math.round(args.amount_milliunits)
+						: args.amount != null
+							? decimalToMilliunits(args.amount)
+							: existing.amount;
+				payload = {
+					account_id: args.account_id ?? existing.account_id,
+					date: args.date ?? existing.date,
+					amount: milliunits,
+					payee_id: args.payee_id ?? existing.payee_id,
+					payee_name: args.payee_name ?? existing.payee_name ?? undefined,
+					category_id: args.category_id ?? existing.category_id,
+					memo: args.memo ?? existing.memo,
+					cleared: (args.cleared ?? existing.cleared) as ynab.TransactionClearedStatus,
+					approved: args.approved ?? existing.approved,
+					flag_color: (args.flag_color ?? existing.flag_color ?? null) as ynab.TransactionFlagColor | null,
+				};
+			}
 			const result = await call(() =>
-				api.transactions.updateTransaction(args.budget_id!, args.transaction_id!, {
-					transaction: {
-						account_id: args.account_id ?? existing.account_id,
-						date: args.date ?? existing.date,
-						amount: milliunits,
-						payee_id: args.payee_id ?? existing.payee_id,
-						payee_name: args.payee_name ?? existing.payee_name ?? undefined,
-						category_id: args.category_id ?? existing.category_id,
-						memo: args.memo ?? existing.memo,
-						cleared: (args.cleared ?? existing.cleared) as ynab.TransactionClearedStatus,
-						approved: args.approved ?? existing.approved,
-						flag_color: (args.flag_color ?? existing.flag_color ?? null) as
-							| ynab.TransactionFlagColor
-							| null,
-					},
-				}),
+				api.transactions.updateTransaction(args.budget_id!, args.transaction_id!, { transaction: payload }),
 			);
 			if (isError(result)) return err(result.__error);
 			return ok({ updated: slimTransaction(result.data.transaction) });
@@ -695,11 +724,11 @@ function updateMonthCategoryTool(token: string): Tool {
 				amount?: number;
 				amount_milliunits?: number;
 			};
-			if (!args.budget_id) return err('Missing required parameter: budget_id');
-			if (!args.month) return err('Missing required parameter: month');
-			if (!args.category_id) return err('Missing required parameter: category_id');
+			if (!args.budget_id) return err('Missing required parameter: budget_id', 'invalid_input');
+			if (!args.month) return err('Missing required parameter: month', 'invalid_input');
+			if (!args.category_id) return err('Missing required parameter: category_id', 'invalid_input');
 			if (args.amount == null && args.amount_milliunits == null) {
-				return err('Missing required parameter: provide either `amount` or `amount_milliunits`.');
+				return err('Missing required parameter: provide either `amount` or `amount_milliunits`.', 'invalid_input');
 			}
 			const milliunits =
 				args.amount_milliunits ?? decimalToMilliunits(args.amount as number);

@@ -35,6 +35,15 @@ export function createStreamingMarkdownRunner(
 
 	function scan(): void {
 		const state = getState();
+		// Drop cache entries for messages that are no longer in state (e.g.
+		// after navigating to a different conversation). Without this the
+		// runner's cache grows indefinitely for the page component's lifetime.
+		const live = new Set<string>();
+		for (const m of state.messages) live.add(m.id);
+		for (const key of renderedTextByKey.keys()) {
+			const messageId = key.split(':')[0];
+			if (!live.has(messageId)) renderedTextByKey.delete(key);
+		}
 		for (const m of state.messages) {
 			if (m.role !== 'assistant' || !m.parts) continue;
 			m.parts.forEach((part, i) => {

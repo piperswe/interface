@@ -97,11 +97,13 @@ export const fetchUrlTool: Tool = {
 				signal: ctx.signal,
 			});
 			const contentType = res.headers.get('content-type');
-			const text = await res.text();
+			const { text, originalBytes, hitCap } = await readBodyWithCap(res, cap);
 
 			let body = text;
 			let mode = 'raw';
-			if (useReadability && res.ok && isHtml(contentType)) {
+			if (useReadability && res.ok && isHtml(contentType) && !hitCap) {
+				// Skip Readability when we hit the cap — partial HTML breaks the
+				// parser and the truncated raw text is more useful than nothing.
 				const extracted = extractWithReadability(text, parsed.toString());
 				if (extracted) {
 					body = extracted.content;
@@ -109,8 +111,11 @@ export const fetchUrlTool: Tool = {
 				}
 			}
 
-			const truncated =
-				body.length > cap ? body.slice(0, cap) + `\n…[truncated, original ${body.length} bytes]` : body;
+			const truncated = hitCap
+				? body.slice(0, cap) + `\n…[truncated, original ≥${originalBytes} bytes]`
+				: body.length > cap
+					? body.slice(0, cap) + `\n…[truncated, original ${body.length} bytes]`
+					: body;
 			const header = `HTTP ${res.status} ${res.statusText} (${contentType ?? 'unknown'}; mode=${mode})`;
 			return {
 				content: `${header}\n\n${truncated}`,
@@ -121,3 +126,50 @@ export const fetchUrlTool: Tool = {
 		}
 	},
 };
+
+// Read the response body up to `cap` bytes and stop. Avoids loading hostile
+// or huge origins into memory: we cancel the underlying reader as soon as
+// the cap is reached.
+async function readBodyWithCap(
+	res: Response,
+	cap: number,
+): Promise<{ text: string; originalBytes: number; hitCap: boolean }> {
+	if (!res.body) {
+		const text = await res.text();
+		const hitCap = text.length > cap;
+		return { text: hitCap ? text.slice(0, cap) : text, originalBytes: text.length, hitCap };
+	}
+	const reader = res.body.getReader();
+	const decoder = new TextDecoder();
+	let bytes = 0;
+	let text = '';
+	let hitCap = false;
+	try {
+		while (true) {
+			const { value, done } = await reader.read();
+			if (done) break;
+			if (!value) continue;
+			bytes += value.byteLength;
+			if (bytes < cap) {
+				text += decoder.decode(value, { stream: true });
+				continue;
+			}
+			// We've reached or passed the cap on this chunk. Trim to the cap
+			// and stop; the body is at least `bytes` long and `hitCap` is true
+			// even when the trim point falls exactly on a chunk boundary.
+			const overshoot = bytes - cap;
+			const trimmed = overshoot > 0 ? value.subarray(0, value.byteLength - overshoot) : value;
+			text += decoder.decode(trimmed, { stream: true });
+			hitCap = true;
+			break;
+		}
+		text += decoder.decode();
+	} finally {
+		try {
+			await reader.cancel();
+		} catch {
+			/* ignore */
+		}
+	}
+	return { text, originalBytes: bytes, hitCap };
+}

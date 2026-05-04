@@ -26,10 +26,14 @@ export function createWebSearchTool(backend: WebSearchBackend): Tool {
 		async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
 			const args = (input ?? {}) as { query?: string; count?: number };
 			if (!args.query || typeof args.query !== 'string') {
-				return { content: 'Missing required parameter: query', isError: true };
+				return { content: 'Missing required parameter: query', isError: true, errorCode: 'invalid_input' };
 			}
+			// Schema says count ∈ [1, 10] but the model is free to ignore it.
+			// Clamp here so a bogus value never reaches the backend.
+			const requestedCount = Number.isFinite(args.count) ? Math.floor(args.count as number) : 5;
+			const count = Math.max(1, Math.min(10, requestedCount));
 			const response = await backend.search(args.query, {
-				count: args.count ?? 5,
+				count,
 				signal: ctx.signal,
 			});
 			if (!response.ok) {

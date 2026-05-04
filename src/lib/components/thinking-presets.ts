@@ -9,7 +9,10 @@ export const THINKING_PRESETS: Preset[] = [
 	{ id: 'low', label: 'Low', budget: 1024 },
 	{ id: 'medium', label: 'Medium', budget: 4096 },
 	{ id: 'high', label: 'High', budget: 16384 },
-	{ id: 'extra-high', label: 'Extra high', budget: 32768 },
+	// `xhigh` matches the reasoning effort name used by AnthropicLLM and
+	// `budgetToEffort` in the DO, so the preset id and the underlying provider
+	// effort string line up.
+	{ id: 'xhigh', label: 'Extra high', budget: 32768 },
 ];
 
 export function presetFor(budget: number | null): Preset | null {

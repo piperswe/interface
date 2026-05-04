@@ -9,6 +9,7 @@ import {
 	setSubAgentEnabled,
 	updateSubAgent,
 } from '$lib/server/sub_agents';
+import { invalidateThemeCache } from '../hooks.server';
 
 function getEnv(): Env {
 	const event = getRequestEvent();
@@ -57,6 +58,7 @@ export const saveSetting = form(
 			error(400, 'Summary budget must be at least 256 tokens');
 		}
 		await setSetting(getEnv(), key, value);
+		if (key === 'theme') invalidateThemeCache();
 		redirect(303, '/settings');
 	},
 );
