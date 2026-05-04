@@ -51,7 +51,7 @@ async function ensureSshKey(ctx: ToolContext): Promise<void> {
 	sshKeyInjected.add(ctx.conversationId);
 }
 
-function formatExecResult(result: ExecResult): ToolExecutionResult {
+function formatExecResult(result: Pick<ExecResult, 'exitCode' | 'success' | 'stdout' | 'stderr'>): ToolExecutionResult {
 	const lines: string[] = [`exitCode: ${result.exitCode}`, `success: ${result.success}`];
 	if (result.stdout) {
 		lines.push('', '--- stdout ---', result.stdout);
@@ -117,21 +117,30 @@ export const sandboxExecTool: Tool = {
 					...(args.timeout ? { timeout: args.timeout } : {}),
 					...(ctx.signal ? { signal: ctx.signal } : {}),
 				});
-				let result: ExecResult | undefined;
+				let stdout = '';
+				let stderr = '';
+				let exitCode: number | undefined;
 				for await (const ev of parseSSEStream<ExecEvent>(stream, ctx.signal)) {
 					if (ev.type === 'stdout' || ev.type === 'stderr') {
-						if (ev.data) ctx.emitToolOutput(ev.data);
+						if (ev.data) {
+							if (ev.type === 'stdout') stdout += ev.data;
+							if (ev.type === 'stderr') stderr += ev.data;
+							ctx.emitToolOutput(ev.data);
+						}
 					} else if (ev.type === 'complete') {
-						result = ev.result;
+						exitCode = ev.exitCode;
 						break;
 					} else if (ev.type === 'error') {
-						return { content: ev.error ?? 'Exec stream error', isError: true };
+						return { content: ev.data ?? ev.error ?? 'Exec stream error', isError: true };
 					}
 				}
-				if (!result) {
-					return { content: 'Exec stream ended without completion', isError: true };
+				if (exitCode === undefined) {
+					const partial = ['Exec stream ended without completion'];
+					if (stdout) partial.push('', '--- stdout ---', stdout);
+					if (stderr) partial.push('', '--- stderr ---', stderr);
+					return { content: partial.join('\n'), isError: true };
 				}
-				return formatExecResult(result);
+				return formatExecResult({ success: exitCode === 0, exitCode, stdout, stderr });
 			}
 			const result = await sandbox.exec(args.command, {
 				...(args.cwd ? { cwd: args.cwd } : {}),
