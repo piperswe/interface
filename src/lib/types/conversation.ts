@@ -1,5 +1,3 @@
-import type { ChatStreamChunk, ChatUsage, GenerationResponseData } from '@openrouter/sdk/models';
-
 export type Conversation = {
 	id: string;
 	title: string;
@@ -12,9 +10,18 @@ export type Conversation = {
 export interface MetaSnapshot {
 	startedAt: number;
 	firstTokenAt: number;
-	lastChunk: ChatStreamChunk | null;
-	usage: ChatUsage | null;
-	generation: GenerationResponseData | null;
+	// Raw provider response chunk (OpenAI-compat shape or provider-specific)
+	lastChunk: unknown | null;
+	// Provider usage info
+	usage: {
+		promptTokens: number;
+		completionTokens: number;
+		totalTokens?: number;
+		promptTokensDetails?: { cachedTokens?: number; cacheWriteTokens?: number };
+		completionTokensDetails?: { reasoningTokens?: number };
+	} | null;
+	// OpenRouter generation metadata (optional, legacy)
+	generation: unknown | null;
 }
 
 // Artifact types start at the minimum viable set per Phase 0.5: code (syntax-
@@ -44,7 +51,7 @@ export type Artifact = {
 export type JsonValue = any;
 export type JsonRecord = string | number | boolean | null | JsonRecord[] | { [k: string]: JsonRecord };
 
-export type ToolCallRecord = { id: string; name: string; input: JsonValue };
+export type ToolCallRecord = { id: string; name: string; input: JsonValue; thoughtSignature?: string };
 export type ToolResultRecord = { toolUseId: string; content: string; isError: boolean; streaming?: boolean };
 
 // Ordered timeline of an assistant turn: thinking, text segments, tool
@@ -55,7 +62,7 @@ export type ToolResultRecord = { toolUseId: string; content: string; isError: bo
 //    {type:'thinking'}, {type:'text'}]
 export type TextPart = { type: 'text'; text: string; textHtml?: string };
 export type ThinkingPart = { type: 'thinking'; text: string; textHtml?: string };
-export type ToolUsePart = { type: 'tool_use'; id: string; name: string; input: JsonValue };
+export type ToolUsePart = { type: 'tool_use'; id: string; name: string; input: JsonValue; thoughtSignature?: string };
 export type ToolResultPart = {
 	type: 'tool_result';
 	toolUseId: string;

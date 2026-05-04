@@ -95,7 +95,7 @@
 		<div class="app-main-header">
 			<label for="sidebar-toggle" class="sidebar-toggle-button" aria-label="Toggle sidebar">☰</label>
 		</div>
-		<div class="app-main-content d-flex flex-column flex-fill min-h-0">
+		<div class="app-main-content d-flex flex-column flex-fill overflow-auto min-h-0">
 			{@render children()}
 		</div>
 	</main>

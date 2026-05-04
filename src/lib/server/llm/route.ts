@@ -1,61 +1,46 @@
-import Anthropic from '@anthropic-ai/sdk';
-import { OpenRouter } from '@openrouter/sdk';
+import type { Provider, ProviderModel } from '../providers/types';
+import { getResolvedModel } from '../providers/models';
 import { AnthropicLLM } from './AnthropicLLM';
+import { OpenAILLM, type OpenAILLMConfig } from './OpenAILLM';
 import type LLM from './LLM';
-import { OpenRouterLLM } from './OpenRouterLLM';
 
-// SDK clients keep an internal fetch agent; reusing them across chat turns
-// preserves whatever connection caching the SDK does internally and avoids
-// allocating a fresh adapter object per `routeLLM` call. Keyed by the API
-// key string so that key rotation transparently picks up a fresh client.
-const anthropicClients = new Map<string, Anthropic>();
-const openrouterClients = new Map<string, OpenRouter>();
-
-function anthropicFor(apiKey: string): Anthropic {
-	let client = anthropicClients.get(apiKey);
-	if (!client) {
-		client = new Anthropic({ apiKey });
-		anthropicClients.set(apiKey, client);
+// Route a resolved provider+model pair to the appropriate LLM adapter.
+// Outside of this module, models are always referred to by their global ID
+// `{provider_id}/{model_id}` and resolved via `getResolvedModel()` before
+// being passed here.
+export function routeLLM(provider: Provider, model: ProviderModel): LLM {
+	switch (provider.type) {
+		case 'anthropic': {
+			if (!provider.apiKey) throw new Error(`Anthropic provider ${provider.id} missing API key`);
+			return new AnthropicLLM(provider.apiKey, model.id, provider.id);
+		}
+		case 'openai_compatible': {
+			if (!provider.apiKey) throw new Error(`Provider ${provider.id} missing API key`);
+			const config: OpenAILLMConfig = {
+				baseURL: provider.endpoint ?? 'https://api.openai.com/v1',
+				apiKey: provider.apiKey,
+				extraHeaders: {
+					'HTTP-Referer': 'https://github.com/piperswe/interface',
+					'X-Title': 'Interface',
+				},
+			};
+			return new OpenAILLM(config, model.id, provider.id);
+		}
+		default: {
+			// exhaustive check
+			const _exhaustive: never = provider.type;
+			throw new Error(`Unknown provider type: ${_exhaustive}`);
+		}
 	}
-	return client;
 }
 
-function openrouterFor(apiKey: string): OpenRouter {
-	let client = openrouterClients.get(apiKey);
-	if (!client) {
-		client = new OpenRouter({
-			apiKey,
-			httpReferer: 'https://github.com/piperswe/interface',
-			appTitle: 'Interface',
-		});
-		openrouterClients.set(apiKey, client);
-	}
-	return client;
+/** Resolve a global model ID and route to the appropriate adapter. */
+export async function routeLLMByGlobalId(env: Env, globalId: string): Promise<LLM> {
+	const resolved = await getResolvedModel(env, globalId);
+	if (!resolved) throw new Error(`Unknown model: ${globalId}`);
+	return routeLLM(resolved.provider, resolved.model);
 }
 
-// Resolves a model id to an LLM adapter. Picks a native provider adapter when:
-//   - the model id matches that provider's bare-id form (e.g. "claude-…"), AND
-//   - the corresponding provider key secret is configured.
-// Otherwise falls through to OpenRouter (catch-all per PRD §5.1).
-// Tests don't override this directly — they swap in a FakeLLM via the DO's
-// `__setLLMOverride` RPC method, which crosses the isolate boundary that
-// vitest-pool-workers maintains.
-export function routeLLM(env: Env, model: string): LLM {
-	if (isAnthropicModel(model) && env.ANTHROPIC_KEY) {
-		return new AnthropicLLM(anthropicFor(env.ANTHROPIC_KEY), model, 'anthropic');
-	}
-	return new OpenRouterLLM(openrouterFor(env.OPENROUTER_KEY), model, 'openrouter');
-}
-
-// Bare Anthropic model id form. OpenRouter ids carry a vendor prefix
-// (e.g. "anthropic/claude-…") and stay on OpenRouter even when ANTHROPIC_KEY
-// is configured — the operator chose OpenRouter for that conversation.
-export function isAnthropicModel(model: string): boolean {
-	return model.startsWith('claude-');
-}
-
-// Test-only: clear the cached clients between cases.
-export function _clearLLMClientCache(): void {
-	anthropicClients.clear();
-	openrouterClients.clear();
-}
+// Convenience re-exports for consumers that already have a resolved model.
+export { AnthropicLLM, OpenAILLM };
+export type { OpenAILLMConfig };

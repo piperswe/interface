@@ -1,0 +1,252 @@
+// D1 CRUD for provider_models. A model's global ID is `{provider_id}/{model_id}`.
+
+import { now as nowMs } from '../clock';
+import type { ProviderModel, ReasoningType, ResolvedModel } from './types';
+import { buildGlobalModelId, parseGlobalModelId } from './types';
+import { getProvider } from './store';
+
+const SINGLE_USER_ID = 1;
+
+function rowToModel(r: {
+	id: string;
+	provider_id: string;
+	name: string;
+	description: string | null;
+	max_context_length: number;
+	reasoning_type: string | null;
+	sort_order: number;
+	created_at: number;
+	updated_at: number;
+}): ProviderModel {
+	return {
+		id: r.id,
+		providerId: r.provider_id,
+		name: r.name,
+		description: r.description,
+		maxContextLength: r.max_context_length,
+		reasoningType: (r.reasoning_type as ReasoningType | null) ?? null,
+		sortOrder: r.sort_order,
+		createdAt: r.created_at,
+		updatedAt: r.updated_at,
+	};
+}
+
+export async function listModelsForProvider(
+	env: Env,
+	providerId: string,
+	userId: number = SINGLE_USER_ID,
+): Promise<ProviderModel[]> {
+	const result = await env.DB.prepare(
+		`SELECT id, provider_id, name, description, max_context_length, reasoning_type, sort_order, created_at, updated_at
+		 FROM provider_models WHERE user_id = ? AND provider_id = ? ORDER BY sort_order ASC, name ASC`,
+	)
+		.bind(userId, providerId)
+		.all<{
+			id: string;
+			provider_id: string;
+			name: string;
+			description: string | null;
+			max_context_length: number;
+			reasoning_type: string | null;
+			sort_order: number;
+			created_at: number;
+			updated_at: number;
+		}>();
+	return (result.results ?? []).map(rowToModel);
+}
+
+export async function listAllModels(env: Env, userId: number = SINGLE_USER_ID): Promise<ProviderModel[]> {
+	const result = await env.DB.prepare(
+		`SELECT id, provider_id, name, description, max_context_length, reasoning_type, sort_order, created_at, updated_at
+		 FROM provider_models WHERE user_id = ? ORDER BY provider_id ASC, sort_order ASC, name ASC`,
+	)
+		.bind(userId)
+		.all<{
+			id: string;
+			provider_id: string;
+			name: string;
+			description: string | null;
+			max_context_length: number;
+			reasoning_type: string | null;
+			sort_order: number;
+			created_at: number;
+			updated_at: number;
+		}>();
+	return (result.results ?? []).map(rowToModel);
+}
+
+export async function getModel(
+	env: Env,
+	providerId: string,
+	modelId: string,
+	userId: number = SINGLE_USER_ID,
+): Promise<ProviderModel | null> {
+	const row = await env.DB.prepare(
+		`SELECT id, provider_id, name, description, max_context_length, reasoning_type, sort_order, created_at, updated_at
+		 FROM provider_models WHERE user_id = ? AND provider_id = ? AND id = ?`,
+	)
+		.bind(userId, providerId, modelId)
+		.first<{
+			id: string;
+			provider_id: string;
+			name: string;
+			description: string | null;
+			max_context_length: number;
+			reasoning_type: string | null;
+			sort_order: number;
+			created_at: number;
+			updated_at: number;
+		}>();
+	return row ? rowToModel(row) : null;
+}
+
+export async function getResolvedModel(
+	env: Env,
+	globalId: string,
+	userId: number = SINGLE_USER_ID,
+): Promise<ResolvedModel | null> {
+	const { providerId, modelId } = parseGlobalModelId(globalId);
+	const [provider, model] = await Promise.all([
+		getProvider(env, providerId, userId),
+		getModel(env, providerId, modelId, userId),
+	]);
+	if (!provider || !model) return null;
+	return { globalId, provider, model };
+}
+
+export type CreateModelInput = {
+	id: string;
+	name: string;
+	description?: string | null;
+	maxContextLength?: number;
+	reasoningType?: ReasoningType | null;
+	sortOrder?: number;
+};
+
+export async function createModel(
+	env: Env,
+	providerId: string,
+	input: CreateModelInput,
+	userId: number = SINGLE_USER_ID,
+): Promise<void> {
+	const now = nowMs();
+	await env.DB.prepare(
+		`INSERT INTO provider_models (id, provider_id, name, description, max_context_length, reasoning_type, sort_order, created_at, updated_at, user_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	)
+		.bind(
+			input.id,
+			providerId,
+			input.name,
+			input.description ?? null,
+			input.maxContextLength ?? 128_000,
+			input.reasoningType ?? null,
+			input.sortOrder ?? 0,
+			now,
+			now,
+			userId,
+		)
+		.run();
+}
+
+export type UpdateModelInput = Partial<Omit<CreateModelInput, 'id'>>;
+
+export async function updateModel(
+	env: Env,
+	providerId: string,
+	modelId: string,
+	input: UpdateModelInput,
+	userId: number = SINGLE_USER_ID,
+): Promise<void> {
+	const now = nowMs();
+	const fields: string[] = [];
+	const values: (string | number | null)[] = [];
+
+	if ('name' in input) {
+		fields.push('name = ?');
+		values.push(input.name!);
+	}
+	if ('description' in input) {
+		fields.push('description = ?');
+		values.push(input.description ?? null);
+	}
+	if ('maxContextLength' in input) {
+		fields.push('max_context_length = ?');
+		values.push(input.maxContextLength ?? 128_000);
+	}
+	if ('reasoningType' in input) {
+		fields.push('reasoning_type = ?');
+		values.push(input.reasoningType ?? null);
+	}
+	if ('sortOrder' in input) {
+		fields.push('sort_order = ?');
+		values.push(input.sortOrder ?? 0);
+	}
+
+	if (fields.length === 0) return;
+
+	fields.push('updated_at = ?');
+	values.push(now);
+	values.push(userId, providerId, modelId);
+
+	await env.DB.prepare(
+		`UPDATE provider_models SET ${fields.join(', ')} WHERE user_id = ? AND provider_id = ? AND id = ?`,
+	)
+		.bind(...values)
+		.run();
+}
+
+export async function deleteModel(
+	env: Env,
+	providerId: string,
+	modelId: string,
+	userId: number = SINGLE_USER_ID,
+): Promise<void> {
+	await env.DB.prepare('DELETE FROM provider_models WHERE user_id = ? AND provider_id = ? AND id = ?')
+		.bind(userId, providerId, modelId)
+		.run();
+}
+
+export async function deleteModelsForProvider(
+	env: Env,
+	providerId: string,
+	userId: number = SINGLE_USER_ID,
+): Promise<void> {
+	await env.DB.prepare('DELETE FROM provider_models WHERE user_id = ? AND provider_id = ?')
+		.bind(userId, providerId)
+		.run();
+}
+
+/** Swap sort_order between two models in the same provider. */
+export async function swapModelOrder(
+	env: Env,
+	providerId: string,
+	modelIdA: string,
+	modelIdB: string,
+	userId: number = SINGLE_USER_ID,
+): Promise<void> {
+	const a = await getModel(env, providerId, modelIdA, userId);
+	const b = await getModel(env, providerId, modelIdB, userId);
+	if (!a || !b) throw new Error('One or both models not found');
+
+	await Promise.all([
+		updateModel(env, providerId, modelIdA, { sortOrder: b.sortOrder }, userId),
+		updateModel(env, providerId, modelIdB, { sortOrder: a.sortOrder }, userId),
+	]);
+}
+
+/** Convenience: return all global IDs for a given provider. */
+export async function listGlobalIdsForProvider(
+	env: Env,
+	providerId: string,
+	userId: number = SINGLE_USER_ID,
+): Promise<string[]> {
+	const models = await listModelsForProvider(env, providerId, userId);
+	return models.map((m) => buildGlobalModelId(providerId, m.id));
+}
+
+/** Convenience: return all global IDs across all providers. */
+export async function listAllGlobalModelIds(env: Env, userId: number = SINGLE_USER_ID): Promise<string[]> {
+	const models = await listAllModels(env, userId);
+	return models.map((m) => buildGlobalModelId(m.providerId, m.id));
+}

@@ -52,5 +52,6 @@
 	// sent over the wire.
 	"vars": {
 		"OPENROUTER_KEY": "test-key",
+		"KAGI_KEY": "test-kagi-key",
 	},
 }

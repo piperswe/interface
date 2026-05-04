@@ -1,7 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { OpenRouter } from '@openrouter/sdk';
-import type { ChatStreamChunk, ChatUsage, GenerationResponseData } from '@openrouter/sdk/models';
-import { isAnthropicModel, routeLLM } from '../llm/route';
+import { routeLLM, routeLLMByGlobalId } from '../llm/route';
 import { compactHistory } from '../llm/context';
 import { formatError } from '../llm/errors';
 import type { ChatRequest, ContentBlock, Message, ReasoningEffort, StreamEvent, ToolDefinition, Usage } from '../llm/LLM';
@@ -16,22 +14,23 @@ import { listMcpServers } from '../mcp_servers';
 import { listSubAgents } from '../sub_agents';
 import { createAgentTool } from '../tools/agent';
 import { createGetModelsTool } from '../tools/get_models';
-import { getModelList, getSystemPrompt, getUserBio } from '../settings';
+import { getSystemPrompt, getUserBio } from '../settings';
 import { registerSandboxTools } from '../tools/sandbox';
 import { getSandbox } from '@cloudflare/sandbox';
 import type { Sandbox } from '@cloudflare/sandbox';
-import { reasoningTypeFor } from '../models/config';
 import type { ReasoningConfig } from '../llm/LLM';
 import { renderMarkdown, renderArtifactCode } from '../markdown';
 import { now as nowMs, uuid } from '../clock';
 import type { AddMessageResult, Artifact, ArtifactType, ConversationState, MessageRow, MetaSnapshot } from '$lib/types/conversation';
+import { getResolvedModel } from '../providers/models';
+import { listAllModels } from '../providers/models';
+import { listAllGlobalModelIds } from '../providers/models';
 
 export type { AddMessageResult, Artifact, ArtifactType, ConversationState, MessageRow, MetaSnapshot };
 
 const PING_INTERVAL_MS = 25_000;
 const TITLE_MAX = 60;
 const MAX_TOOL_ITERATIONS = 10;
-const TITLE_MODEL = 'deepseek/deepseek-v4-flash';
 const MCP_TOOL_CACHE_TTL_MS = 60_000;
 // SQL fragment used by every history / state fetch on the messages table.
 const COMPLETE_PREDICATE = "status = 'complete' AND deleted_at IS NULL";
@@ -210,23 +209,6 @@ const MIGRATIONS: { version: number; up: (sql: SqlStorage) => void }[] = [
 		},
 	},
 ];
-
-function usageToOpenRouter(usage: Usage): ChatUsage {
-	return {
-		promptTokens: usage.inputTokens,
-		completionTokens: usage.outputTokens,
-		totalTokens: usage.totalTokens ?? usage.inputTokens + usage.outputTokens,
-		...(usage.cacheReadInputTokens != null || usage.cacheCreationInputTokens != null
-			? {
-					promptTokensDetails: {
-						...(usage.cacheReadInputTokens != null ? { cachedTokens: usage.cacheReadInputTokens } : {}),
-						...(usage.cacheCreationInputTokens != null ? { cacheWriteTokens: usage.cacheCreationInputTokens } : {}),
-					},
-				}
-			: {}),
-		...(usage.thinkingTokens != null ? { completionTokensDetails: { reasoningTokens: usage.thinkingTokens } } : {}),
-	};
-}
 
 export default class ConversationDurableObject extends DurableObject<Env> {
 	#sql: SqlStorage;
@@ -484,7 +466,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 				asstBlocks.push({ type: 'thinking', text: p.text });
 			} else if (p.type === 'tool_use') {
 				flushTool();
-				asstBlocks.push({ type: 'tool_use', id: p.id, name: p.name, input: p.input });
+				asstBlocks.push({ type: 'tool_use', id: p.id, name: p.name, input: p.input, thoughtSignature: p.thoughtSignature });
 			} else if (p.type === 'tool_result') {
 				flushAssistant();
 				toolBlocks.push({
@@ -710,12 +692,12 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		this.__llmOverrideCalls = [];
 	}
 
-	#routeLLM(model: string): { model: string; providerID: string; chat(req: ChatRequest): AsyncIterable<StreamEvent> } {
+	async #routeLLM(globalId: string): Promise<{ model: string; providerID: string; chat(req: ChatRequest): AsyncIterable<StreamEvent> }> {
 		const script = this.__llmOverrideScript;
 		if (script) {
 			const calls = this.__llmOverrideCalls;
 			return {
-				model,
+				model: globalId,
 				providerID: 'fake',
 				async *chat(req: ChatRequest): AsyncIterable<StreamEvent> {
 					calls.push(req);
@@ -728,15 +710,21 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 				},
 			};
 		}
-		return routeLLM(this.env, model);
+		const resolved = await getResolvedModel(this.env, globalId);
+		if (!resolved) throw new Error(`Unknown model: ${globalId}`);
+		const llm = routeLLM(resolved.provider, resolved.model);
+		return {
+			model: globalId,
+			providerID: resolved.provider.id,
+			chat: (req) => llm.chat(req),
+		};
 	}
 
 	async #generate(conversationId: string, assistantId: string, model: string): Promise<void> {
 		const startedAt = nowMs();
 		let firstTokenAt = 0;
-		let lastChunk: ChatStreamChunk | null = null;
-		let usage: ChatUsage | null = null;
-		let lastGenerationId: string | null = null;
+		let lastChunk: unknown | null = null;
+		let usage: Usage | null = null;
 
 		// Live mirror of the turn lives on `this.#inProgress.parts` so a
 		// resubscribing client can pick up the timeline as it stands. We
@@ -750,7 +738,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		const accumulatedCitations: ToolCitation[] = [];
 		for (const p of parts) {
 			if (p.type === 'tool_use') {
-				accumulatedToolCalls.push({ id: p.id, name: p.name, input: p.input });
+				accumulatedToolCalls.push({ id: p.id, name: p.name, input: p.input, thoughtSignature: p.thoughtSignature });
 			} else if (p.type === 'tool_result' && !p.streaming) {
 				accumulatedToolResults.push({ toolUseId: p.toolUseId, content: p.content, isError: p.isError });
 			}
@@ -775,7 +763,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		this.#sql.exec('UPDATE messages SET started_at = ? WHERE id = ?', startedAt, assistantId);
 
 		try {
-			const llm = this.#routeLLM(model);
+			const llm = await this.#routeLLM(model);
 			const history = this.#sql
 				.exec(
 					`SELECT role, content FROM messages WHERE id != ? AND ${COMPLETE_PREDICATE} ORDER BY created_at ASC`,
@@ -856,18 +844,19 @@ Be concise by default. Expand when the task genuinely calls for depth (design do
 
 The user's bio, preferences, and context are provided separately in the user turn. Use that context when it's actually relevant to the task — don't surface personal details just to demonstrate that you remember them.`;
 
-			const [convoRow, rawSystemPrompt, userBio, modelList] = await Promise.all([
+			const [convoRow, rawSystemPrompt, userBio, allModels] = await Promise.all([
 				this.env.DB.prepare('SELECT thinking_budget FROM conversations WHERE id = ?')
 					.bind(conversationId)
 					.first<{ thinking_budget: number | null }>(),
 				getSystemPrompt(this.env),
 				getUserBio(this.env),
-				getModelList(this.env),
+				listAllModels(this.env),
 			]);
 			const thinkingBudget = convoRow?.thinking_budget ?? null;
 
-			const modelEntry = modelList.find((m) => m.slug === model);
-			const reasoningType = modelEntry?.reasoning ?? reasoningTypeFor(model);
+			const resolvedModel = await getResolvedModel(this.env, model);
+			const reasoningType = resolvedModel?.model.reasoningType ?? null;
+			const providerType = resolvedModel?.provider.type ?? null;
 
 			let reasoning: ReasoningConfig | undefined;
 			let thinking: ChatRequest['thinking'] | undefined;
@@ -876,7 +865,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 			// provider shape. Native Anthropic uses the legacy `thinking`
 			// field; everything else uses `reasoning`. Only one is set so
 			// AnthropicLLM never has to disambiguate.
-			const isNativeAnthropic = isAnthropicModel(model) && typeof this.env.ANTHROPIC_KEY === 'string';
+			const isNativeAnthropic = providerType === 'anthropic';
 			if (thinkingBudget != null && thinkingBudget > 0) {
 				if (isNativeAnthropic) {
 					thinking = { type: 'enabled', budgetTokens: thinkingBudget };
@@ -930,13 +919,12 @@ The user's bio, preferences, and context are provided separately in the user tur
 						this.#broadcast('thinking_delta', { messageId: assistantId, content: ev.delta });
 						this.#scheduleFlush();
 					} else if (ev.type === 'tool_call') {
-						turnToolCalls.push({ id: ev.id, name: ev.name, input: ev.input });
+						turnToolCalls.push({ id: ev.id, name: ev.name, input: ev.input, thoughtSignature: ev.thoughtSignature });
 					} else if (ev.type === 'usage') {
-						usage = usageToOpenRouter(ev.usage);
+						usage = ev.usage;
 					} else if (ev.type === 'done') {
-						if (ev.raw && typeof ev.raw === 'object' && 'choices' in ev.raw) {
-							lastChunk = ev.raw as ChatStreamChunk;
-							if (lastChunk.id) lastGenerationId = lastChunk.id;
+						if (ev.raw && typeof ev.raw === 'object') {
+							lastChunk = ev.raw;
 						}
 					} else if (ev.type === 'error') {
 						providerError = ev.message;
@@ -955,7 +943,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 				const assistantBlocks: ContentBlock[] = [];
 				if (turnText) assistantBlocks.push({ type: 'text', text: turnText });
 				for (const tc of turnToolCalls) {
-					assistantBlocks.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.input });
+					assistantBlocks.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.input, thoughtSignature: tc.thoughtSignature });
 				}
 				messages.push({ role: 'assistant', content: assistantBlocks });
 
@@ -967,12 +955,13 @@ The user's bio, preferences, and context are provided separately in the user tur
 				// `emitToolOutput` callback streams output chunks to the UI.
 				for (const call of turnToolCalls) {
 					if (!this.#inProgress || this.#inProgress.messageId !== assistantId) break;
-					parts.push({ type: 'tool_use', id: call.id, name: call.name, input: call.input });
+					parts.push({ type: 'tool_use', id: call.id, name: call.name, input: call.input, thoughtSignature: call.thoughtSignature });
 					this.#broadcast('tool_call', {
 						messageId: assistantId,
 						id: call.id,
 						name: call.name,
 						input: call.input,
+						thoughtSignature: call.thoughtSignature,
 					});
 					// Seed a preliminary streaming tool_result so the UI shows the
 					// call as active while output arrives. Replaced with the final
@@ -1149,10 +1138,6 @@ The user's bio, preferences, and context are provided separately in the user tur
 				this.#broadcast('citations', { messageId: assistantId, citations: accumulatedCitations });
 			}
 			this.#broadcast('refresh', {});
-
-			if (lastGenerationId && llm.providerID === 'openrouter') {
-				this.ctx.waitUntil(this.#fetchGenerationStats(assistantId, lastGenerationId, startedAt, firstTokenAt, lastChunk, usage));
-			}
 		} catch (e) {
 			if (!this.#inProgress || this.#inProgress.messageId !== assistantId) {
 				// Already aborted and cleaned up by abortGeneration.
@@ -1213,15 +1198,16 @@ The user's bio, preferences, and context are provided separately in the user tur
 	async #buildToolRegistry(model: string): Promise<ToolRegistry> {
 		const registry = await this.#buildBaseToolRegistry();
 		try {
-			const [subAgents, availableModels] = await Promise.all([listSubAgents(this.env), getModelList(this.env)]);
+			const [subAgents, allModels] = await Promise.all([listSubAgents(this.env), listAllModels(this.env)]);
 			const enabledSubAgents = subAgents.filter((sa) => sa.enabled);
 			if (enabledSubAgents.length > 0) {
-				registry.register(createGetModelsTool({ currentModel: model, availableModels }));
+				registry.register(createGetModelsTool({ currentModel: model, availableModels: allModels }));
+				const globalIds = await listAllGlobalModelIds(this.env);
 				const agentTool = createAgentTool(
 					{
 						buildInnerToolRegistry: () => this.#buildBaseToolRegistry(),
 						defaultModel: model,
-						availableModelSlugs: availableModels.map((m) => m.slug),
+						availableModelGlobalIds: globalIds,
 					},
 					subAgents,
 				);
@@ -1443,21 +1429,21 @@ The user's bio, preferences, and context are provided separately in the user tur
 		generationJson: string | null,
 	): MetaSnapshot | null {
 		if (!startedAt && !lastChunkJson && !usageJson && !generationJson) return null;
-		let lastChunk: ChatStreamChunk | null = null;
-		let usage: ChatUsage | null = null;
-		let generation: GenerationResponseData | null = null;
+		let lastChunk: unknown | null = null;
+		let usage: MetaSnapshot['usage'] = null;
+		let generation: unknown | null = null;
 		try {
-			if (lastChunkJson) lastChunk = JSON.parse(lastChunkJson) as ChatStreamChunk;
+			if (lastChunkJson) lastChunk = JSON.parse(lastChunkJson) as unknown;
 		} catch {
 			/* keep null */
 		}
 		try {
-			if (usageJson) usage = JSON.parse(usageJson) as ChatUsage;
+			if (usageJson) usage = JSON.parse(usageJson) as MetaSnapshot['usage'];
 		} catch {
 			/* keep null */
 		}
 		try {
-			if (generationJson) generation = JSON.parse(generationJson) as GenerationResponseData;
+			if (generationJson) generation = JSON.parse(generationJson) as unknown;
 		} catch {
 			/* keep null */
 		}
@@ -1468,40 +1454,6 @@ The user's bio, preferences, and context are provided separately in the user tur
 			usage,
 			generation,
 		};
-	}
-
-	async #fetchGenerationStats(
-		assistantId: string,
-		generationId: string,
-		startedAt: number,
-		firstTokenAt: number,
-		lastChunk: ChatStreamChunk | null,
-		usage: ChatUsage | null,
-	): Promise<void> {
-		// Generation stats are not always available immediately after the stream
-		// completes. Retry with backoff.
-		const client = new OpenRouter({
-			apiKey: this.env.OPENROUTER_KEY,
-			httpReferer: 'https://github.com/piperswe/interface',
-			appTitle: 'Interface',
-		});
-		const delays = [1000, 2000, 4000, 8000, 16000];
-		for (const delay of delays) {
-			await new Promise((resolve) => setTimeout(resolve, delay));
-			try {
-				const response = await client.generations.getGeneration({ id: generationId });
-				const generation = response.data;
-				if (!generation) continue;
-				this.#sql.exec('UPDATE messages SET generation_json = ? WHERE id = ?', JSON.stringify(generation), assistantId);
-				this.#broadcast('meta', {
-					messageId: assistantId,
-					snapshot: { startedAt, firstTokenAt, lastChunk, usage, generation },
-				});
-				return;
-			} catch {
-				// 404 / not yet available — try again
-			}
-		}
 	}
 
 	async #touchConversation(conversationId: string, firstMessageContent: string): Promise<void> {
@@ -1538,9 +1490,14 @@ The user's bio, preferences, and context are provided separately in the user tur
 		opts: { systemPrompt: string; onlyIfDefault: boolean },
 	): Promise<void> {
 		const collapsed = input.replace(/\s+/g, ' ').trim();
+		// Pick the first available model for title generation.
+		const globalIds = await listAllGlobalModelIds(this.env);
+		const titleModel = globalIds[0];
+		if (!titleModel) return; // No models configured, skip title generation
+
 		let title: string;
 		try {
-			const llm = routeLLM(this.env, TITLE_MODEL);
+			const llm = await this.#routeLLM(titleModel);
 			let buf = '';
 			for await (const ev of llm.chat({
 				messages: [

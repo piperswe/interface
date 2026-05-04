@@ -3,7 +3,9 @@
 // set wants a confirm() prompt before submitting. Centralised here so the
 // pattern doesn't proliferate inline across pages.
 
-type Submit = () => Promise<unknown>;
+import type { RemoteQueryUpdate } from '@sveltejs/kit';
+
+type Submit = () => Promise<boolean> & { updates: (...updates: RemoteQueryUpdate[]) => Promise<boolean> };
 
 export const justSubmit = async ({ submit }: { submit: Submit }) => {
 	await submit();

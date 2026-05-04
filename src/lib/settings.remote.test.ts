@@ -103,12 +103,6 @@ describe('saveSetting', () => {
 			'/settings',
 		);
 	});
-
-	it('accepts the model_list key with JSON text', async () => {
-		const json = JSON.stringify([{ slug: 'a', label: 'A' }, { slug: 'b', label: 'B' }]);
-		await expectRedirect(saveSetting({ key: 'model_list', value: json }) as Promise<unknown>, '/settings');
-		expect(await getSetting(env, 'model_list')).toBe(json);
-	});
 });
 
 describe('addMcpServer', () => {

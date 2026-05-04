@@ -52,16 +52,11 @@
 	const busy = $derived(convState.inProgress !== null);
 	const lastModel = $derived(
 		[...convState.messages].reverse().find((m) => m.role === 'assistant' && m.model)?.model ??
-			data.models[0]?.slug ??
-			'',
+			(data.defaultModel || (data.models[0] ? `${data.models[0].providerId}/${data.models[0].id}` : '')),
 	);
-	const totalCost = $derived(
-		convState.messages.reduce((sum: number, m) => {
-			if (m.role !== 'assistant' || !m.meta) return sum;
-			const cost = m.meta.generation?.totalCost ?? m.meta.usage?.cost;
-			return typeof cost === 'number' ? sum + cost : sum;
-		}, 0),
-	);
+	// Cost tracking removed with OpenRouter-specific generation stats.
+	// Token counts are available via m.meta.usage if needed.
+	const totalCost = $derived(0);
 
 	const mdRunner = createStreamingMarkdownRunner(
 		() => convState,

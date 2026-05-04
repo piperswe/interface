@@ -1,33 +1,51 @@
-import type OpenAI from 'openai';
+import OpenAI from 'openai';
 import type { ChatCompletionChunk, ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/chat/completions';
 import type LLM from './LLM';
 import type { ChatRequest, ContentBlock, Message, ReasoningEffort, StreamEvent, ToolDefinition } from './LLM';
 import { formatError } from './errors';
 
-// OpenAI-format adapter. Used for:
-//   - Direct OpenAI traffic via AI Gateway (`getUrl('openai')`).
-//   - DeepSeek traffic via AI Gateway (`getUrl('deepseek')`).
-//   - The Unified API catch-all (`getUrl()` + `/compat`) — accepts any
-//     `provider/model` slug supported by AI Gateway.
+// OpenAI-format adapter. Handles any provider that speaks the OpenAI chat-
+// completions protocol, including direct OpenAI, OpenRouter, DeepSeek, and AI
+// Gateway's Unified API (`/compat`).
 //
-// The `client` is constructed in `route.ts` with the appropriate `baseURL`
-// and `defaultHeaders` (notably `cf-aig-authorization` for unified billing).
-// This adapter makes no assumptions about the destination — it just speaks
-// OpenAI's chat-completions protocol.
+// The adapter constructs its own `openai` SDK client from the provider config
+// (baseURL, apiKey, extraHeaders) and reuses it across turns for connection
+// pooling.
+
+export type OpenAILLMConfig = {
+	baseURL: string;
+	apiKey: string;
+	extraHeaders?: Record<string, string>;
+	extraBody?: Record<string, unknown>;
+};
 
 export class OpenAILLM implements LLM {
 	#client: OpenAI;
 	model: string;
 	providerID: string;
+	#extraBody?: Record<string, unknown>;
 
-	constructor(client: OpenAI, model: string, providerID: string) {
-		this.#client = client;
+	constructor(config: OpenAILLMConfig, model: string, providerID: string);
+	constructor(client: OpenAI, model: string, providerID: string);
+	constructor(configOrClient: OpenAILLMConfig | OpenAI, model: string, providerID: string) {
+		if ('chat' in configOrClient) {
+			this.#client = configOrClient;
+		} else {
+			const config = configOrClient;
+			this.#client = new OpenAI({
+				baseURL: config.baseURL,
+				apiKey: config.apiKey,
+				dangerouslyAllowBrowser: true,
+				...(config.extraHeaders ? { defaultHeaders: config.extraHeaders } : {}),
+			});
+			this.#extraBody = config.extraBody;
+		}
 		this.model = model;
 		this.providerID = providerID;
 	}
 
 	async *chat(request: ChatRequest): AsyncIterable<StreamEvent> {
-		const partialToolCalls = new Map<number, { id: string; name: string; args: string }>();
+		const partialToolCalls = new Map<number, { id: string; name: string; args: string; thoughtSignature: string }>();
 		let emittedDone = false;
 		let stopReason: string | null = null;
 		let lastChunk: ChatCompletionChunk | null = null;
@@ -35,23 +53,23 @@ export class OpenAILLM implements LLM {
 		try {
 			const messages = toOpenAIMessages(request.systemPrompt, request.messages);
 			const tools = request.tools && request.tools.length > 0 ? toOpenAITools(request.tools) : undefined;
-			const params: Parameters<OpenAI['chat']['completions']['create']>[0] = {
+			const body: Record<string, unknown> = {
 				model: this.model,
 				messages,
 				stream: true,
 				stream_options: { include_usage: true },
+				...(tools ? { tools } : {}),
+				...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
+				...(request.maxTokens !== undefined ? { max_completion_tokens: request.maxTokens } : {}),
+				...(request.reasoning?.type === 'effort' && request.reasoning.effort !== 'none' && request.reasoning.effort !== 'xhigh'
+					? { reasoning_effort: mapReasoningEffort(request.reasoning.effort) }
+					: {}),
+				// Pass through custom reasoning param (e.g. OpenRouter)
+				...(request.reasoning && request.reasoning.type !== 'effort' ? { reasoning: request.reasoning } : {}),
+				...this.#extraBody,
 			};
-			if (tools) params.tools = tools;
-			if (request.temperature !== undefined) params.temperature = request.temperature;
-			if (request.maxTokens !== undefined) params.max_completion_tokens = request.maxTokens;
-			if (request.reasoning?.type === 'effort' && request.reasoning.effort !== 'none' && request.reasoning.effort !== 'xhigh') {
-				params.reasoning_effort = mapReasoningEffort(request.reasoning.effort);
-			}
 
-			const stream = await this.#client.chat.completions.create(
-				params,
-				request.signal ? { signal: request.signal } : undefined,
-			);
+			const stream = await this.#client.chat.completions.create((body as unknown) as Parameters<OpenAI['chat']['completions']['create']>[0], request.signal ? { signal: request.signal } : undefined);
 
 			for await (const chunk of stream as AsyncIterable<ChatCompletionChunk>) {
 				lastChunk = chunk;
@@ -69,10 +87,21 @@ export class OpenAILLM implements LLM {
 					if (delta?.tool_calls) {
 						for (const tc of delta.tool_calls) {
 							const idx = tc.index ?? 0;
-							const existing = partialToolCalls.get(idx) ?? { id: '', name: '', args: '' };
+							const existing = partialToolCalls.get(idx) ?? { id: '', name: '', args: '', thoughtSignature: '' };
 							if (tc.id) existing.id = tc.id;
 							if (tc.function?.name) existing.name = tc.function.name;
 							if (tc.function?.arguments) existing.args += tc.function.arguments;
+							// Some gateways (e.g. Cloudflare AI Gateway for Gemini) include a
+							// `thought_signature` field that must be preserved for tool calling
+							// to work correctly on subsequent turns.
+							const extra = tc as unknown as Record<string, unknown>;
+							if (typeof extra.thought_signature === 'string') {
+								existing.thoughtSignature = extra.thought_signature;
+							}
+							const fnExtra = tc.function as unknown as Record<string, unknown> | undefined;
+							if (typeof fnExtra?.thought_signature === 'string') {
+								existing.thoughtSignature = fnExtra.thought_signature;
+							}
 							partialToolCalls.set(idx, existing);
 							yield {
 								type: 'tool_call_delta',
@@ -87,19 +116,26 @@ export class OpenAILLM implements LLM {
 				}
 
 				if (chunk.usage) {
+					const u = chunk.usage as ChatCompletionChunk['usage'] & {
+						prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number } | null;
+						completion_tokens_details?: { reasoning_tokens?: number } | null;
+					};
 					yield {
 						type: 'usage',
 						usage: {
-							inputTokens: chunk.usage.prompt_tokens ?? 0,
-							outputTokens: chunk.usage.completion_tokens ?? 0,
+							inputTokens: u.prompt_tokens ?? 0,
+							outputTokens: u.completion_tokens ?? 0,
 							totalTokens:
-								chunk.usage.total_tokens ??
-								(chunk.usage.prompt_tokens ?? 0) + (chunk.usage.completion_tokens ?? 0),
-							...(chunk.usage.prompt_tokens_details?.cached_tokens != null
-								? { cacheReadInputTokens: chunk.usage.prompt_tokens_details.cached_tokens }
+								u.total_tokens ??
+								(u.prompt_tokens ?? 0) + (u.completion_tokens ?? 0),
+							...(u.prompt_tokens_details?.cached_tokens != null
+								? { cacheReadInputTokens: u.prompt_tokens_details.cached_tokens }
 								: {}),
-							...(chunk.usage.completion_tokens_details?.reasoning_tokens != null
-								? { thinkingTokens: chunk.usage.completion_tokens_details.reasoning_tokens }
+							...(u.prompt_tokens_details?.cache_write_tokens != null
+								? { cacheCreationInputTokens: u.prompt_tokens_details.cache_write_tokens }
+								: {}),
+							...(u.completion_tokens_details?.reasoning_tokens != null
+								? { thinkingTokens: u.completion_tokens_details.reasoning_tokens }
 								: {}),
 						},
 					};
@@ -118,19 +154,24 @@ export class OpenAILLM implements LLM {
 }
 
 function* finalizeToolCalls(
-	partial: Map<number, { id: string; name: string; args: string }>,
+	partial: Map<number, { id: string; name: string; args: string; thoughtSignature: string }>,
 ): IterableIterator<StreamEvent> {
 	for (const tc of partial.values()) {
 		if (!tc.id || !tc.name) continue;
-		let input: unknown = {};
+		let input: unknown;
 		try {
-			input = JSON.parse(tc.args || '{}');
+			input = JSON.parse(tc.args);
 		} catch {
 			input = { _raw: tc.args };
 		}
-		yield { type: 'tool_call', id: tc.id, name: tc.name, input };
+		yield {
+			type: 'tool_call',
+			id: tc.id,
+			name: tc.name,
+			input,
+			...(tc.thoughtSignature ? { thoughtSignature: tc.thoughtSignature } : {}),
+		};
 	}
-	partial.clear();
 }
 
 function mapReasoningEffort(effort: ReasoningEffort): 'minimal' | 'low' | 'medium' | 'high' {
@@ -174,11 +215,17 @@ function toOpenAIMessages(systemPrompt: string | undefined, messages: Message[])
 		const text = flattenToText(blocks);
 		const toolCalls = blocks
 			.filter((b): b is ContentBlock & { type: 'tool_use' } => b.type === 'tool_use')
-			.map((b) => ({
-				id: b.id,
-				type: 'function' as const,
-				function: { name: b.name, arguments: JSON.stringify(b.input ?? {}) },
-			}));
+			.map((b) => {
+				const call: Record<string, unknown> = {
+					id: b.id,
+					type: 'function',
+					function: { name: b.name, arguments: JSON.stringify(b.input ?? {}) },
+				};
+				if (b.thoughtSignature) {
+					call.thought_signature = b.thoughtSignature;
+				}
+				return call;
+			});
 		out.push({
 			role: 'assistant',
 			content: text || null,

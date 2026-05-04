@@ -5,29 +5,29 @@ import { createGetModelsTool } from './get_models';
 const ctx = { env, conversationId: 'c-1', assistantMessageId: 'a-1' };
 
 describe('createGetModelsTool', () => {
-	it('reports the current parent-agent model and the curated list', async () => {
+	it('reports the current parent-agent model and the configured models', async () => {
 		const tool = createGetModelsTool({
-			currentModel: 'a/model-1',
+			currentModel: 'openrouter/anthropic/claude-sonnet-4',
 			availableModels: [
-				{ slug: 'a/model-1', label: 'Model One' },
-				{ slug: 'b/model-2', label: 'Model Two' },
+				{ id: 'anthropic/claude-sonnet-4', providerId: 'openrouter', name: 'Claude Sonnet 4', createdAt: 0, updatedAt: 0, maxContextLength: 200_000, description: null, reasoningType: 'max_tokens', sortOrder: 0 },
+				{ id: 'openai/gpt-5.5', providerId: 'openrouter', name: 'GPT-5.5', createdAt: 0, updatedAt: 0, maxContextLength: 128_000, description: null, reasoningType: 'effort', sortOrder: 0 },
 			],
 		});
 		const result = await tool.execute(ctx, {});
 		expect(result.isError).toBeFalsy();
-		expect(result.content).toContain('Current model (parent agent): a/model-1');
-		expect(result.content).toContain('a/model-1 (Model One) [current]');
-		expect(result.content).toContain('b/model-2 (Model Two)');
-		expect(result.content).not.toMatch(/b\/model-2[^\n]*\[current\]/);
+		expect(result.content).toContain('Current model (parent agent): openrouter/anthropic/claude-sonnet-4');
+		expect(result.content).toContain('openrouter/anthropic/claude-sonnet-4 (Claude Sonnet 4) [current]');
+		expect(result.content).toContain('openrouter/openai/gpt-5.5 (GPT-5.5)');
+		expect(result.content).not.toMatch(/openrouter\/openai\/gpt-5\.5[^\n]*\[current\]/);
 	});
 
-	it('omits the parenthesised label when slug == label', async () => {
+	it('omits the parenthesised label when id == name', async () => {
 		const tool = createGetModelsTool({
-			currentModel: 'm',
-			availableModels: [{ slug: 'm', label: 'm' }],
+			currentModel: 'p/m',
+			availableModels: [{ id: 'm', providerId: 'p', name: 'm', createdAt: 0, updatedAt: 0, maxContextLength: 128_000, description: null, reasoningType: null, sortOrder: 0 }],
 		});
 		const result = await tool.execute(ctx, {});
-		expect(result.content).toContain('- m [current]');
+		expect(result.content).toContain('- p/m [current]');
 		expect(result.content).not.toContain('(m)');
 	});
 
@@ -35,7 +35,7 @@ describe('createGetModelsTool', () => {
 		const tool = createGetModelsTool({ currentModel: 'p', availableModels: [] });
 		const result = await tool.execute(ctx, {});
 		expect(result.content).toContain('Current model (parent agent): p');
-		expect(result.content).toContain('No curated model list configured.');
+		expect(result.content).toContain('No models configured.');
 	});
 
 	it('exposes a no-input schema', () => {

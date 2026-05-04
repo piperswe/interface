@@ -1,6 +1,6 @@
-import { getModelContextWindow } from '../openrouter/models';
 import { getContextCompactionThreshold, getContextCompactionSummaryTokens } from '../settings';
-import { routeLLM } from './route';
+import { getResolvedModel } from '../providers/models';
+import { routeLLMByGlobalId } from './route';
 import type LLM from './LLM';
 import type { Message } from './LLM';
 
@@ -55,13 +55,13 @@ export type CompactionUsage = {
 };
 
 export type CompactionDeps = {
-	// LLM factory; defaults to `routeLLM`. Tests inject a fake.
-	llm?: (env: Env, model: string) => LLM;
+	// LLM factory; defaults to `routeLLMByGlobalId`. Tests inject a fake.
+	llm?: (env: Env, globalId: string) => Promise<LLM>;
 };
 
 export async function compactHistory(
 	messages: Message[],
-	model: string,
+	modelGlobalId: string,
 	env: Env,
 	lastUsage: CompactionUsage | null,
 	deps: CompactionDeps = {},
@@ -71,7 +71,8 @@ export async function compactHistory(
 		return { messages, wasCompacted: false, summary: null, droppedCount: 0 };
 	}
 
-	const contextWindow = await getModelContextWindow(env, model);
+	const resolved = await getResolvedModel(env, modelGlobalId);
+	const contextWindow = resolved?.model.maxContextLength ?? 128_000;
 	const summaryTokens = await getContextCompactionSummaryTokens(env);
 	const maxAllowed = Math.floor(contextWindow * (threshold / 100));
 
@@ -117,7 +118,7 @@ export async function compactHistory(
 
 	let summary: string;
 	try {
-		const llm = (deps.llm ?? routeLLM)(env, model);
+		const llm = await (deps.llm ?? routeLLMByGlobalId)(env, modelGlobalId);
 		let buf = '';
 		for await (const ev of llm.chat({
 			messages: [

@@ -1,6 +1,15 @@
 <script lang="ts">
 	import type { PageData } from './$types';
 	import {
+		saveProvider,
+		deleteProviderAction,
+		saveProviderModel,
+		deleteProviderModel,
+		reorderProviderModel,
+		addPresetProvider,
+		fetchPresetModels,
+	} from '$lib/providers.remote';
+	import {
 		saveSetting,
 		addMcpServer,
 		removeMcpServer,
@@ -11,7 +20,7 @@
 	import { confirmSubmit, justSubmit } from '$lib/form-actions';
 	import { page } from '$app/state';
 	import { untrack } from 'svelte';
-	import type { ReasoningType } from '$lib/server/models/config';
+	import type { ProviderType, ReasoningType } from '$lib/server/providers/types';
 
 	let { data }: { data: PageData } = $props();
 	const theme = $derived(page.data.theme as 'system' | 'light' | 'dark');
@@ -19,514 +28,430 @@
 	const themeForm = saveSetting.for('theme');
 	const systemPromptForm = saveSetting.for('system_prompt');
 	const userBioForm = saveSetting.for('user_bio');
-	const modelListForm = saveSetting.for('model_list');
 	const thresholdForm = saveSetting.for('context_compaction_threshold');
 	const summaryTokensForm = saveSetting.for('context_compaction_summary_tokens');
+	const defaultModelForm = saveSetting.for('default_model');
 
-	let models = $state(untrack(() => data.modelList.map((m) => ({ slug: m.slug, label: m.label, reasoning: m.reasoning as ReasoningType | undefined }))));
+	// Provider form state
+	let showAddProvider = $state(false);
+	let newProviderId = $state('');
+	let newProviderType = $state<ProviderType>('openai_compatible');
+	let newProviderApiKey = $state('');
+	let newProviderEndpoint = $state('');
+	let newProviderGatewayId = $state('');
 
-	const serializedModels = $derived(
-		JSON.stringify(
-			models
-				.filter((m) => m.slug.trim())
-				.map((m) => {
-					const entry: { slug: string; label: string; reasoning?: ReasoningType } = {
-						slug: m.slug.trim(),
-						label: m.label.trim(),
-					};
-					if (m.reasoning) entry.reasoning = m.reasoning;
-					return entry;
-				}),
-			null,
-			2,
-		),
-	);
+	// Preset form state
+	let selectedPreset = $state('');
+	let presetProviderId = $state('');
+	let presetApiKey = $state('');
+	let presetAccountId = $state('');
+	let presetGatewayId = $state('');
+	let fetchedPresetModels: { id: string; name: string }[] = $state([]);
+	let selectedPresetModels = $state<Set<string>>(new Set());
 
-	function addModel() {
-		models.push({ slug: '', label: '', reasoning: undefined });
-	}
+	// Model form state
+	let addModelProviderId = $state<string | null>(null);
+	let newModelId = $state('');
+	let newModelName = $state('');
+	let newModelDescription = $state('');
+	let newModelContextLength = $state(128_000);
+	let newModelReasoning = $state<ReasoningType | ''>('');
 
-	function removeModel(i: number) {
-		models.splice(i, 1);
-	}
-
-	function moveUp(i: number) {
-		if (i > 0) {
-			const tmp = models[i - 1];
-			models[i - 1] = models[i];
-			models[i] = tmp;
-		}
-	}
-
-	function moveDown(i: number) {
-		if (i < models.length - 1) {
-			const tmp = models[i + 1];
-			models[i + 1] = models[i];
-			models[i] = tmp;
-		}
-	}
-
-	function resetToDefaults() {
-		models = data.defaultModelList.map((m) => ({
-			slug: m.slug,
-			label: m.label,
-			reasoning: m.reasoning as ReasoningType | undefined,
-		}));
-	}
+	// Provider edit state
+	let editProviderId = $state<string | null>(null);
 
 	const deleteServer = (name: string) => confirmSubmit(`Delete MCP server "${name}"?`);
 	const deleteSubAgentBy = (name: string) => confirmSubmit(`Delete sub-agent "${name}"?`);
+
+	async function onFetchPresetModels() {
+		if (!selectedPreset) return;
+		try {
+			const models = await fetchPresetModels({ preset_id: selectedPreset, api_key: presetApiKey });
+			fetchedPresetModels = models.map((m) => ({ id: m.id, name: m.name }));
+			selectedPresetModels = new Set(models.map((m) => m.id));
+		} catch {
+			fetchedPresetModels = [];
+		}
+	}
+
+	function togglePresetModel(id: string) {
+		const next = new Set(selectedPresetModels);
+		if (next.has(id)) next.delete(id);
+		else next.add(id);
+		selectedPresetModels = next;
+	}
+
+	function resetPresetForm() {
+		selectedPreset = '';
+		presetProviderId = '';
+		presetApiKey = '';
+		presetAccountId = '';
+		presetGatewayId = '';
+		fetchedPresetModels = [];
+		selectedPresetModels = new Set();
+	}
+
+	function providerTypeLabel(type: ProviderType): string {
+		switch (type) {
+			case 'anthropic':
+				return 'Anthropic';
+			case 'openai_compatible':
+				return 'OpenAI-compatible';
+		}
+	}
 </script>
 
-<svelte:head>
-	<title>Settings</title>
-</svelte:head>
+<div class="settings container py-4">
+	<h1 class="mb-4">Settings</h1>
 
-<div class="settings-layout d-flex flex-column gap-4 mx-auto w-100 p-3 overflow-auto">
-	<h1 class="settings-title fs-3 fw-medium m-0">Settings</h1>
-
-	<section class="settings-section border rounded p-3 bg-body" aria-labelledby="appearance">
-		<h2 id="appearance" class="fs-6 fw-semibold m-0 mb-2">Appearance</h2>
-		<form {...themeForm.enhance(justSubmit)}>
+	<!-- Theme -->
+	<section class="mb-4">
+		<h2 class="h5">Theme</h2>
+		<form {...themeForm.enhance(justSubmit)} class="d-flex gap-2 align-items-center">
 			<input type="hidden" name="key" value="theme" />
-			<label for="theme-select" class="form-label">Theme</label>
-			<div class="d-flex gap-2">
-				<select id="theme-select" name="value" class="form-select" style="width: auto" value={theme}>
-					<option value="system">System</option>
-					<option value="light">Light</option>
-					<option value="dark">Dark</option>
-				</select>
-				<button type="submit" class="btn btn-primary">Save</button>
-			</div>
+			<select name="value" class="form-select form-select-sm w-auto" value={theme}>
+				<option value="system">System</option>
+				<option value="light">Light</option>
+				<option value="dark">Dark</option>
+			</select>
+			<button type="submit" class="btn btn-sm btn-primary">Save</button>
 		</form>
 	</section>
 
-	<section class="settings-section border rounded p-3 bg-body" aria-labelledby="secrets">
-		<h2 id="secrets" class="fs-6 fw-semibold m-0 mb-2">Secrets</h2>
-		<p class="text-muted small m-0 mb-2">
-			API keys and sensitive values are stored as Worker secrets. Edit with
-			<code>npx wrangler secret put NAME</code>.
-		</p>
-		<dl>
-			{#each data.secretKeys as s (s.name)}
-				<div class="d-grid" style="grid-template-columns: max-content 1fr; gap: 0.15rem 0.75rem">
-					<dt><code>{s.name}</code></dt>
-					<dd>
-						<span class="badge {s.configured ? 'ok' : 'missing'}">
-							{s.configured ? 'configured' : 'not configured'}
-						</span>
-					</dd>
-				</div>
+	<!-- Secrets -->
+	<section class="mb-4">
+		<h2 class="h5">Worker secrets</h2>
+		<ul class="list-group">
+			{#each data.secretKeys as s}
+				<li class="list-group-item d-flex justify-content-between align-items-center">
+					<code>{s.name}</code>
+					<span class="badge {s.configured ? 'text-bg-success' : 'text-bg-secondary'}">
+						{s.configured ? 'Configured' : 'Not configured'}
+					</span>
+				</li>
 			{/each}
-		</dl>
+		</ul>
 	</section>
 
-	<section class="settings-section border rounded p-3 bg-body" aria-labelledby="mcp-servers">
-		<h2 id="mcp-servers" class="fs-6 fw-semibold m-0 mb-2">MCP servers</h2>
-		<p class="text-muted small m-0 mb-2">
-			HTTP and SSE MCP servers are queried for tools at the start of each
-			generation. Stdio transport ships in a later phase.
-		</p>
-		{#if data.mcpServers.length === 0}
-			<div class="empty">No MCP servers configured.</div>
-		{:else}
-			<ul class="list-unstyled d-flex flex-column gap-2 m-0 p-0">
-				{#each data.mcpServers as s (s.id)}
-					<li class="d-flex align-items-center justify-content-between gap-2 flex-wrap border rounded p-2">
-						<div class="min-vw-0 flex-fill">
-							<div class="fw-medium">
-								{s.name}
-								<span class="badge {s.enabled ? 'ok' : 'missing'}">
-									{s.enabled ? 'enabled' : 'disabled'}
-								</span>
+	<!-- Providers & Models -->
+	<section class="mb-4">
+		<h2 class="h5">Providers & Models</h2>
+
+		{#each data.providers as p}
+			<div class="card mb-3">
+				<div class="card-header d-flex justify-content-between align-items-center">
+					<div>
+						<strong>{p.id}</strong>
+						<span class="badge text-bg-info ms-2">{providerTypeLabel(p.type)}</span>
+					</div>
+					<div class="d-flex gap-2">
+						<button type="button" class="btn btn-sm btn-outline-secondary" onclick={() => (editProviderId = p.id)}>Edit</button>
+						<form {...deleteProviderAction.for(p.id).enhance(confirmSubmit(`Delete provider "${p.id}"?`))}>
+							<input type="hidden" name="id" value={p.id} />
+							<button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+						</form>
+					</div>
+				</div>
+				<div class="card-body">
+					{#if editProviderId === p.id}
+						<form {...saveProvider.for(p.id).enhance(justSubmit)} class="mb-3">
+							<input type="hidden" name="id" value={p.id} />
+							<input type="hidden" name="type" value={p.type} />
+							<div class="mb-2">
+								<input name="api_key" value={p.apiKey ?? ''} placeholder="API key" class="form-control form-control-sm" />
 							</div>
-							<div class="text-muted small text-break">
-								{s.transport.toUpperCase()} · {s.url ?? s.command ?? '—'}
+							<div class="mb-2">
+								<input name="endpoint" value={p.endpoint ?? ''} placeholder="Endpoint" class="form-control form-control-sm" />
 							</div>
+							<div class="d-flex gap-2">
+								<button type="submit" class="btn btn-sm btn-primary">Save</button>
+								<button type="button" class="btn btn-sm btn-outline-secondary" onclick={() => (editProviderId = null)}>Cancel</button>
+							</div>
+						</form>
+					{:else}
+						{#if p.endpoint}
+							<div class="small text-muted mb-2">Endpoint: {p.endpoint}</div>
+						{/if}
+					{/if}
+
+					<h6 class="mt-3">Models</h6>
+					<ul class="list-group list-group-flush">
+					{#each data.models.filter((m) => m.providerId === p.id).sort((a, b) => a.sortOrder - b.sortOrder) as m, i (m.id)}
+						{@const providerModels = data.models.filter((x) => x.providerId === p.id).sort((a, b) => a.sortOrder - b.sortOrder)}
+						<li class="list-group-item d-flex justify-content-between align-items-center">
+							<div>
+								<code>{m.id}</code>
+								{#if m.name !== m.id}<span class="ms-2">{m.name}</span>{/if}
+								{#if m.reasoningType}
+									<span class="badge text-bg-secondary ms-1">{m.reasoningType}</span>
+								{/if}
+								{#if data.defaultModel === `${p.id}/${m.id}`}
+									<span class="badge text-bg-success ms-1">Default</span>
+								{/if}
+							</div>
+							<div class="d-flex align-items-center gap-2">
+								<form {...reorderProviderModel.for(`${p.id}-${m.id}`).enhance(justSubmit)} class="m-0">
+									<input type="hidden" name="provider_id" value={p.id} />
+									<input type="hidden" name="model_id" value={m.id} />
+									<input type="hidden" name="direction" value="up" />
+									<button type="submit" class="btn btn-sm btn-link p-0" disabled={i === 0} title="Move up">&#8593;</button>
+								</form>
+								<form {...reorderProviderModel.for(`${p.id}-${m.id}-down`).enhance(justSubmit)} class="m-0">
+									<input type="hidden" name="provider_id" value={p.id} />
+									<input type="hidden" name="model_id" value={m.id} />
+									<input type="hidden" name="direction" value="down" />
+									<button type="submit" class="btn btn-sm btn-link p-0" disabled={i === providerModels.length - 1} title="Move down">&#8595;</button>
+								</form>
+								{#if data.defaultModel !== `${p.id}/${m.id}`}
+									<form {...defaultModelForm.enhance(justSubmit)} class="m-0">
+										<input type="hidden" name="key" value="default_model" />
+										<input type="hidden" name="value" value={`${p.id}/${m.id}`} />
+										<button type="submit" class="btn btn-sm btn-link p-0" title="Set as default">&#9733;</button>
+									</form>
+								{/if}
+								<form {...deleteProviderModel.for(`${p.id}-${m.id}`).enhance(confirmSubmit('Delete this model?'))}>
+									<input type="hidden" name="provider_id" value={p.id} />
+									<input type="hidden" name="model_id" value={m.id} />
+									<button type="submit" class="btn btn-sm btn-link text-danger">Remove</button>
+								</form>
+							</div>
+						</li>
+					{/each}
+					</ul>
+
+					{#if addModelProviderId === p.id}
+						<form {...saveProviderModel.enhance(justSubmit)} class="mt-3 border rounded p-3">
+							<input type="hidden" name="provider_id" value={p.id} />
+							<div class="mb-2">
+								<input name="model_id" bind:value={newModelId} placeholder="Model ID (sent to API)" class="form-control form-control-sm" required />
+							</div>
+							<div class="mb-2">
+								<input name="name" bind:value={newModelName} placeholder="Display name" class="form-control form-control-sm" required />
+							</div>
+							<div class="mb-2">
+								<input name="description" bind:value={newModelDescription} placeholder="Description (optional)" class="form-control form-control-sm" />
+							</div>
+							<div class="row g-2 mb-2">
+								<div class="col">
+									<input name="max_context_length" type="number" bind:value={newModelContextLength} placeholder="Context length" class="form-control form-control-sm" />
+								</div>
+								<div class="col">
+									<select name="reasoning_type" class="form-select form-select-sm" bind:value={newModelReasoning}>
+										<option value="">No reasoning</option>
+										<option value="effort">Effort-based</option>
+										<option value="max_tokens">Max tokens</option>
+									</select>
+								</div>
+							</div>
+							<div class="d-flex gap-2">
+								<button type="submit" class="btn btn-sm btn-primary">Save model</button>
+								<button type="button" class="btn btn-sm btn-outline-secondary" onclick={() => (addModelProviderId = null)}>Cancel</button>
+							</div>
+						</form>
+					{:else}
+						<button type="button" class="btn btn-sm btn-outline-primary mt-2" onclick={() => { addModelProviderId = p.id; newModelId = ''; newModelName = ''; newModelDescription = ''; newModelContextLength = 128_000; newModelReasoning = ''; }}>+ Add model</button>
+					{/if}
+				</div>
+			</div>
+		{/each}
+
+		<!-- Add provider from scratch -->
+		{#if showAddProvider}
+			<div class="card mb-3">
+				<div class="card-header">Add provider</div>
+				<div class="card-body">
+					<form {...saveProvider.enhance(justSubmit)}>
+						<div class="mb-2">
+							<input name="id" bind:value={newProviderId} placeholder="Provider ID (e.g. openrouter)" class="form-control form-control-sm" required pattern="[a-z][a-z0-9_-]*" />
 						</div>
-						<form {...removeMcpServer.for(s.id).enhance(deleteServer(s.name))}>
+						<div class="mb-2">
+							<select name="type" class="form-select form-select-sm" bind:value={newProviderType}>
+								<option value="openai_compatible">OpenAI-compatible</option>
+								<option value="anthropic">Anthropic</option>
+							</select>
+						</div>
+						<div class="mb-2">
+							<input name="api_key" bind:value={newProviderApiKey} placeholder="API key" class="form-control form-control-sm" />
+						</div>
+						{#if newProviderType === 'openai_compatible'}
+							<div class="mb-2">
+								<input name="endpoint" bind:value={newProviderEndpoint} placeholder="Endpoint (default: https://api.openai.com/v1)" class="form-control form-control-sm" />
+							</div>
+						{/if}
+						<div class="d-flex gap-2">
+							<button type="submit" class="btn btn-sm btn-primary">Add provider</button>
+							<button type="button" class="btn btn-sm btn-outline-secondary" onclick={() => (showAddProvider = false)}>Cancel</button>
+						</div>
+					</form>
+				</div>
+			</div>
+		{:else}
+			<button type="button" class="btn btn-outline-primary mb-3" onclick={() => (showAddProvider = true)}>+ Add provider</button>
+		{/if}
+
+		<!-- Add from preset -->
+		<div class="card">
+			<div class="card-header">Add from preset</div>
+			<div class="card-body">
+				<div class="mb-2">
+					<select class="form-select form-select-sm" bind:value={selectedPreset}>
+						<option value="">Choose a preset...</option>
+						{#each data.presets as preset}
+							<option value={preset.id}>{preset.label}</option>
+						{/each}
+					</select>
+				</div>
+				{#if selectedPreset}
+					<div class="mb-2">
+						<input bind:value={presetProviderId} placeholder="Provider ID" class="form-control form-control-sm" required />
+					</div>
+					<div class="mb-2">
+						<input bind:value={presetApiKey} placeholder="API key" class="form-control form-control-sm" />
+					</div>
+					{#if selectedPreset === 'ai-gateway' || selectedPreset === 'workers-ai'}
+						<div class="mb-2">
+							<input bind:value={presetAccountId} placeholder="Cloudflare Account ID" class="form-control form-control-sm" required />
+						</div>
+					{/if}
+					{#if selectedPreset === 'ai-gateway'}
+						<div class="mb-2">
+							<input bind:value={presetGatewayId} placeholder="Gateway ID" class="form-control form-control-sm" required />
+						</div>
+					{/if}
+					{#if data.presets.find((p) => p.id === selectedPreset)?.canFetchModels}
+						<button type="button" class="btn btn-sm btn-outline-secondary mb-2" onclick={onFetchPresetModels}>Fetch models</button>
+						{#if fetchedPresetModels.length > 0}
+							<div class="mb-2" style="max-height: 200px; overflow-y: auto;">
+								{#each fetchedPresetModels as m}
+									<label class="d-flex align-items-center gap-2 p-1">
+										<input type="checkbox" checked={selectedPresetModels.has(m.id)} onchange={() => togglePresetModel(m.id)} />
+										<span class="small">{m.name}</span>
+									</label>
+								{/each}
+							</div>
+						{/if}
+					{:else}
+						<div class="small text-muted mb-2">
+							This preset includes {data.presets.find((p) => p.id === selectedPreset)?.defaultModels.length ?? 0} curated models.
+						</div>
+					{/if}
+					<form {...addPresetProvider.enhance(justSubmit)}>
+						<input type="hidden" name="id" value={selectedPreset} />
+						<input type="hidden" name="provider_id" value={presetProviderId} />
+						<input type="hidden" name="api_key" value={presetApiKey} />
+						{#if selectedPreset === 'ai-gateway'}
+							<input type="hidden" name="endpoint" value={`https://gateway.ai.cloudflare.com/v1/${presetAccountId}/${presetGatewayId}/compat`} />
+						{:else if selectedPreset === 'workers-ai'}
+							<input type="hidden" name="endpoint" value={`https://api.cloudflare.com/client/v4/accounts/${presetAccountId}/ai/v1`} />
+						{/if}
+						<input type="hidden" name="model_ids" value={Array.from(selectedPresetModels).join(',')} />
+						<button type="submit" class="btn btn-sm btn-primary">Add preset provider</button>
+						<button type="button" class="btn btn-sm btn-outline-secondary" onclick={resetPresetForm}>Cancel</button>
+					</form>
+				{/if}
+			</div>
+		</div>
+	</section>
+
+	<!-- MCP Servers -->
+	<section class="mb-4">
+		<h2 class="h5">MCP Servers</h2>
+		{#if data.mcpServers.length === 0}
+			<p class="text-muted">No MCP servers configured.</p>
+		{:else}
+			<ul class="list-group">
+				{#each data.mcpServers as s}
+					<li class="list-group-item d-flex justify-content-between align-items-center">
+						<div>
+							<strong>{s.name}</strong>
+							<span class="badge text-bg-secondary ms-1">{s.transport}</span>
+						</div>
+							<form {...removeMcpServer.for(s.id).enhance(confirmSubmit(`Delete server "${s.name}"?`))}>
 							<input type="hidden" name="id" value={s.id} />
-							<button type="submit" class="btn btn-sm btn-outline-secondary">Delete</button>
+							<button type="submit" class="btn btn-sm btn-link text-danger">Delete</button>
 						</form>
 					</li>
 				{/each}
 			</ul>
 		{/if}
-		<details class="mt-3">
-			<summary class="d-flex align-items-center" style="cursor: pointer; min-height: var(--tap-target)">
-				Add server
-			</summary>
-			<form
-				{...addMcpServer.enhance(justSubmit)}
-				class="d-flex flex-column gap-2 mt-2"
-			>
-				<label class="form-label">
-					Name
-					<input type="text" name="name" required class="form-control" />
-				</label>
-				<label class="form-label">
-					Transport
-					<select name="transport" class="form-select">
-						<option value="http">HTTP</option>
-						<option value="sse">SSE</option>
-					</select>
-				</label>
-				<label class="form-label">
-					URL
-					<input type="url" name="url" required class="form-control" />
-				</label>
-				<label class="form-label">
-					Auth headers (JSON, optional)
-					<input
-						type="text"
-						name="auth_json"
-						placeholder={'{"Authorization":"Bearer …"}'}
-						class="form-control"
-					/>
-				</label>
-				<button type="submit" class="btn btn-primary">Save</button>
-			</form>
-		</details>
+		<form {...addMcpServer.enhance(justSubmit)} class="mt-2 d-flex gap-2">
+			<input name="name" placeholder="Name" class="form-control form-control-sm" required />
+			<select name="transport" class="form-select form-select-sm w-auto">
+				<option value="http">HTTP</option>
+				<option value="sse">SSE</option>
+			</select>
+			<input name="url" placeholder="URL" class="form-control form-control-sm" required />
+			<button type="submit" class="btn btn-sm btn-primary">Add</button>
+		</form>
 	</section>
 
-	<section class="settings-section border rounded p-3 bg-body" aria-labelledby="sub-agents">
-		<h2 id="sub-agents" class="fs-6 fw-semibold m-0 mb-2">Sub-agents</h2>
-		<p class="text-muted small m-0 mb-2">
-			Specialised agents the main conversation can delegate to via the built-in
-			<code>agent</code> tool. Each sub-agent runs its own LLM loop with a custom
-			system prompt and a curated subset of tools, then returns a single text
-			answer to the parent.
-		</p>
+	<!-- Sub-agents -->
+	<section class="mb-4">
+		<h2 class="h5">Sub-agents</h2>
 		{#if data.subAgents.length === 0}
-			<div class="empty">No sub-agents configured.</div>
+			<p class="text-muted">No sub-agents configured.</p>
 		{:else}
-			<ul class="list-unstyled d-flex flex-column gap-2 m-0 p-0">
-				{#each data.subAgents as a (a.id)}
-					<li class="d-flex flex-column gap-1 border rounded p-2">
-						<div class="d-flex align-items-center gap-2 flex-wrap">
-							<span class="fw-medium"><code>{a.name}</code></span>
-							<span class="badge {a.enabled ? 'ok' : 'missing'}">
-								{a.enabled ? 'enabled' : 'disabled'}
-							</span>
-							<span class="flex-fill"></span>
-							<form {...toggleSubAgent.for(a.id).enhance(justSubmit)}>
-								<input type="hidden" name="id" value={a.id} />
-								<input type="hidden" name="enabled" value={a.enabled ? 'false' : 'true'} />
-								<button type="submit" class="btn btn-sm btn-outline-secondary">{a.enabled ? 'Disable' : 'Enable'}</button>
+			<ul class="list-group">
+				{#each data.subAgents as sa}
+					<li class="list-group-item d-flex justify-content-between align-items-center">
+						<div class="d-flex align-items-center gap-2">
+							<form {...toggleSubAgent.for(sa.id).enhance(justSubmit)} class="m-0">
+								<input type="hidden" name="id" value={sa.id} />
+								<input type="hidden" name="enabled" value={String(!sa.enabled)} />
+								<button type="submit" class="btn btn-sm btn-link p-0">{sa.enabled ? 'On' : 'Off'}</button>
 							</form>
-							<form {...removeSubAgent.for(a.id).enhance(deleteSubAgentBy(a.name))}>
-								<input type="hidden" name="id" value={a.id} />
-								<button type="submit" class="btn btn-sm btn-outline-secondary">Delete</button>
-							</form>
+							<strong>{sa.name}</strong>
 						</div>
-						<div class="text-muted small">{a.description}</div>
-						<div class="text-muted small">
-							{a.model ?? 'inherits parent model'}
-							· iterations: {a.maxIterations ?? 'default'}
-							· tools: {a.allowedTools ? a.allowedTools.join(', ') : 'all built-in'}
-						</div>
+							<form {...removeSubAgent.for(sa.id).enhance(async ({ submit }) => { if (!confirm(`Delete sub-agent "${sa.name}"?`)) return; await submit(); })}>
+							<input type="hidden" name="id" value={sa.id} />
+							<button type="submit" class="btn btn-sm btn-link text-danger">Delete</button>
+						</form>
 					</li>
 				{/each}
 			</ul>
 		{/if}
-		<details class="mt-3">
-			<summary class="d-flex align-items-center" style="cursor: pointer; min-height: var(--tap-target)">
-				Add sub-agent
-			</summary>
-			<form
-				{...addSubAgent.enhance(justSubmit)}
-				class="d-flex flex-column gap-2 mt-2"
-			>
-				<label class="form-label">
-					Name
-					<input
-						type="text"
-						name="name"
-						required
-						placeholder="researcher"
-						pattern="[a-z][a-z0-9_-]{'0,63'}"
-						class="form-control"
-					/>
-					<small class="text-muted d-block">
-						Lowercase letters, digits, <code>_</code> and <code>-</code>. Must start with a letter.
-					</small>
-				</label>
-				<label class="form-label">
-					Description (when to invoke)
-					<input
-						type="text"
-						name="description"
-						required
-						placeholder="Use to research a topic across multiple sources and produce a citation-backed summary."
-						class="form-control"
-					/>
-				</label>
-				<label class="form-label">
-					System prompt
-					<textarea
-						name="system_prompt"
-						rows="4"
-						required
-						placeholder="You are a research specialist. Gather facts from authoritative sources, cite each claim, and respond with a concise summary."
-						class="form-control"
-					></textarea>
-				</label>
-				<label class="form-label">
-					Model (optional — leave blank to inherit the parent's model)
-					<input
-						type="text"
-						name="model"
-						placeholder="anthropic/claude-haiku-4.5"
-						class="form-control"
-					/>
-				</label>
-				<label class="form-label">
-					Max iterations (optional — default 5)
-					<input
-						type="number"
-						name="max_iterations"
-						min="1"
-						max="50"
-						placeholder="5"
-						class="form-control"
-						style="width: 6rem"
-					/>
-				</label>
-				<label class="form-label">
-					Allowed tools (comma- or space-separated; leave blank for all built-in tools)
-					<input
-						type="text"
-						name="allowed_tools"
-						placeholder="web_search, fetch_url"
-						class="form-control"
-					/>
-					<small class="text-muted d-block">
-						Sub-agents can never call the <code>agent</code> tool itself.
-					</small>
-				</label>
-				<button type="submit" class="btn btn-primary">Save</button>
-			</form>
-		</details>
+		<form {...addSubAgent.enhance(justSubmit)} class="mt-2 d-flex flex-column gap-2">
+			<input name="name" placeholder="Name" class="form-control form-control-sm" required />
+			<input name="description" placeholder="Description" class="form-control form-control-sm" required />
+			<input name="system_prompt" placeholder="System prompt" class="form-control form-control-sm" required />
+			<button type="submit" class="btn btn-sm btn-primary">Add sub-agent</button>
+		</form>
 	</section>
 
-	<section class="settings-section border rounded p-3 bg-body" aria-labelledby="system-prompt">
-		<h2 id="system-prompt" class="fs-6 fw-semibold m-0 mb-2">System prompt</h2>
-		<p class="text-muted small m-0 mb-2">
-			Injected as a system message at the start of every chat. Leave blank to use the default.
-		</p>
+	<!-- System prompt -->
+	<section class="mb-4">
+		<h2 class="h5">System prompt</h2>
 		<form {...systemPromptForm.enhance(justSubmit)}>
 			<input type="hidden" name="key" value="system_prompt" />
-			<textarea
-				name="value"
-				rows="5"
-				value={data.systemPrompt}
-				placeholder="You are Interface, an AI agent designed to serve as an interface between users and complex computer systems."
-				class="form-control"
-			></textarea>
-			<button type="submit" class="btn btn-primary mt-2">Save</button>
+			<textarea name="value" class="form-control" rows="6">{data.systemPrompt}</textarea>
+			<button type="submit" class="btn btn-sm btn-primary mt-2">Save</button>
 		</form>
 	</section>
 
-	<section class="settings-section border rounded p-3 bg-body" aria-labelledby="user-bio">
-		<h2 id="user-bio" class="fs-6 fw-semibold m-0 mb-2">User bio</h2>
-		<p class="text-muted small m-0 mb-2">
-			Appended to the system message to give the AI context about you.
-		</p>
+	<!-- User bio -->
+	<section class="mb-4">
+		<h2 class="h5">User bio</h2>
 		<form {...userBioForm.enhance(justSubmit)}>
 			<input type="hidden" name="key" value="user_bio" />
-			<textarea
-				name="value"
-				rows="4"
-				value={data.userBio}
-				placeholder="Tell the AI about yourself…"
-				class="form-control"
-			></textarea>
-			<button type="submit" class="btn btn-primary mt-2">Save</button>
+			<textarea name="value" class="form-control" rows="4">{data.userBio}</textarea>
+			<button type="submit" class="btn btn-sm btn-primary mt-2">Save</button>
 		</form>
 	</section>
 
-	<section class="settings-section border rounded p-3 bg-body" aria-labelledby="model-list">
-		<h2 id="model-list" class="fs-6 fw-semibold m-0 mb-2">Model list</h2>
-		<p class="text-muted small m-0 mb-2">
-			Models available in the composer dropdown.
-		</p>
-		<form {...modelListForm.enhance(justSubmit)}>
-			<input type="hidden" name="key" value="model_list" />
-			<input type="hidden" name="value" value={serializedModels} />
-			{#if models.length > 0}
-				<div class="d-flex flex-column gap-1">
-					<div class="model-grid-header">
-						<span class="small text-muted">Slug</span>
-						<span class="small text-muted">Label</span>
-						<span class="small text-muted">Reasoning</span>
-						<span></span><span></span><span></span>
-					</div>
-					{#each models as model, i (i)}
-						<div class="model-grid-row">
-							<input
-								type="text"
-								placeholder="provider/model-slug"
-								bind:value={model.slug}
-								aria-label="Model slug"
-								class="form-control form-control-sm"
-								style="font-family: monospace"
-							/>
-							<input
-								type="text"
-								placeholder="Display name"
-								bind:value={model.label}
-								aria-label="Model label"
-								class="form-control form-control-sm"
-							/>
-							<select bind:value={model.reasoning} aria-label="Reasoning type" class="form-select form-select-sm">
-								<option value={undefined}>Auto</option>
-								<option value="max_tokens">max_tokens</option>
-								<option value="effort">effort</option>
-							</select>
-							<button
-								type="button"
-								onclick={() => moveUp(i)}
-								disabled={i === 0}
-								title="Move up"
-								aria-label="Move up"
-								class="btn btn-sm btn-outline-secondary"
-							>↑</button>
-							<button
-								type="button"
-								onclick={() => moveDown(i)}
-								disabled={i === models.length - 1}
-								title="Move down"
-								aria-label="Move down"
-								class="btn btn-sm btn-outline-secondary"
-							>↓</button>
-							<button
-								type="button"
-								onclick={() => removeModel(i)}
-								title="Remove model"
-								aria-label="Remove model"
-								class="btn btn-sm btn-outline-secondary"
-							>×</button>
-						</div>
-					{/each}
-				</div>
-			{:else}
-				<p class="text-muted fst-italic m-0 mt-1 mb-2">No models — saving will restore defaults.</p>
-			{/if}
-			<div class="d-flex gap-2 mt-3 flex-wrap">
-				<button type="button" class="btn btn-outline-secondary" onclick={addModel}>+ Add model</button>
-				<button type="button" class="btn btn-outline-secondary ms-auto" onclick={resetToDefaults}>
-					Restore defaults
-				</button>
-				<button type="submit" class="btn btn-primary">Save</button>
-			</div>
-		</form>
-	</section>
-
-	<section class="settings-section border rounded p-3 bg-body" aria-labelledby="context-compaction">
-		<h2 id="context-compaction" class="fs-6 fw-semibold m-0 mb-2">Context compaction</h2>
-		<p class="text-muted small m-0 mb-2">
-			When estimated token usage exceeds this percentage of the model's context
-			window, older messages are summarized to make room. 0 = disabled.
-		</p>
-		<form {...thresholdForm.enhance(justSubmit)}>
+	<!-- Context compaction -->
+	<section class="mb-4">
+		<h2 class="h5">Context compaction</h2>
+		<form {...thresholdForm.enhance(justSubmit)} class="d-flex gap-2 align-items-center mb-2">
 			<input type="hidden" name="key" value="context_compaction_threshold" />
-			<div class="d-flex gap-2 align-items-center">
-				<label for="threshold-input" class="form-label m-0">Threshold</label>
-				<input
-					id="threshold-input"
-					type="number"
-					name="value"
-					min="0"
-					max="100"
-					step="1"
-					value={data.contextCompactionThreshold}
-					class="form-control"
-					style="width: 5rem"
-				/>
-				<span class="text-muted">%</span>
-				<button type="submit" class="btn btn-primary">Save</button>
-			</div>
+			<label class="small">Threshold (%)</label>
+			<input type="number" name="value" min="0" max="100" value={data.contextCompactionThreshold} class="form-control form-control-sm w-auto" />
+			<button type="submit" class="btn btn-sm btn-primary">Save</button>
 		</form>
-		<form {...summaryTokensForm.enhance(justSubmit)} class="mt-3">
+		<form {...summaryTokensForm.enhance(justSubmit)} class="d-flex gap-2 align-items-center">
 			<input type="hidden" name="key" value="context_compaction_summary_tokens" />
-			<div class="d-flex gap-2 align-items-center">
-				<label for="summary-tokens-input" class="form-label m-0">Summary budget</label>
-				<input
-					id="summary-tokens-input"
-					type="number"
-					name="value"
-					min="256"
-					step="256"
-					value={data.contextCompactionSummaryTokens}
-					class="form-control"
-					style="width: 6rem"
-				/>
-				<span class="text-muted">tokens</span>
-				<button type="submit" class="btn btn-primary">Save</button>
-			</div>
+			<label class="small">Summary budget (tokens)</label>
+			<input type="number" name="value" min="256" value={data.contextCompactionSummaryTokens} class="form-control form-control-sm w-auto" />
+			<button type="submit" class="btn btn-sm btn-primary">Save</button>
 		</form>
 	</section>
 </div>
-
-<style>
-	.settings-layout {
-		max-width: 760px;
-		min-height: 0;
-		flex: 1;
-	}
-
-	.settings-title {
-		font-size: 1.5rem;
-	}
-
-	.badge {
-		display: inline-block;
-		padding: 0.15rem 0.55rem;
-		border-radius: 999px;
-		font-size: 0.7rem;
-		font-weight: 600;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
-	}
-
-	.badge.ok {
-		background: rgba(82, 142, 96, 0.18);
-		color: #3f7a4f;
-	}
-
-	.badge.missing {
-		background: rgba(192, 96, 96, 0.18);
-		color: #b85959;
-	}
-
-	@media (prefers-color-scheme: dark) {
-		:global(html[data-theme='system']) .badge.ok {
-			color: #80c69a;
-		}
-		:global(html[data-theme='system']) .badge.missing {
-			color: #ec9292;
-		}
-	}
-
-	:global(html[data-theme='dark']) .badge.ok {
-		color: #80c69a;
-	}
-
-	:global(html[data-theme='dark']) .badge.missing {
-		color: #ec9292;
-	}
-
-	.model-grid-header,
-	.model-grid-row {
-		display: grid;
-		grid-template-columns: 1fr 1fr auto auto auto auto;
-		gap: 0.4rem;
-		align-items: center;
-	}
-
-	@media (max-width: 768px) {
-		.settings-layout {
-			padding-top: calc(0.5rem + 40px + 0.5rem);
-		}
-	}
-</style>

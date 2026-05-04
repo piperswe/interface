@@ -5,7 +5,7 @@
 </script>
 
 <script lang="ts">
-	import type { ModelEntry } from '$lib/server/models/config';
+	import type { ProviderModel } from '$lib/server/providers/types';
 	import { sendMessage, setThinkingBudget, abortGeneration } from '$lib/conversations.remote';
 	import { invalidateAll } from '$app/navigation';
 	import { untrack } from 'svelte';
@@ -20,7 +20,7 @@
 		busy,
 	}: {
 		conversationId: string;
-		models: ModelEntry[];
+		models: ProviderModel[];
 		defaultModel: string;
 		thinkingBudget: number | null;
 		busy: boolean;
@@ -30,13 +30,13 @@
 	let optionsEl: HTMLDetailsElement | null = $state(null);
 	let selectedModel = $state(untrack(() => defaultModel));
 
-	// If the selection is no longer in the curated list (operator deleted it
+	// If the selection is no longer in the configured model list (operator deleted it
 	// in /settings, or the conversation was loaded with a stale default),
 	// snap to the first available model so submit doesn't 400.
 	$effect(() => {
 		if (models.length === 0) return;
-		if (!models.some((m) => m.slug === selectedModel)) {
-			selectedModel = models[0].slug;
+		if (!models.some((m) => `${m.providerId}/${m.id}` === selectedModel)) {
+			selectedModel = models[0] ? `${models[0].providerId}/${models[0].id}` : '';
 		}
 	});
 
@@ -50,9 +50,21 @@
 		if (matched == null && thinkingBudget != null) customInput = thinkingBudget;
 	});
 
-	const currentLabel = $derived(models.find((m) => m.slug === selectedModel)?.label ?? selectedModel);
+	const currentModel = $derived(models.find((m) => `${m.providerId}/${m.id}` === selectedModel));
+	const currentLabel = $derived(currentModel?.name ?? selectedModel);
 	const budgetSummary = $derived(describeBudget(thinkingBudget));
-	const selectedReasoning = $derived(models.find((m) => m.slug === selectedModel)?.reasoning);
+	const selectedReasoning = $derived(currentModel?.reasoningType);
+
+	// Group models by provider for the dropdown
+	const modelsByProvider = $derived(() => {
+		const map = new Map<string, ProviderModel[]>();
+		for (const m of models) {
+			const list = map.get(m.providerId) ?? [];
+			list.push(m);
+			map.set(m.providerId, list);
+		}
+		return map;
+	});
 
 	function onKeyDown(e: KeyboardEvent) {
 		if (e.key !== 'Enter') return;
@@ -62,8 +74,8 @@
 		formEl?.requestSubmit();
 	}
 
-	function pickModel(slug: string) {
-		selectedModel = slug;
+	function pickModel(globalId: string) {
+		selectedModel = globalId;
 		if (optionsEl) optionsEl.open = false;
 	}
 
@@ -135,42 +147,46 @@
 			<div class="compose-options-panel" role="menu">
 				<div class="compose-options-section">
 					<div class="compose-options-section-label">Model</div>
-					<ul class="list-unstyled d-flex flex-column gap-0 m-0 p-0">
-						{#each models as m (m.slug)}
-							<li>
-								<label class="compose-options-model-option d-flex align-items-center gap-2 rounded p-2">
-									<input
-										type="radio"
-										name="model"
-										value={m.slug}
-										checked={m.slug === selectedModel}
-										onchange={() => pickModel(m.slug)}
-									/>
-									<span>{m.label}</span>
-								</label>
-							</li>
-						{/each}
-					</ul>
+					{#each [...modelsByProvider()] as [providerId, providerModels] (providerId)}
+						<div class="compose-options-provider-label">{providerId}</div>
+						<ul class="list-unstyled d-flex flex-column gap-0 m-0 p-0">
+							{#each providerModels as m (m.id)}
+								{@const globalId = `${m.providerId}/${m.id}`}
+								<li>
+									<label class="compose-options-model-option d-flex align-items-center gap-2 rounded p-2">
+										<input
+											type="radio"
+											name="model"
+											value={globalId}
+											checked={globalId === selectedModel}
+											onchange={() => pickModel(globalId)}
+										/>
+										<span>{m.name}</span>
+									</label>
+								</li>
+							{/each}
+						</ul>
+					{/each}
 				</div>
 				<div class="compose-options-section">
 					<div class="compose-options-section-label">Thinking budget</div>
 					<ul class="list-unstyled d-flex flex-column gap-0 m-0 p-0">
 						{#each THINKING_PRESETS as p (p.id)}
-						<li>
-							<label class="compose-options-preset d-flex align-items-center gap-2 rounded p-2">
-								<input
-									type="radio"
-									name="thinking_preset"
-									value={p.id}
-									checked={activePresetId === p.id}
-									onchange={() => pickPreset(p)}
-								/>
-								<span class="compose-options-preset-label">{p.label}</span>
-								{#if p.budget != null && selectedReasoning !== 'effort'}
-									<span class="compose-options-preset-meta">{p.budget.toLocaleString()} tok</span>
-								{/if}
-							</label>
-						</li>
+							<li>
+								<label class="compose-options-preset d-flex align-items-center gap-2 rounded p-2">
+									<input
+										type="radio"
+										name="thinking_preset"
+										value={p.id}
+										checked={activePresetId === p.id}
+										onchange={() => pickPreset(p)}
+									/>
+									<span class="compose-options-preset-label">{p.label}</span>
+									{#if p.budget != null && selectedReasoning !== 'effort'}
+										<span class="compose-options-preset-meta">{p.budget.toLocaleString()} tok</span>
+									{/if}
+								</label>
+							</li>
 						{/each}
 						<li>
 							<label class="compose-options-preset d-flex align-items-center gap-2 rounded p-2">
@@ -202,7 +218,7 @@
 				</div>
 			</div>
 		</details>
-			{#if busy}
+		{#if busy}
 			<button type="button" class="send btn btn-primary rounded-circle d-flex align-items-center justify-content-center flex-shrink-0" onclick={onStop} aria-label="Stop">
 				<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="width: 18px; height: 18px">
 					<rect x="6" y="6" width="12" height="12" rx="2" />
@@ -322,6 +338,8 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.75rem;
+		max-height: 60vh;
+		overflow-y: auto;
 	}
 
 	.compose-options-section-label {
@@ -331,6 +349,18 @@
 		letter-spacing: 0.07em;
 		color: var(--muted-2);
 		padding: 0 0.5rem 0.25rem;
+	}
+
+	.compose-options-provider-label {
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: var(--muted-2);
+		padding: 0.25rem 0.5rem;
+		margin-top: 0.25rem;
+	}
+
+	.compose-options-provider-label:first-child {
+		margin-top: 0;
 	}
 
 	.compose-options-model-option,

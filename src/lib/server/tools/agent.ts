@@ -7,7 +7,7 @@
 // their own loop (handled in `createAgentTool`'s `innerToolRegistry` filter),
 // so a sub-agent cannot delegate again.
 
-import { routeLLM as defaultRouteLLM } from '../llm/route';
+import { routeLLMByGlobalId } from '../llm/route';
 import type { ChatRequest, ContentBlock, Message, ToolDefinition } from '../llm/LLM';
 import type LLM from '../llm/LLM';
 import { getSubAgentByName, type SubAgentRow } from '../sub_agents';
@@ -24,16 +24,14 @@ export type AgentToolDeps = {
 	// Default model when neither the call site nor the sub-agent
 	// configuration specifies one — the parent conversation's model.
 	defaultModel: string;
-	// Slugs of the operator-curated model list. Used to validate the
-	// `model` argument the parent agent passes when delegating; an empty
-	// list means "anything goes" (we still trust the parent agent's
-	// choice when the operator hasn't curated a list).
-	availableModelSlugs?: string[];
+	// Global IDs of the operator-curated model list. Used to validate the
+	// `model` argument the parent agent passes when delegating.
+	availableModelGlobalIds?: string[];
 	// User-id scoping. Single-user mode passes 1; multi-user passes the
 	// session user.
 	userId?: number;
-	// LLM factory; defaults to `routeLLM`. Tests inject a fake.
-	routeLLM?: (env: Env, model: string) => LLM;
+	// LLM factory; defaults to `routeLLMByGlobalId`. Tests inject a fake.
+	routeLLM?: (env: Env, globalId: string) => Promise<LLM>;
 };
 
 export function createAgentTool(deps: AgentToolDeps, subAgents: SubAgentRow[]): Tool | null {
@@ -46,14 +44,14 @@ export function createAgentTool(deps: AgentToolDeps, subAgents: SubAgentRow[]): 
 		lines.push(`- \`${sa.name}\`: ${sa.description}`);
 	}
 
-	const modelSlugs = deps.availableModelSlugs ?? [];
+	const globalIds = deps.availableModelGlobalIds ?? [];
 	const modelProperty: Record<string, unknown> = {
 		type: 'string',
 		description:
-			'Model slug to run the sub-agent on. REQUIRED — confirm with the user before delegating; do not guess. Use the `get_models` tool to see the user\'s available models and the model the parent is currently running on.',
+			"Model global ID to run the sub-agent on (format: {provider_id}/{model_id}). REQUIRED — confirm with the user before delegating; do not guess. Use the `get_models` tool to see the user's available models and the model the parent is currently running on.",
 	};
-	if (modelSlugs.length > 0) {
-		modelProperty.enum = modelSlugs;
+	if (globalIds.length > 0) {
+		modelProperty.enum = globalIds;
 	}
 
 	const inputSchema = {
@@ -80,7 +78,7 @@ export function createAgentTool(deps: AgentToolDeps, subAgents: SubAgentRow[]): 
 			description: [
 				'Delegate a self-contained task to a specialised sub-agent. The sub-agent runs its own LLM loop with a custom system prompt and a curated tool subset, then returns its final answer as a single block of text. Use when a task benefits from a focused persona or a different tool scope, or when offloading multi-step work that would clutter the main thread.',
 				'',
-				'IMPORTANT: Always ask the user which model the sub-agent should run on before invoking this tool, unless they have already specified one in this conversation. Use `get_models` to enumerate the user\'s curated model list and the model you (the parent) are currently running on, then ask the user to pick one.',
+				"IMPORTANT: Always ask the user which model the sub-agent should run on before invoking this tool, unless they have already specified one in this conversation. Use `get_models` to enumerate the user's available models and the model you (the parent) are currently running on, then ask the user to pick one.",
 				'',
 				lines.join('\n'),
 			].join('\n'),
@@ -102,9 +100,9 @@ export function createAgentTool(deps: AgentToolDeps, subAgents: SubAgentRow[]): 
 				};
 			}
 			const requestedModel = args.model.trim();
-			if (modelSlugs.length > 0 && !modelSlugs.includes(requestedModel)) {
+			if (globalIds.length > 0 && !globalIds.includes(requestedModel)) {
 				return {
-					content: `Model "${requestedModel}" is not in the user's curated model list. Available: ${modelSlugs.join(', ')}.`,
+					content: `Model "${requestedModel}" is not in the user's configured model list. Available: ${globalIds.join(', ')}.`,
 					isError: true,
 				};
 			}
@@ -120,19 +118,14 @@ export function createAgentTool(deps: AgentToolDeps, subAgents: SubAgentRow[]): 
 			}
 
 			const innerRegistry = await deps.buildInnerToolRegistry();
-			// Strip the agent tool itself to prevent recursion, then narrow to
-			// the sub-agent's allow-list when one is set.
 			const allowed = subAgent.allowedTools;
 			const innerTools: ToolDefinition[] = innerRegistry
 				.definitions()
 				.filter((d) => d.name !== AGENT_TOOL_NAME)
 				.filter((d) => (allowed ? allowed.includes(d.name) : true));
 
-			// Model precedence: caller arg > sub-agent config > parent default.
-			// The caller arg is required by the schema, so it's almost always
-			// what runs; the fallbacks remain for defensive correctness.
 			const model = requestedModel || (subAgent.model && subAgent.model.trim() ? subAgent.model : deps.defaultModel);
-			const llm = (deps.routeLLM ?? defaultRouteLLM)(ctx.env, model);
+			const llm = await (deps.routeLLM ?? routeLLMByGlobalId)(ctx.env, model);
 
 			const messages: Message[] = [{ role: 'user', content: args.prompt }];
 			const maxIter = subAgent.maxIterations && subAgent.maxIterations > 0 ? subAgent.maxIterations : DEFAULT_MAX_INNER_ITERATIONS;
@@ -252,10 +245,6 @@ export function createAgentTool(deps: AgentToolDeps, subAgents: SubAgentRow[]): 
 					isError: true,
 				};
 			}
-			// Prefix with a small header so the parent agent — and the UI —
-			// can tell at a glance which sub-agent produced this block. Pass
-			// citations and artifacts from inner tool calls back through to
-			// the parent loop so they surface in the conversation UI.
 			return {
 				content: `[${subAgent.name}] ${trimmed}`,
 				...(accumulatedCitations.length > 0 ? { citations: accumulatedCitations } : {}),

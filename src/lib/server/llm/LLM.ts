@@ -12,7 +12,7 @@ export type Role = 'system' | 'user' | 'assistant' | 'tool';
 export type TextContent = { type: 'text'; text: string };
 export type ImageContent = { type: 'image'; mimeType: string; data: string };
 export type FileContent = { type: 'file'; mimeType: string; data: string; name?: string };
-export type ToolUseContent = { type: 'tool_use'; id: string; name: string; input: unknown };
+export type ToolUseContent = { type: 'tool_use'; id: string; name: string; input: unknown; thoughtSignature?: string };
 export type ToolResultContent = {
 	type: 'tool_result';
 	toolUseId: string;
@@ -77,7 +77,7 @@ export type StreamEvent =
 	| { type: 'text_delta'; delta: string }
 	| { type: 'thinking_delta'; delta: string }
 	| { type: 'tool_call_delta'; id: string; name?: string; argumentsDelta?: string }
-	| { type: 'tool_call'; id: string; name: string; input: unknown }
+	| { type: 'tool_call'; id: string; name: string; input: unknown; thoughtSignature?: string }
 	| { type: 'usage'; usage: Usage }
 	| { type: 'done'; finishReason?: string; raw?: unknown }
 	| { type: 'error'; message: string };

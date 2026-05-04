@@ -21,9 +21,9 @@ const ALLOWED_SETTING_KEYS = new Set([
 	'theme',
 	'context_compaction_threshold',
 	'context_compaction_summary_tokens',
-	'model_list',
 	'system_prompt',
 	'user_bio',
+	'default_model',
 ]);
 
 type Theme = 'system' | 'light' | 'dark';
