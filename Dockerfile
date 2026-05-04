@@ -1,4 +1,4 @@
-FROM debian:stable
+FROM debian:testing
 
 COPY --from=docker.io/cloudflare/sandbox:0.7.0 /container-server/sandbox /sandbox
 

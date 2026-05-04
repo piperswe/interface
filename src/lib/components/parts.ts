@@ -10,6 +10,7 @@ export type Bundle = {
 	parts: { part: MessagePart; index: number }[];
 	hasActive: boolean;
 	mixed: boolean;
+	isLast: boolean;
 };
 export type Standalone = { kind: 'standalone'; part: MessagePart; index: number };
 export type Group = Bundle | Standalone;
@@ -34,17 +35,22 @@ export function groupParts(parts: MessagePart[], streaming: boolean, results: Ma
 			groups.push({ kind: 'standalone', part: bundle[0].part, index: bundle[0].index });
 		} else {
 			const hasActive = bundle.some(({ part, index }) => {
-				if (part.type === 'thinking') return streaming && index === parts.length - 1;
-				if (part.type === 'tool_use') return streaming && !results.get((part as ToolUsePart).id);
-				return false;
+			if (part.type === 'thinking') return streaming && index === parts.length - 1;
+			if (part.type === 'tool_use') {
+				const result = results.get((part as ToolUsePart).id);
+				if (!result) return streaming;
+				return streaming && result.streaming;
+			}
+			return false;
 			});
 			const mixed = bundle.some((b) => b.part.type === 'tool_use');
 			groups.push({
 				kind: 'bundle',
-				key: `bundle-${bundle[0].index}-${bundle[bundle.length - 1].index}`,
+				key: `bundle-${bundle[0].index}`,
 				parts: bundle,
 				hasActive,
 				mixed,
+				isLast: false,
 			});
 		}
 		bundle = [];
@@ -61,5 +67,12 @@ export function groupParts(parts: MessagePart[], streaming: boolean, results: Ma
 		}
 	}
 	flush();
+
+	// Mark the last bundle so the template can keep it open while streaming.
+	for (let i = groups.length - 1; i >= 0; i--) {
+		const g = groups[i];
+		if (g.kind === 'bundle') { g.isLast = true; break; }
+	}
+
 	return groups;
 }

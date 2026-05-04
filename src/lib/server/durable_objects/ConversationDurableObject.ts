@@ -554,6 +554,8 @@ Talk to the user casually, like a friend chatting — but don't pretend to be hu
 
 Be concise by default. Expand when the task genuinely calls for depth (design docs, research writeups, code with explanation). Don't pad answers with recaps of what the user just said.
 
+**Personality.** You're dry, a little wry, and allergic to corporate cheerfulness. You have opinions and you share them when asked — if a user floats a bad idea, say so and explain why, don't just nod along. You find computers genuinely interesting (the weird historical corners especially) and it's fine to let that show when it's relevant. You don't do forced enthusiasm, exclamation points as punctuation filler, or "Great question!" preambles. You don't apologize unless you actually broke something. When you're uncertain, you say "I'm not sure" instead of hedging with six qualifiers. You're comfortable with silence — if the answer is one sentence, it's one sentence. You treat the user as a competent adult who can handle being disagreed with, being told they're wrong, or being told a task is going to be annoying. Swearing is fine in moderation when it fits the moment. You're a computer, not a butler and not a friend pretending to be a therapist; you're the sharp, slightly sardonic coworker who actually knows the system and will tell you the truth about it.
+
 ## About the user
 
 The user's bio, preferences, and context are provided separately in the user turn. Use that context when it's actually relevant to the task — don't surface personal details just to demonstrate that you remember them.`;
@@ -660,37 +662,75 @@ The user's bio, preferences, and context are provided separately in the user tur
 				messages.push({ role: 'assistant', content: assistantBlocks });
 
 				// Execute each tool, broadcast call+result events, append result to history.
-				// We push `tool_use` to the parts mirror only AFTER the tool finishes
-				// so an abort that fires mid-execution can never persist a tool_use
-				// without its matching tool_result. The client receives the
-				// `tool_call` SSE event up front and tracks the in-flight state on
-				// its own — the server-side mirror only needs to be consistent at
-				// persistence time.
+				// We push the `tool_use` and a preliminary streaming `tool_result`
+				// to the parts mirror BEFORE execute so an abort mid-execution
+				// always sees a paired pair. The preliminary part is swapped for
+				// the final result on completion, and a streaming
+				// `emitToolOutput` callback streams output chunks to the UI.
 				for (const call of turnToolCalls) {
 					if (!this.#inProgress || this.#inProgress.messageId !== assistantId) break;
+					parts.push({ type: 'tool_use', id: call.id, name: call.name, input: call.input });
 					this.#broadcast('tool_call', {
 						messageId: assistantId,
 						id: call.id,
 						name: call.name,
 						input: call.input,
 					});
-					const result = await registry.execute({ env: this.env, conversationId, assistantMessageId: assistantId }, call.name, call.input);
+					// Seed a preliminary streaming tool_result so the UI shows the
+					// call as active while output arrives. Replaced with the final
+					// result once execution completes.
+					parts.push({ type: 'tool_result', toolUseId: call.id, content: '', isError: false, streaming: true });
+					this.#broadcast('tool_result', {
+						messageId: assistantId,
+						toolUseId: call.id,
+						content: '',
+						isError: false,
+						streaming: true,
+					});
+					const result = await registry.execute(
+						{
+							env: this.env,
+							conversationId,
+							assistantMessageId: assistantId,
+							emitToolOutput: (chunk: string) => {
+								this.#broadcast('tool_output', {
+									messageId: assistantId,
+									toolUseId: call.id,
+									chunk,
+								});
+							},
+						},
+						call.name,
+						call.input,
+					);
 					const resultRecord: RecordedToolResult = {
 						toolUseId: call.id,
 						content: result.content,
 						isError: result.isError ?? false,
 					};
-					accumulatedToolResults.push(resultRecord);
-					parts.push({ type: 'tool_use', id: call.id, name: call.name, input: call.input });
-					parts.push({
-						type: 'tool_result',
-						toolUseId: call.id,
-						content: result.content,
-						isError: result.isError ?? false,
-					});
-					// Persist the running tool_calls/tool_results columns each step so
-					// stream death or DO eviction leaves a row that's still consistent
-					// — never a tool_use without a tool_result.
+					const existingIdx = accumulatedToolResults.findIndex((r) => r.toolUseId === call.id);
+					if (existingIdx >= 0) accumulatedToolResults[existingIdx] = resultRecord;
+					else accumulatedToolResults.push(resultRecord);
+					// Swap the preliminary streaming part for the final result.
+					const partsIdx = parts.findIndex((p) => p.type === 'tool_result' && p.toolUseId === call.id);
+					if (partsIdx >= 0) {
+						parts[partsIdx] = {
+							type: 'tool_result',
+							toolUseId: call.id,
+							content: result.content,
+							isError: result.isError ?? false,
+						};
+					} else {
+						parts.push({
+							type: 'tool_result',
+							toolUseId: call.id,
+							content: result.content,
+							isError: result.isError ?? false,
+						});
+					}
+					// Persist the running tool_calls/tool_results columns each step
+					// so stream death or DO eviction leaves a row that's still
+					// consistent.
 					this.#sql.exec(
 						'UPDATE messages SET tool_calls = ?, tool_results = ?, parts = ? WHERE id = ?',
 						JSON.stringify(accumulatedToolCalls),

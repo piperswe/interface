@@ -24,6 +24,7 @@ export type DeltaEvent = { messageId: string; content: string };
 export type ThinkingDeltaEvent = { messageId: string; content: string };
 export type ToolCallEvent = { messageId: string; id: string; name: string; input: JsonValue };
 export type ToolResultEvent = ToolResultRecord & { messageId: string };
+export type ToolOutputEvent = { messageId: string; toolUseId: string; chunk: string };
 export type ArtifactEvent = { artifact: Artifact };
 export type MetaEvent = { messageId: string; snapshot: MetaSnapshot };
 export type PartEvent = { messageId: string; part: MessagePart };
@@ -92,18 +93,47 @@ export function applyToolCall(state: ConversationState, ev: ToolCallEvent): Conv
 export function applyToolResult(state: ConversationState, ev: ToolResultEvent): ConversationState {
 	return patchMessage(state, ev.messageId, (m) => {
 		const existing = m.toolResults ?? [];
-		if (existing.some((r) => r.toolUseId === ev.toolUseId)) return m;
+		const alreadyHas = existing.some((r) => r.toolUseId === ev.toolUseId);
+		const toolResults = alreadyHas
+			? existing.map((r) => (r.toolUseId === ev.toolUseId ? { toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError } : r))
+			: [...existing, { toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }];
 		const parts = m.parts ?? [];
 		const partsHasIt = parts.some((p) => p.type === 'tool_result' && p.toolUseId === ev.toolUseId);
 		return {
 			...m,
-			toolResults: [...existing, { toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }],
+			toolResults,
 			parts: partsHasIt
-				? parts
-				: [
-						...parts,
-						{ type: 'tool_result', toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError },
-					],
+				? parts.map((p) =>
+						p.type === 'tool_result' && p.toolUseId === ev.toolUseId
+							? { type: 'tool_result', toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }
+							: p,
+					)
+				: [...parts, { type: 'tool_result', toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }],
+		};
+	});
+}
+
+export function applyToolOutput(state: ConversationState, ev: ToolOutputEvent): ConversationState {
+	return patchMessage(state, ev.messageId, (m) => {
+		const existing = m.toolResults ?? [];
+		const alreadyHas = existing.some((r) => r.toolUseId === ev.toolUseId);
+		const toolResults = alreadyHas
+			? existing.map((r) =>
+					r.toolUseId === ev.toolUseId ? { ...r, content: r.content + ev.chunk, streaming: true as const } : r,
+				)
+			: [...existing, { toolUseId: ev.toolUseId, content: ev.chunk, isError: false, streaming: true as const }];
+		const parts = m.parts ?? [];
+		const partsHasIt = parts.some((p) => p.type === 'tool_result' && p.toolUseId === ev.toolUseId);
+		return {
+			...m,
+			toolResults,
+			parts: partsHasIt
+				? parts.map((p) =>
+						p.type === 'tool_result' && p.toolUseId === ev.toolUseId
+							? { type: 'tool_result', toolUseId: ev.toolUseId, content: (p as { content: string }).content + ev.chunk, isError: false, streaming: true as const }
+							: p,
+					)
+				: [...parts, { type: 'tool_result', toolUseId: ev.toolUseId, content: ev.chunk, isError: false, streaming: true as const }],
 		};
 	});
 }
@@ -174,6 +204,7 @@ export function attachConversationStream(
 	const onThinkingDelta = handle<ThinkingDeltaEvent>(applyThinkingDelta);
 	const onToolCall = handle<ToolCallEvent>(applyToolCall);
 	const onToolResult = handle<ToolResultEvent>(applyToolResult);
+	const onToolOutput = handle<ToolOutputEvent>(applyToolOutput);
 	const onArtifact = handle<ArtifactEvent>(applyArtifact);
 	const onMeta = handle<MetaEvent>(applyMeta);
 	const onPart = handle<PartEvent>(applyPart);
@@ -184,6 +215,7 @@ export function attachConversationStream(
 	es.addEventListener('thinking_delta', onThinkingDelta);
 	es.addEventListener('tool_call', onToolCall);
 	es.addEventListener('tool_result', onToolResult);
+	es.addEventListener('tool_output', onToolOutput);
 	es.addEventListener('artifact', onArtifact);
 	es.addEventListener('meta', onMeta);
 	es.addEventListener('part', onPart);

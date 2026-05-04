@@ -76,7 +76,7 @@
 			{#if group.kind === 'standalone'}
 				{@render renderPart(group.part, group.index, false)}
 			{:else}
-				<details class="work-bundle" open={group.hasActive}>
+				<details class="work-bundle" open={group.isLast && isStreaming}>
 					<summary>
 						<span class="work-bundle-label">{group.mixed ? 'Tools & thinking' : 'Thinking'}</span>
 						{#if group.hasActive}<span class="streaming-indicator" aria-hidden="true">●</span>{/if}

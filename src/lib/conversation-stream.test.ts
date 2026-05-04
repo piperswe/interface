@@ -9,6 +9,7 @@ import {
 	applySync,
 	applyThinkingDelta,
 	applyToolCall,
+	applyToolOutput,
 	applyToolResult,
 	patchMessage,
 } from './conversation-stream';
@@ -132,15 +133,42 @@ describe('applyToolResult', () => {
 		expect(next.messages[0].toolResults).toEqual([{ toolUseId: 't1', content: 'done', isError: false }]);
 		expect(next.messages[0].parts?.at(-1)).toEqual({ type: 'tool_result', toolUseId: 't1', content: 'done', isError: false });
 	});
-	it('is idempotent for duplicate toolUseIds', () => {
+	it('overwrites an existing tool result in place', () => {
 		const s = state({
 			...baseMessage,
-			toolResults: [{ toolUseId: 't1', content: 'done', isError: false }],
-			parts: [{ type: 'tool_result', toolUseId: 't1', content: 'done', isError: false }],
+			toolResults: [{ toolUseId: 't1', content: 'old', isError: false }],
+			parts: [{ type: 'tool_result', toolUseId: 't1', content: 'old', isError: false }],
 		});
-		const next = applyToolResult(s, { messageId: 'm1', toolUseId: 't1', content: 'done', isError: false });
-		expect(next.messages[0].toolResults).toHaveLength(1);
-		expect(next.messages[0].parts).toHaveLength(1);
+		const next = applyToolResult(s, { messageId: 'm1', toolUseId: 't1', content: 'new', isError: true });
+		expect(next.messages[0].toolResults).toEqual([{ toolUseId: 't1', content: 'new', isError: true }]);
+		expect(next.messages[0].parts).toEqual([{ type: 'tool_result', toolUseId: 't1', content: 'new', isError: true }]);
+	});
+});
+
+describe('applyToolOutput', () => {
+	it('appends a streaming tool result if none exists', () => {
+		const s = state({ ...baseMessage });
+		const next = applyToolOutput(s, { messageId: 'm1', toolUseId: 't1', chunk: 'hello' });
+		expect(next.messages[0].toolResults).toEqual([
+			{ toolUseId: 't1', content: 'hello', isError: false, streaming: true },
+		]);
+		expect(next.messages[0].parts).toEqual([
+			{ type: 'tool_result', toolUseId: 't1', content: 'hello', isError: false, streaming: true },
+		]);
+	});
+	it('extends an existing streaming result', () => {
+		const s = state({
+			...baseMessage,
+			toolResults: [{ toolUseId: 't1', content: 'hel', isError: false, streaming: true }],
+			parts: [{ type: 'tool_result', toolUseId: 't1', content: 'hel', isError: false, streaming: true }],
+		});
+		const next = applyToolOutput(s, { messageId: 'm1', toolUseId: 't1', chunk: 'lo' });
+		expect(next.messages[0].toolResults).toEqual([
+			{ toolUseId: 't1', content: 'hello', isError: false, streaming: true },
+		]);
+		expect(next.messages[0].parts).toEqual([
+			{ type: 'tool_result', toolUseId: 't1', content: 'hello', isError: false, streaming: true },
+		]);
 	});
 });
 

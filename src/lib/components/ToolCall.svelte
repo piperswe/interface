@@ -26,6 +26,10 @@
 			</span>
 		{:else if result?.isError}
 			<span class="tool-call-status error ms-auto">error</span>
+		{:else if result?.streaming}
+			<span class="tool-call-status pending ms-auto d-flex align-items-center gap-1">
+				streaming<span class="streaming-indicator" aria-hidden="true">●</span>
+			</span>
 		{:else}
 			<span class="tool-call-status ok ms-auto">done</span>
 		{/if}
