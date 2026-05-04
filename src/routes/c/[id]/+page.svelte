@@ -28,7 +28,10 @@
 
 	$effect(() => {
 		const server = initialState;
-		if (convState.inProgress !== null) return;
+		// Only skip syncing when both sides agree a stream is still in flight.
+		// If the server has already finished (inProgress === null) but our
+		// local mirror is stale, we need to sync so the spinner disappears.
+		if (convState.inProgress !== null && server.inProgress !== null) return;
 		const localLast = convState.messages.at(-1);
 		const serverLast = server.messages.at(-1);
 		if (!localLast && !serverLast) return;

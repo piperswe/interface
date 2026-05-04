@@ -164,3 +164,9 @@ a:hover {
 	padding-left: var(--side-gap);
 	padding-right: var(--side-gap);
 }
+
+// Bootstrap 5 lacks this utility; flex children need it so they
+// can shrink below their content size and allow overflow scrolling.
+.min-h-0 {
+	min-height: 0 !important;
+}
