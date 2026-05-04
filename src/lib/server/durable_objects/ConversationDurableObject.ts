@@ -14,7 +14,7 @@ import { listMcpServers } from '../mcp_servers';
 import { listSubAgents } from '../sub_agents';
 import { createAgentTool } from '../tools/agent';
 import { createGetModelsTool } from '../tools/get_models';
-import { getSystemPrompt, getUserBio } from '../settings';
+import { getSetting, getSystemPrompt, getUserBio } from '../settings';
 import { registerSandboxTools } from '../tools/sandbox';
 import { getSandbox } from '@cloudflare/sandbox';
 import type { Sandbox } from '@cloudflare/sandbox';
@@ -1490,9 +1490,12 @@ The user's bio, preferences, and context are provided separately in the user tur
 		opts: { systemPrompt: string; onlyIfDefault: boolean },
 	): Promise<void> {
 		const collapsed = input.replace(/\s+/g, ' ').trim();
-		// Pick the first available model for title generation.
+		// Pick the configured title model, or fall back to the first available model.
 		const globalIds = await listAllGlobalModelIds(this.env);
-		const titleModel = globalIds[0];
+		const configuredTitleModel = await getSetting(this.env, 'title_model');
+		const titleModel = configuredTitleModel && globalIds.includes(configuredTitleModel)
+			? configuredTitleModel
+			: globalIds[0];
 		if (!titleModel) return; // No models configured, skip title generation
 
 		let title: string;

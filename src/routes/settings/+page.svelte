@@ -31,6 +31,7 @@
 	const thresholdForm = saveSetting.for('context_compaction_threshold');
 	const summaryTokensForm = saveSetting.for('context_compaction_summary_tokens');
 	const defaultModelForm = saveSetting.for('default_model');
+	const titleModelForm = saveSetting.for('title_model');
 
 	// Provider form state
 	let showAddProvider = $state(false);
@@ -351,6 +352,20 @@
 				{/if}
 			</div>
 		</div>
+
+		<h6 class="mt-4">Title generation model</h6>
+		<form {...titleModelForm.enhance(justSubmit)} class="d-flex gap-2 align-items-center">
+			<input type="hidden" name="key" value="title_model" />
+			<select name="value" class="form-select form-select-sm w-auto">
+				<option value="">Auto (first available)</option>
+				{#each data.models.sort((a, b) => a.providerId.localeCompare(b.providerId) || a.sortOrder - b.sortOrder) as m}
+					<option value={`${m.providerId}/${m.id}`} selected={data.titleModel === `${m.providerId}/${m.id}`}>
+						{m.providerId}/{m.name || m.id}
+					</option>
+				{/each}
+			</select>
+			<button type="submit" class="btn btn-sm btn-primary">Save</button>
+		</form>
 	</section>
 
 	<!-- MCP Servers -->

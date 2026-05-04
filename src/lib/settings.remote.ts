@@ -24,6 +24,7 @@ const ALLOWED_SETTING_KEYS = new Set([
 	'system_prompt',
 	'user_bio',
 	'default_model',
+	'title_model',
 ]);
 
 type Theme = 'system' | 'light' | 'dark';
