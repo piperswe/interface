@@ -32,6 +32,11 @@
 	let optionsEl: HTMLDetailsElement | null = $state(null);
 	let selectedModel = $state(untrack(() => defaultModel));
 
+	// Sync selectedModel when defaultModel changes externally (e.g. model_switch tool).
+	$effect(() => {
+		selectedModel = defaultModel;
+	});
+
 	// If the selection is no longer in the configured model list (operator deleted it
 	// in /settings, or the conversation was loaded with a stale default),
 	// snap to the first available model so submit doesn't 400.

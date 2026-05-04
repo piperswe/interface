@@ -28,6 +28,7 @@ export type ToolOutputEvent = { messageId: string; toolUseId: string; chunk: str
 export type ArtifactEvent = { artifact: Artifact };
 export type MetaEvent = { messageId: string; snapshot: MetaSnapshot };
 export type PartEvent = { messageId: string; part: MessagePart };
+export type ModelSwitchEvent = { messageId: string; model: string };
 
 export function patchMessage(
 	state: ConversationState,
@@ -178,6 +179,10 @@ export function applyPart(state: ConversationState, ev: PartEvent): Conversation
 	}));
 }
 
+export function applyModelSwitch(state: ConversationState, ev: ModelSwitchEvent): ConversationState {
+	return patchMessage(state, ev.messageId, (m) => ({ ...m, model: ev.model }));
+}
+
 export function attachConversationStream(
 	conversationId: string,
 	getState: () => ConversationState,
@@ -208,6 +213,7 @@ export function attachConversationStream(
 	const onArtifact = handle<ArtifactEvent>(applyArtifact);
 	const onMeta = handle<MetaEvent>(applyMeta);
 	const onPart = handle<PartEvent>(applyPart);
+	const onModelSwitch = handle<ModelSwitchEvent>(applyModelSwitch);
 	const onRefresh = () => onReload();
 
 	es.addEventListener('sync', onSync);
@@ -219,6 +225,7 @@ export function attachConversationStream(
 	es.addEventListener('artifact', onArtifact);
 	es.addEventListener('meta', onMeta);
 	es.addEventListener('part', onPart);
+	es.addEventListener('model_switch', onModelSwitch);
 	es.addEventListener('refresh', onRefresh);
 
 	// If the connection fails (non-2xx, network drop, etc.) the browser will
