@@ -216,10 +216,17 @@ function toOpenAIMessages(systemPrompt: string | undefined, messages: Message[])
 		const toolCalls = blocks
 			.filter((b): b is ContentBlock & { type: 'tool_use' } => b.type === 'tool_use')
 			.map((b) => {
+				const fn: Record<string, unknown> = {
+					name: b.name,
+					arguments: JSON.stringify(b.input ?? {}),
+				};
+				if (b.thoughtSignature) {
+					fn.thought_signature = b.thoughtSignature;
+				}
 				const call: Record<string, unknown> = {
 					id: b.id,
 					type: 'function',
-					function: { name: b.name, arguments: JSON.stringify(b.input ?? {}) },
+					function: fn,
 				};
 				if (b.thoughtSignature) {
 					call.thought_signature = b.thoughtSignature;
