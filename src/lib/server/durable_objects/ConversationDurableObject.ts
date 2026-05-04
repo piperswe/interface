@@ -9,6 +9,7 @@ import type { ToolCitation } from '../tools/registry';
 import { fetchUrlTool } from '../tools/fetch_url';
 import { createWebSearchTool } from '../tools/web_search';
 import { createYnabTools } from '../tools/ynab';
+import { createOpenWeatherMapTools } from '../tools/openweathermap';
 import { KagiSearchBackend } from '../search/kagi';
 import { McpHttpClient } from '../mcp/client';
 import { listMcpServers } from '../mcp_servers';
@@ -1410,6 +1411,11 @@ The user's bio, preferences, and context are provided separately in the user tur
 		}
 		if (this.env.YNAB_TOKEN) {
 			for (const tool of createYnabTools(this.env.YNAB_TOKEN)) {
+				registry.register(tool);
+			}
+		}
+		if (this.env.OPENWEATHERMAP_KEY) {
+			for (const tool of createOpenWeatherMapTools(this.env.OPENWEATHERMAP_KEY)) {
 				registry.register(tool);
 			}
 		}

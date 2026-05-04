@@ -37,6 +37,7 @@ declare global {
 		// Keep in sync with `KNOWN_SECRET_KEYS` in $lib/server/settings.
 		KAGI_KEY?: string;
 		YNAB_TOKEN?: string;
+		OPENWEATHERMAP_KEY?: string;
 		// Optional Sandbox binding. When present, conversation-scoped
 		// sandbox tools are registered in the tool registry.
 		SANDBOX?: DurableObjectNamespace<Sandbox>;
