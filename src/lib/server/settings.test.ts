@@ -2,14 +2,14 @@ import { env } from 'cloudflare:test';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
 	deleteSetting,
-	describeProviderKeys,
+	describeSecretKeys,
 	getContextCompactionSummaryTokens,
 	getContextCompactionThreshold,
 	getModelList,
 	getSetting,
 	getSystemPrompt,
 	getUserBio,
-	KNOWN_PROVIDER_KEYS,
+	KNOWN_SECRET_KEYS,
 	listSettings,
 	setSetting,
 } from './settings';
@@ -56,21 +56,22 @@ describe('settings', () => {
 		expect(await getSetting(env, 'theme', 2)).toBe('light');
 	});
 
-	it('describeProviderKeys reports configured for the seeded OPENROUTER_KEY', () => {
-		const statuses = describeProviderKeys(env);
+	it('describeSecretKeys reports configured for the seeded OPENROUTER_KEY', () => {
+		const statuses = describeSecretKeys(env);
 		expect(statuses.find((s) => s.name === 'OPENROUTER_KEY')?.configured).toBe(true);
 	});
 
-	it('describeProviderKeys reports missing for unset keys', () => {
-		const statuses = describeProviderKeys(env);
+	it('describeSecretKeys reports missing for unset keys', () => {
+		const statuses = describeSecretKeys(env);
 		const missing = statuses.find((s) => s.name === 'ANTHROPIC_KEY');
 		expect(missing?.configured).toBe(false);
 	});
 
-	it('exports the canonical provider key list', () => {
-		expect(KNOWN_PROVIDER_KEYS).toContain('OPENROUTER_KEY');
-		expect(KNOWN_PROVIDER_KEYS).toContain('ANTHROPIC_KEY');
-		expect(KNOWN_PROVIDER_KEYS).toContain('KAGI_KEY');
+	it('exports the canonical secret key list', () => {
+		expect(KNOWN_SECRET_KEYS).toContain('OPENROUTER_KEY');
+		expect(KNOWN_SECRET_KEYS).toContain('ANTHROPIC_KEY');
+		expect(KNOWN_SECRET_KEYS).toContain('KAGI_KEY');
+		expect(KNOWN_SECRET_KEYS).toContain('SANDBOX_SSH_KEY');
 	});
 
 	describe('getContextCompactionThreshold', () => {

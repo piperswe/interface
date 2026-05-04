@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit';
 import { listMcpServers } from '$lib/server/mcp_servers';
 import {
-	describeProviderKeys,
+	describeSecretKeys,
 	getContextCompactionSummaryTokens,
 	getContextCompactionThreshold,
 	getModelList,
@@ -25,7 +25,7 @@ export const load: PageServerLoad = async ({ platform }) => {
 		getUserBio(env),
 	]);
 	return {
-		providerKeys: describeProviderKeys(env),
+		secretKeys: describeSecretKeys(env),
 		mcpServers,
 		subAgents,
 		contextCompactionThreshold: threshold,

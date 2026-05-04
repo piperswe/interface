@@ -80,24 +80,25 @@ export async function getModelList(env: Env, userId: number = SINGLE_USER_ID): P
 // default — envelope encryption deferred to Phase 6 multi-user). The Settings
 // UI surfaces only "configured / not configured" status; actual key edits
 // happen via `wrangler secret put`.
-export type ProviderKeyName = 'OPENROUTER_KEY' | 'ANTHROPIC_KEY' | 'OPENAI_KEY' | 'GOOGLE_KEY' | 'DEEPSEEK_KEY' | 'KAGI_KEY';
+export type SecretKeyName = 'OPENROUTER_KEY' | 'ANTHROPIC_KEY' | 'OPENAI_KEY' | 'GOOGLE_KEY' | 'DEEPSEEK_KEY' | 'KAGI_KEY' | 'SANDBOX_SSH_KEY';
 
-export type ProviderKeyStatus = {
-	name: ProviderKeyName;
+export type SecretKeyStatus = {
+	name: SecretKeyName;
 	configured: boolean;
 };
 
-export const KNOWN_PROVIDER_KEYS: ProviderKeyName[] = [
+export const KNOWN_SECRET_KEYS: SecretKeyName[] = [
 	'OPENROUTER_KEY',
 	'ANTHROPIC_KEY',
 	'OPENAI_KEY',
 	'GOOGLE_KEY',
 	'DEEPSEEK_KEY',
 	'KAGI_KEY',
+	'SANDBOX_SSH_KEY',
 ];
 
-export function describeProviderKeys(env: Env): ProviderKeyStatus[] {
-	return KNOWN_PROVIDER_KEYS.map((name) => ({
+export function describeSecretKeys(env: Env): SecretKeyStatus[] {
+	return KNOWN_SECRET_KEYS.map((name) => ({
 		name,
 		configured: typeof (env as unknown as Record<string, unknown>)[name] === 'string'
 			&& ((env as unknown as Record<string, string>)[name] ?? '').length > 0,

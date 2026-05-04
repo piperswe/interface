@@ -1,4 +1,5 @@
 import { getSandbox } from '@cloudflare/sandbox';
+import type { Sandbox } from '@cloudflare/sandbox';
 import type { Tool, ToolContext, ToolExecutionResult } from './registry';
 
 // ---------------------------------------------------------------------------
@@ -8,7 +9,43 @@ function getConversationSandbox(ctx: ToolContext) {
 	if (!ctx.env.SANDBOX) {
 		throw new Error('Sandbox binding is not configured.');
 	}
-	return getSandbox(ctx.env.SANDBOX, ctx.conversationId);
+	return getSandbox(ctx.env.SANDBOX as unknown as DurableObjectNamespace<Sandbox>, ctx.conversationId);
+}
+
+// ---------------------------------------------------------------------------
+// SSH key injection (one-time per conversation)
+// ---------------------------------------------------------------------------
+const sshKeyInjected = new Set<string>();
+
+const SSH_KEY_PATH = '/root/.ssh/sandbox_key';
+const SSH_CONFIG_PATH = '/root/.ssh/config';
+
+const SSH_CONFIG = `Host github.com
+	HostName github.com
+	User git
+	IdentityFile ${SSH_KEY_PATH}
+	IdentitiesOnly yes
+	StrictHostKeyChecking accept-new
+`;
+
+async function injectSshKey(sandbox: ReturnType<typeof getSandbox>, key: string): Promise<void> {
+	try {
+		await sandbox.mkdir('/root/.ssh', { recursive: true });
+	} catch {
+		/* may already exist */
+	}
+	await sandbox.writeFile(SSH_KEY_PATH, key);
+	await sandbox.exec(`chmod 600 ${SSH_KEY_PATH}`);
+	await sandbox.writeFile(SSH_CONFIG_PATH, SSH_CONFIG);
+}
+
+async function ensureSshKey(ctx: ToolContext): Promise<void> {
+	const key = ctx.env.SANDBOX_SSH_KEY;
+	if (!key) return;
+	if (sshKeyInjected.has(ctx.conversationId)) return;
+	const sandbox = getConversationSandbox(ctx);
+	await injectSshKey(sandbox, key);
+	sshKeyInjected.add(ctx.conversationId);
 }
 
 // ---------------------------------------------------------------------------
@@ -53,6 +90,7 @@ export const sandboxExecTool: Tool = {
 			return { content: 'Missing required parameter: command', isError: true };
 		}
 		try {
+			await ensureSshKey(ctx);
 			const sandbox = getConversationSandbox(ctx);
 			const result = await sandbox.exec(args.command, {
 				...(args.cwd ? { cwd: args.cwd } : {}),
@@ -125,6 +163,7 @@ export const sandboxRunCodeTool: Tool = {
 			return { content: `Unsupported language: ${language}`, isError: true };
 		}
 		try {
+			await ensureSshKey(ctx);
 			const sandbox = getConversationSandbox(ctx);
 			const result = await sandbox.runCode(args.code, {
 				language,

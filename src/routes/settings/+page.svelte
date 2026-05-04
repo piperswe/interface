@@ -111,14 +111,14 @@
 		</form>
 	</section>
 
-	<section class="settings-section border rounded p-3 bg-body" aria-labelledby="provider-keys">
-		<h2 id="provider-keys" class="fs-6 fw-semibold m-0 mb-2">Provider keys</h2>
+	<section class="settings-section border rounded p-3 bg-body" aria-labelledby="secrets">
+		<h2 id="secrets" class="fs-6 fw-semibold m-0 mb-2">Secrets</h2>
 		<p class="text-muted small m-0 mb-2">
-			Provider API keys are stored as Worker secrets. Edit with
+			API keys and sensitive values are stored as Worker secrets. Edit with
 			<code>npx wrangler secret put NAME</code>.
 		</p>
 		<dl>
-			{#each data.providerKeys as s (s.name)}
+			{#each data.secretKeys as s (s.name)}
 				<div class="d-grid" style="grid-template-columns: max-content 1fr; gap: 0.15rem 0.75rem">
 					<dt><code>{s.name}</code></dt>
 					<dd>

@@ -37,10 +37,13 @@ declare global {
 			GOOGLE_KEY?: string;
 			DEEPSEEK_KEY?: string;
 			KAGI_KEY?: string;
-			YNAB_TOKEN?: string;
-			// Optional Sandbox binding. When present, conversation-scoped
-			// sandbox tools are registered in the tool registry.
-			SANDBOX?: DurableObjectNamespace<Sandbox>;
+		YNAB_TOKEN?: string;
+		// Optional Sandbox binding. When present, conversation-scoped
+		// sandbox tools are registered in the tool registry.
+		SANDBOX?: DurableObjectNamespace<Sandbox>;
+		// Optional SSH private key injected into every sandbox container
+		// so the agent can interact with GitHub (clone, push, etc.).
+		SANDBOX_SSH_KEY?: string;
 		}
 	}
 }

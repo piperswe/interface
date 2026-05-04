@@ -70,6 +70,22 @@ end-to-end test in `src/lib/server/durable_objects/`.
 the cloudflare adapter, which connects to a real workerd. DO RPC has limited
 support in proxy mode; for end-to-end DO behaviour, `npm run preview`.
 
+## Sandbox SSH key
+
+If the `SANDBOX` binding is present, an optional Wrangler secret
+`SANDBOX_SSH_KEY` can be set to a private SSH key. The key is injected
+lazily into every sandbox container on the first `sandbox_exec` or
+`sandbox_run_code` call:
+
+- `~/.ssh/sandbox_key` — the private key (`chmod 600`)
+- `~/.ssh/config` — an SSH config that points `github.com` to that key
+  with `IdentitiesOnly yes` and `StrictHostKeyChecking accept-new`
+
+This lets the agent `git clone`, `git push`, etc. without manual setup.
+Use `scripts/setup-sandbox-ssh.sh` to generate an Ed25519 key pair and
+upload the private half as the secret. After running it, add the printed
+public key to your GitHub account.
+
 # Cloudflare Workers
 
 STOP. Your knowledge of Cloudflare Workers APIs and limits may be outdated. Always retrieve current documentation before any Workers, KV, R2, D1, Durable Objects, Queues, Vectorize, AI, or Agents SDK task.

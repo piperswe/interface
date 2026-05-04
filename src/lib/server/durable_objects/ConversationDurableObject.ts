@@ -18,6 +18,7 @@ import { createGetModelsTool } from '../tools/get_models';
 import { getModelList, getSystemPrompt, getUserBio } from '../settings';
 import { registerSandboxTools } from '../tools/sandbox';
 import { getSandbox } from '@cloudflare/sandbox';
+import type { Sandbox } from '@cloudflare/sandbox';
 import { reasoningTypeFor } from '../models/config';
 import type { ReasoningConfig } from '../llm/LLM';
 import type { AddMessageResult, Artifact, ArtifactType, ConversationState, MessageRow, MetaSnapshot } from '$lib/types/conversation';
@@ -298,7 +299,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		// Tear down the conversation's sandbox container (best-effort).
 		if (this.env.SANDBOX) {
 			try {
-				const sandbox = getSandbox(this.env.SANDBOX, this.ctx.id.toString());
+				const sandbox = getSandbox(this.env.SANDBOX as unknown as DurableObjectNamespace<Sandbox>, this.ctx.id.toString());
 				await sandbox.destroy();
 			} catch {
 				/* ignore */
