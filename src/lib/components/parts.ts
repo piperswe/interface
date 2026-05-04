@@ -10,6 +10,7 @@ export type Bundle = {
 	parts: { part: MessagePart; index: number }[];
 	hasActive: boolean;
 	mixed: boolean;
+	isLast: boolean;
 };
 export type Standalone = { kind: 'standalone'; part: MessagePart; index: number };
 export type Group = Bundle | Standalone;
@@ -45,10 +46,11 @@ export function groupParts(parts: MessagePart[], streaming: boolean, results: Ma
 			const mixed = bundle.some((b) => b.part.type === 'tool_use');
 			groups.push({
 				kind: 'bundle',
-				key: `bundle-${bundle[0].index}-${bundle[bundle.length - 1].index}`,
+				key: `bundle-${bundle[0].index}`,
 				parts: bundle,
 				hasActive,
 				mixed,
+				isLast: false,
 			});
 		}
 		bundle = [];
@@ -65,5 +67,12 @@ export function groupParts(parts: MessagePart[], streaming: boolean, results: Ma
 		}
 	}
 	flush();
+
+	// Mark the last bundle so the template can keep it open while streaming.
+	for (let i = groups.length - 1; i >= 0; i--) {
+		const g = groups[i];
+		if (g.kind === 'bundle') { g.isLast = true; break; }
+	}
+
 	return groups;
 }
