@@ -425,6 +425,36 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		});
 	}
 
+	// Tests inject a fake LLM via this RPC call so they can drive `#generate`
+	// deterministically without hitting a real provider. Each entry in
+	// `script` is one turn's worth of `StreamEvent`s; `chat()` shifts a turn
+	// per call. `null` restores the real `routeLLM`. Production never touches
+	// this.
+	__llmOverrideScript: StreamEvent[][] | null = null;
+
+	async __setLLMOverride(script: StreamEvent[][] | null): Promise<void> {
+		this.__llmOverrideScript = script ? script.map((events) => events.slice()) : null;
+	}
+
+	#routeLLM(model: string): { model: string; providerID: string; chat(req: ChatRequest): AsyncIterable<StreamEvent> } {
+		const script = this.__llmOverrideScript;
+		if (script) {
+			return {
+				model,
+				providerID: 'fake',
+				async *chat(_req: ChatRequest): AsyncIterable<StreamEvent> {
+					const turn = script.shift();
+					if (!turn) {
+						yield { type: 'error', message: 'FakeLLM: ran out of scripted turns' };
+						return;
+					}
+					for (const ev of turn) yield ev;
+				},
+			};
+		}
+		return routeLLM(this.env, model);
+	}
+
 	async #generate(conversationId: string, assistantId: string, model: string): Promise<void> {
 		const startedAt = nowMs();
 		let firstTokenAt = 0;
@@ -459,7 +489,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		this.#sql.exec('UPDATE messages SET started_at = ? WHERE id = ?', startedAt, assistantId);
 
 		try {
-			const llm = routeLLM(this.env, model);
+			const llm = this.#routeLLM(model);
 			const history = this.#sql
 				.exec(
 					`SELECT role, content FROM messages WHERE id != ? AND ${COMPLETE_PREDICATE} ORDER BY created_at ASC`,

@@ -37,6 +37,9 @@ function openrouterFor(apiKey: string): OpenRouter {
 //   - the model id matches that provider's bare-id form (e.g. "claude-…"), AND
 //   - the corresponding provider key secret is configured.
 // Otherwise falls through to OpenRouter (catch-all per PRD §5.1).
+// Tests don't override this directly — they swap in a FakeLLM via the DO's
+// `__setLLMOverride` RPC method, which crosses the isolate boundary that
+// vitest-pool-workers maintains.
 export function routeLLM(env: Env, model: string): LLM {
 	if (isAnthropicModel(model) && env.ANTHROPIC_KEY) {
 		return new AnthropicLLM(anthropicFor(env.ANTHROPIC_KEY), model, 'anthropic');

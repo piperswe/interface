@@ -9,6 +9,80 @@ nearby), **P3** (nice-to-have).
 
 Numbers are line numbers in the file at the top of each section.
 
+> **Status:** the bulk of the punch list below has been fixed in this branch
+> (see git log). Skim §0 for the resolution map; the rest of the document is
+> kept for context on what was changed and why. Specific line numbers may
+> have drifted.
+
+---
+
+## 0. Resolved in this branch
+
+The following findings have been addressed; numbers reference the sections
+below.
+
+P0 / P1:
+- §1 #1 — DO schema versioning (now a `_meta.schema_version` row + an
+  append-only `MIGRATIONS` array; legacy ALTERs replay safely once).
+- §1 #2 — `MAX_TOOL_ITERATIONS` boundary appends an info part instead of
+  silently dropping the model's response.
+- §1 #3 — OpenRouter double-finalisation: tool-call finalisation hoisted to
+  a single `finalizeToolCalls` helper guarded by `emittedDone`.
+- §1 #4 — Tool calls/results persisted inside the inner loop; abort
+  synthesises tool_results for any unmatched tool_use.
+- §1 #6 — `thinking` and `reasoning.max_tokens` no longer overwrite each
+  other in `AnthropicLLM`; the DO picks one based on the routed provider.
+- §1 #7 — MCP tool descriptors cached per-DO with TTL; client reused per
+  server.
+- §1 #8 — `fetch_url` streams the body and cancels the reader at the cap.
+- §1 #9 — `compactHistory` subtracts cached tokens and uses the correct
+  drop-index fallback.
+- §1 #10 — Server-rendered markdown persisted in `messages.content_html` /
+  `thinking_html` / `parts_html` / `artifacts.content_html`; SSR re-renders
+  only what's missing.
+
+P2:
+- Sub-agent results forward `citations`/`artifacts` to the parent loop;
+  `ChatRequest.signal` plumbed through both adapters and the sub-agent.
+- Theme cached in-isolate (30s TTL) with explicit invalidation on save.
+- SDK clients cached in `routeLLM` (one Anthropic / one OpenRouter per
+  api key).
+- `compactHistory` now takes an injectable LLM factory.
+- Streaming markdown cache prunes entries for messages no longer in state.
+- Streaming `appendDeltaPart` mutates the trailing same-kind part rather
+  than allocating a new object per token.
+- Auto-scroll keyed on a content-length signature, not the whole array
+  reference.
+- Compose form snaps `selectedModel` back into the curated list when the
+  current selection vanishes.
+- `formatError` extracted to `errors.ts` (Anthropic, OpenRouter, DO all
+  use it).
+- Title generation deduped behind one `#writeTitle` helper.
+- `COMPLETE_PREDICATE` SQL constant.
+- `confirmSubmit` / `justSubmit` form-action helpers replace 15+ inline
+  handlers.
+- `clickOutside` Svelte action consolidates the dropdown-close pattern.
+- `KNOWN_SECRET_KEYS` is now the single source of truth for the optional-
+  secret list (mirrored in `app.d.ts` with a cross-reference comment).
+- `xhigh` preset id matches the reasoning effort name.
+- `fmtCost` auto-scales decimal precision.
+- Tool registry returns `errorCode` on failures.
+- `web_search` clamps `count` to [1, 10] before hitting the backend.
+- `ynab_update_transaction` skips the redundant GET when the caller
+  supplies all replacement fields.
+- `ynab_list_transactions` mutates in place rather than chaining
+  filter/sort/slice/map across separate iterations.
+- `Date.now`/`crypto.randomUUID` wrapped behind `src/lib/server/clock.ts`
+  for deterministic tests.
+- `FakeLLM` fixture + DO `__setLLMOverride` RPC method enable end-to-end
+  `#generate` tests; new tests cover happy path, iteration cap, persisted
+  HTML, and migration version.
+
+Deferred (per the audit's own §8 "do not fix yet" note):
+- Heavy YNAB DRY refactor (works, isolated, churn-prone).
+- `csrf.trustedOrigins` (correct as-is behind Access).
+- Bootstrap tree-shake (cosmetic).
+
 ---
 
 ## 1. Top findings (read first)
