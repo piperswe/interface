@@ -1,0 +1,39 @@
+src/lib/components/ToolCall.svelte
+  1969494e7bcb7c4a 29-32
+src/lib/components/parts.ts
+  1969494e7bcb7c4a 37-43
+src/lib/server/tools/sandbox.ts
+  1969494e7bcb7c4a 1-2,54-67,112-135,142
+src/lib/server/durable_objects/ConversationDurableObject.ts
+  1969494e7bcb7c4a 572-598,604-623
+src/lib/types/conversation.ts
+  1969494e7bcb7c4a 46,62
+src/lib/server/tools/registry.ts
+  1969494e7bcb7c4a 31
+src/lib/conversation-stream.test.ts
+  1969494e7bcb7c4a 12,136,139-140,142-171
+src/lib/conversation-stream.ts
+  1969494e7bcb7c4a 27,93-96,101,103-133,204,215
+src/lib/components/parts.test.ts
+  1969494e7bcb7c4a 106-119
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "9418d55574da4b4137c41302b99e558d5ab8d293",
+  "prompts": {
+    "1969494e7bcb7c4a": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_20f7b2ae5ffejLXYaiGp5v2yLT",
+        "model": "cloudflare-workers-ai/@cf/moonshotai/kimi-k2.6"
+      },
+      "human_author": "Piper McCorkle",
+      "messages": [],
+      "total_additions": 189,
+      "total_deletions": 41,
+      "accepted_lines": 189,
+      "overriden_lines": 0
+    }
+  }
+}
