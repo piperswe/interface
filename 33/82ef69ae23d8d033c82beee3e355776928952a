@@ -1,0 +1,31 @@
+static/icon.svg
+  6499c166f6e5c341 1-4
+static/icon-any.svg
+  6499c166f6e5c341 1-5
+static/favicon.svg
+  6499c166f6e5c341 1-4
+src/service-worker.ts
+  6499c166f6e5c341 1-16
+src/app.html
+  6499c166f6e5c341 7-13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "3382ef69ae23d8d033c82beee3e355776928952a",
+  "prompts": {
+    "6499c166f6e5c341": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_20b46c697ffeIs7VBgj8tlWoFx",
+        "model": "cloudflare-workers-ai/@cf/moonshotai/kimi-k2.6"
+      },
+      "human_author": "Piper McCorkle",
+      "messages": [],
+      "total_additions": 36,
+      "total_deletions": 1,
+      "accepted_lines": 36,
+      "overriden_lines": 0
+    }
+  }
+}
