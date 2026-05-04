@@ -4,6 +4,9 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
 	plugins: [sveltekit()],
+	build: {
+		sourcemap: true,
+	},
 	resolve: {
 		alias: {
 			// The `ynab` SDK's runtime calls `require("fetch-ponyfill")()` at
