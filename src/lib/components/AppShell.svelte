@@ -8,7 +8,9 @@
 	import { fmtRelative, recencyBandLabel } from '$lib/formatters';
 	import type { Snippet } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { createNewConversation } from '$lib/conversations.remote';
+	import { page } from '$app/state';
+	import { createNewConversation, archive } from '$lib/conversations.remote';
+	import { justSubmit } from '$lib/form-actions';
 
 	let {
 		conversations,
@@ -24,6 +26,8 @@
 	const grouped = $derived(groupByBand(conversations, now));
 
 	let creatingChat = $state(false);
+	let appShellEl: HTMLDivElement | null = $state(null);
+	let isResizing = $state(false);
 
 	function closeDrawer() {
 		const toggle = document.getElementById('sidebar-toggle') as HTMLInputElement | null;
@@ -41,9 +45,59 @@
 			creatingChat = false;
 		}
 	}
+
+	function setSidebarWidth(width: number) {
+		if (!appShellEl) return;
+		appShellEl.style.setProperty('--sidebar-width', `${width}px`);
+	}
+
+	function beginResize(initialWidth: number, startX: number) {
+		isResizing = true;
+		const minWidth = 200;
+		const maxWidth = 400;
+
+		function onMove(e: MouseEvent) {
+			const delta = e.clientX - startX;
+			const newWidth = Math.min(maxWidth, Math.max(minWidth, initialWidth + delta));
+			setSidebarWidth(newWidth);
+		}
+
+		function onUp(e: MouseEvent) {
+			isResizing = false;
+			window.removeEventListener('mousemove', onMove);
+			window.removeEventListener('mouseup', onUp);
+			const delta = e.clientX - startX;
+			const finalWidth = Math.min(maxWidth, Math.max(minWidth, initialWidth + delta));
+			try {
+				window.localStorage.setItem('sidebarWidth', String(finalWidth));
+			} catch {
+				// ignore
+			}
+		}
+
+		window.addEventListener('mousemove', onMove);
+		window.addEventListener('mouseup', onUp);
+	}
+
+	function onResizerDown(e: MouseEvent) {
+		if (!appShellEl) return;
+		const currentWidth = appShellEl.offsetWidth;
+		beginResize(currentWidth, e.clientX);
+	}
+
+	function restoreWidth() {
+		try {
+			const saved = window.localStorage.getItem('sidebarWidth');
+			if (saved) setSidebarWidth(parseInt(saved, 10));
+		} catch {
+			// ignore
+		}
+	}
 </script>
 
-<div class="app-shell">
+<svelte:window onload={restoreWidth} />
+
+<div class="app-shell" bind:this={appShellEl}>
 	<input type="checkbox" id="sidebar-toggle" class="sidebar-toggle" />
 	<label for="sidebar-toggle" class="sidebar-overlay" aria-hidden="true"></label>
 	<aside class="sidebar d-flex flex-column h-100 p-2 gap-2 bg-body-tertiary border-end" aria-label="Conversations">
@@ -68,7 +122,7 @@
 							<ul class="sidebar-list list-unstyled d-flex flex-column gap-0">
 								{#each items as c (c.id)}
 									{@const active = c.id === activeConversationId}
-									<li>
+									<li class="sidebar-list-item position-relative">
 										<a
 											href={`/c/${c.id}`}
 											class="sidebar-item d-flex flex-column text-decoration-none text-body small rounded p-2{active ? ' active' : ''}"
@@ -78,6 +132,29 @@
 											<span class="sidebar-item-title fw-medium text-truncate">{c.title}</span>
 											<span class="sidebar-item-meta">{fmtRelative(c.updated_at, now)}</span>
 										</a>
+										<form
+											class="sidebar-archive-form"
+											{...archive.for(c.id).enhance(justSubmit)}
+										>
+											<input type="hidden" name="conversationId" value={c.id} />
+											<input
+												type="hidden"
+												name="redirectTo"
+												value={active ? '/' : page.url.pathname + page.url.search}
+											/>
+											<button
+												type="submit"
+												class="sidebar-archive-btn"
+												aria-label="Archive conversation"
+												title="Archive"
+											>
+												<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+													<polyline points="21 8 21 21 3 21 3 8" />
+													<rect x="1" y="3" width="22" height="5" />
+													<line x1="10" y1="12" x2="14" y2="12" />
+												</svg>
+											</button>
+										</form>
 									</li>
 								{/each}
 							</ul>
@@ -90,6 +167,12 @@
 			<a href="/archive" class="sidebar-footer-link text-decoration-none text-muted small rounded p-2" onclick={closeDrawer}>Archive</a>
 			<a href="/settings" class="sidebar-footer-link text-decoration-none text-muted small rounded p-2" onclick={closeDrawer}>Settings</a>
 		</div>
+		<button
+			type="button"
+			class="sidebar-resizer"
+			aria-label="Resize sidebar"
+			onmousedown={onResizerDown}
+		></button>
 	</aside>
 	<main class="app-main position-relative d-flex flex-column h-100 overflow-hidden min-vw-0">
 		<div class="app-main-header">
@@ -122,6 +205,7 @@
 	}
 
 	.sidebar {
+		position: relative;
 		width: var(--sidebar-width);
 		min-height: 100vh;
 		min-height: 100dvh;
@@ -147,6 +231,7 @@
 
 	.sidebar-item {
 		transition: background 100ms ease;
+		padding-right: 2rem;
 	}
 
 	.sidebar-item:hover {
@@ -165,6 +250,58 @@
 	.sidebar-footer-link:hover {
 		color: var(--fg);
 		background: var(--bs-tertiary-bg);
+	}
+
+	.sidebar-list-item:hover .sidebar-archive-form {
+		opacity: 1;
+		pointer-events: auto;
+	}
+
+	.sidebar-archive-form {
+		position: absolute;
+		top: 50%;
+		right: 0.35rem;
+		transform: translateY(-50%);
+		opacity: 0;
+		pointer-events: none;
+		transition: opacity 120ms ease;
+		margin: 0;
+	}
+
+	.sidebar-archive-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 28px;
+		height: 28px;
+		padding: 0;
+		background: transparent;
+		border: 1px solid transparent;
+		border-radius: var(--bs-border-radius);
+		color: var(--muted-2);
+		cursor: pointer;
+		transition: background 120ms ease, color 120ms ease;
+	}
+
+	.sidebar-archive-btn:hover {
+		background: var(--bs-secondary-bg);
+		color: var(--fg);
+	}
+
+	.sidebar-resizer {
+		position: absolute;
+		top: 0;
+		right: 0;
+		bottom: 0;
+		width: 4px;
+		cursor: col-resize;
+		z-index: 10;
+		background: transparent;
+	}
+
+	.sidebar-resizer:hover {
+		background: var(--accent);
+		opacity: 0.35;
 	}
 
 	.app-main-header {
@@ -231,6 +368,12 @@
 		}
 		.sidebar-toggle-button {
 			display: inline-flex;
+		}
+		.sidebar-resizer {
+			display: none;
+		}
+		.sidebar-archive-form {
+			display: none;
 		}
 	}
 </style>
