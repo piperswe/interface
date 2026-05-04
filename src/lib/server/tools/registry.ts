@@ -35,6 +35,7 @@ export type ToolContext = {
 	assistantMessageId: string;
 	signal?: AbortSignal;
 	emitToolOutput?: (chunk: string) => void;
+	switchModel?: (newModelId: string) => void;
 };
 
 export interface Tool {

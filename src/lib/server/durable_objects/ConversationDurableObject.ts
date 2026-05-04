@@ -14,6 +14,7 @@ import { listMcpServers } from '../mcp_servers';
 import { listSubAgents } from '../sub_agents';
 import { createAgentTool } from '../tools/agent';
 import { createGetModelsTool } from '../tools/get_models';
+import { createSwitchModelTool } from '../tools/switch_model';
 import { getSetting, getSystemPrompt, getUserBio } from '../settings';
 import { registerSandboxTools } from '../tools/sandbox';
 import { getSandbox } from '@cloudflare/sandbox';
@@ -755,7 +756,8 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		this.#sql.exec('UPDATE messages SET started_at = ? WHERE id = ?', startedAt, assistantId);
 
 		try {
-			const llm = await this.#routeLLM(model);
+			let currentModel = model;
+			let llm = await this.#routeLLM(model);
 			const history = this.#sql
 				.exec(`SELECT role, content, parts FROM messages WHERE id != ? AND ${COMPLETE_PREDICATE} ORDER BY created_at ASC`, assistantId)
 				.toArray() as unknown as Array<{ role: string; content: string; parts: string | null }>;
@@ -950,6 +952,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 				// always sees a paired pair. The preliminary part is swapped for
 				// the final result on completion, and a streaming
 				// `emitToolOutput` callback streams output chunks to the UI.
+				let pendingModelSwitch: string | null = null;
 				for (const call of turnToolCalls) {
 					if (!this.#inProgress || this.#inProgress.messageId !== assistantId) break;
 					parts.push({ type: 'tool_use', id: call.id, name: call.name, input: call.input, thoughtSignature: call.thoughtSignature });
@@ -982,6 +985,9 @@ The user's bio, preferences, and context are provided separately in the user tur
 									toolUseId: call.id,
 									chunk,
 								});
+							},
+							switchModel: (newModelId: string) => {
+								pendingModelSwitch = newModelId;
 							},
 						},
 						call.name,
@@ -1056,6 +1062,15 @@ The user's bio, preferences, and context are provided separately in the user tur
 							},
 						],
 					});
+				}
+
+				if (pendingModelSwitch && pendingModelSwitch !== currentModel && this.#inProgress?.messageId === assistantId) {
+					currentModel = pendingModelSwitch;
+					llm = await this.#routeLLM(currentModel);
+					const infoPart: MessagePart = { type: 'info', text: `Switched to model: ${currentModel}` };
+					parts.push(infoPart);
+					this.#sql.exec('UPDATE messages SET parts = ? WHERE id = ?', JSON.stringify(parts), assistantId);
+					this.#broadcast('part', { messageId: assistantId, part: infoPart });
 				}
 
 				if (isLastIteration && this.#inProgress?.messageId === assistantId) {
@@ -1196,10 +1211,13 @@ The user's bio, preferences, and context are provided separately in the user tur
 		const registry = await this.#buildBaseToolRegistry();
 		try {
 			const [subAgents, allModels] = await Promise.all([listSubAgents(this.env), listAllModels(this.env)]);
+			const globalIds = allModels.map((m) => `${m.providerId}/${m.id}`);
+			if (globalIds.length > 0) {
+				registry.register(createSwitchModelTool({ availableModelGlobalIds: globalIds }));
+			}
 			const enabledSubAgents = subAgents.filter((sa) => sa.enabled);
 			if (enabledSubAgents.length > 0) {
 				registry.register(createGetModelsTool({ currentModel: model, availableModels: allModels }));
-				const globalIds = await listAllGlobalModelIds(this.env);
 				const agentTool = createAgentTool(
 					{
 						buildInnerToolRegistry: () => this.#buildBaseToolRegistry(),
