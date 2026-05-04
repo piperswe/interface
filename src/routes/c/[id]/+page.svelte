@@ -7,7 +7,7 @@
 	import { fmtCost } from '$lib/formatters';
 	import { attachConversationStream } from '$lib/conversation-stream';
 	import { createStreamingMarkdownRunner } from '$lib/streaming-markdown';
-	import { archive, destroy, regenerateTitle } from '$lib/conversations.remote';
+	import { archive, destroy, regenerateTitle, retryMessage } from '$lib/conversations.remote';
 	import { confirmSubmit, justSubmit } from '$lib/form-actions';
 	import { clickOutside } from '$lib/click-outside';
 	import type { PageData } from './$types';
@@ -137,6 +137,10 @@
 		await regenerateTitle(data.conversation.id);
 		await invalidateAll();
 	}
+
+	async function doRetry(messageId: string) {
+		await retryMessage({ conversationId: data.conversation.id, messageId, model: lastModel });
+	}
 </script>
 
 <svelte:head>
@@ -180,7 +184,7 @@
 			{:else}
 				<div class="messages d-flex flex-column gap-4">
 					{#each convState.messages as m (m.id)}
-						<Message message={m} />
+						<Message message={m} onRetry={busy ? undefined : () => doRetry(m.id)} />
 					{/each}
 				</div>
 			{/if}
