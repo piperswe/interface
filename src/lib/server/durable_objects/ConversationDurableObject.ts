@@ -209,6 +209,16 @@ const MIGRATIONS: { version: number; up: (sql: SqlStorage) => void }[] = [
 	{
 		version: 3,
 		up: (sql) => {
+			// Guard every step against already-dropped columns so this migration
+			// is safe to re-run if it previously completed the DROPs but crashed
+			// before the schema_version write (which would leave the DO stuck
+			// retrying the migration forever on each cold start).
+			const existingCols = new Set(
+				(sql.exec('PRAGMA table_info(messages)').toArray() as unknown as Array<{ name: string }>).map(
+					(c) => c.name,
+				),
+			);
+
 			// Backfill `parts` from any row that still has only the legacy
 			// tool_calls/tool_results/thinking columns set, using the same
 			// shape `buildLegacyParts` constructs at read time. Rows that
@@ -221,47 +231,51 @@ const MIGRATIONS: { version: number; up: (sql: SqlStorage) => void }[] = [
 			//
 			// Then drop the redundant columns. SQLite (3.35+) supports
 			// `DROP COLUMN`; Cloudflare's DO SQLite is recent enough.
-			sql.exec(
-				`UPDATE messages SET parts = parts_html WHERE parts IS NULL AND parts_html IS NOT NULL`,
-			);
+			if (existingCols.has('parts_html')) {
+				sql.exec(
+					`UPDATE messages SET parts = parts_html WHERE parts IS NULL AND parts_html IS NOT NULL`,
+				);
+			}
 			// Backfill from legacy tool_calls/tool_results columns for rows
 			// missing `parts` entirely. The JSON shape mirrors `buildLegacyParts`:
 			// thinking → text → tool_use[] → tool_result[].
-			const rows = sql
-				.exec(
-					`SELECT id, content, thinking, tool_calls, tool_results FROM messages
-					 WHERE parts IS NULL AND (thinking IS NOT NULL OR tool_calls IS NOT NULL OR tool_results IS NOT NULL)`,
-				)
-				.toArray() as unknown as Array<{
-				id: string;
-				content: string;
-				thinking: string | null;
-				tool_calls: string | null;
-				tool_results: string | null;
-			}>;
-			for (const r of rows) {
-				const tcs: Array<{ id: string; name: string; input: unknown; thoughtSignature?: string }> = (() => {
-					try {
-						return r.tool_calls ? JSON.parse(r.tool_calls) : [];
-					} catch {
-						return [];
+			if (existingCols.has('tool_calls') || existingCols.has('tool_results')) {
+				const rows = sql
+					.exec(
+						`SELECT id, content, thinking, tool_calls, tool_results FROM messages
+						 WHERE parts IS NULL AND (thinking IS NOT NULL OR tool_calls IS NOT NULL OR tool_results IS NOT NULL)`,
+					)
+					.toArray() as unknown as Array<{
+					id: string;
+					content: string;
+					thinking: string | null;
+					tool_calls: string | null;
+					tool_results: string | null;
+				}>;
+				for (const r of rows) {
+					const tcs: Array<{ id: string; name: string; input: unknown; thoughtSignature?: string }> = (() => {
+						try {
+							return r.tool_calls ? JSON.parse(r.tool_calls) : [];
+						} catch {
+							return [];
+						}
+					})();
+					const trs: Array<{ toolUseId: string; content: string; isError: boolean }> = (() => {
+						try {
+							return r.tool_results ? JSON.parse(r.tool_results) : [];
+						} catch {
+							return [];
+						}
+					})();
+					const built: Array<Record<string, unknown>> = [];
+					if (r.thinking) built.push({ type: 'thinking', text: r.thinking });
+					if (r.content) built.push({ type: 'text', text: r.content });
+					for (const tc of tcs) built.push({ type: 'tool_use', ...tc });
+					for (const tr of trs)
+						built.push({ type: 'tool_result', toolUseId: tr.toolUseId, content: tr.content, isError: tr.isError });
+					if (built.length > 0) {
+						sql.exec('UPDATE messages SET parts = ? WHERE id = ?', JSON.stringify(built), r.id);
 					}
-				})();
-				const trs: Array<{ toolUseId: string; content: string; isError: boolean }> = (() => {
-					try {
-						return r.tool_results ? JSON.parse(r.tool_results) : [];
-					} catch {
-						return [];
-					}
-				})();
-				const built: Array<Record<string, unknown>> = [];
-				if (r.thinking) built.push({ type: 'thinking', text: r.thinking });
-				if (r.content) built.push({ type: 'text', text: r.content });
-				for (const tc of tcs) built.push({ type: 'tool_use', ...tc });
-				for (const tr of trs)
-					built.push({ type: 'tool_result', toolUseId: tr.toolUseId, content: tr.content, isError: tr.isError });
-				if (built.length > 0) {
-					sql.exec('UPDATE messages SET parts = ? WHERE id = ?', JSON.stringify(built), r.id);
 				}
 			}
 			// Drop the redundant columns. `generation_json` was always-null
