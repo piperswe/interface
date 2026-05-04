@@ -30,7 +30,6 @@
 	const userBioForm = saveSetting.for('user_bio');
 	const thresholdForm = saveSetting.for('context_compaction_threshold');
 	const summaryTokensForm = saveSetting.for('context_compaction_summary_tokens');
-	const defaultModelForm = saveSetting.for('default_model');
 	const titleModelForm = saveSetting.for('title_model');
 
 	// Provider form state
@@ -191,20 +190,20 @@
 								{/if}
 							</div>
 							<div class="d-flex align-items-center gap-2">
-								<form {...reorderProviderModel.for(`${p.id}-${m.id}`).enhance(justSubmit)} class="m-0">
+								<form {...reorderProviderModel.for(`up:${p.id}:${m.id}`).enhance(justSubmit)} class="m-0">
 									<input type="hidden" name="provider_id" value={p.id} />
 									<input type="hidden" name="model_id" value={m.id} />
 									<input type="hidden" name="direction" value="up" />
 									<button type="submit" class="btn btn-sm btn-link p-0" disabled={i === 0} title="Move up">&#8593;</button>
 								</form>
-								<form {...reorderProviderModel.for(`${p.id}-${m.id}-down`).enhance(justSubmit)} class="m-0">
+								<form {...reorderProviderModel.for(`down:${p.id}:${m.id}`).enhance(justSubmit)} class="m-0">
 									<input type="hidden" name="provider_id" value={p.id} />
 									<input type="hidden" name="model_id" value={m.id} />
 									<input type="hidden" name="direction" value="down" />
 									<button type="submit" class="btn btn-sm btn-link p-0" disabled={i === providerModels.length - 1} title="Move down">&#8595;</button>
 								</form>
 								{#if data.defaultModel !== `${p.id}/${m.id}`}
-									<form {...defaultModelForm.enhance(justSubmit)} class="m-0">
+									<form {...saveSetting.for(`default_model:${p.id}/${m.id}`).enhance(justSubmit)} class="m-0">
 										<input type="hidden" name="key" value="default_model" />
 										<input type="hidden" name="value" value={`${p.id}/${m.id}`} />
 										<button type="submit" class="btn btn-sm btn-link p-0" title="Set as default">&#9733;</button>
@@ -221,7 +220,7 @@
 					</ul>
 
 					{#if addModelProviderId === p.id}
-						<form {...saveProviderModel.enhance(justSubmit)} class="mt-3 border rounded p-3">
+						<form {...saveProviderModel.for(p.id).enhance(justSubmit)} class="mt-3 border rounded p-3">
 							<input type="hidden" name="provider_id" value={p.id} />
 							<div class="mb-2">
 								<input name="model_id" bind:value={newModelId} placeholder="Model ID (sent to API)" class="form-control form-control-sm" required />
