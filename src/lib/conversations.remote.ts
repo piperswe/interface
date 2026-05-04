@@ -78,6 +78,23 @@ export const abortGeneration = command('unchecked', async (conversationId: strin
 	return { ok: true as const };
 });
 
+// Command: retry from any message — soft-deletes all subsequent messages and
+// starts a new generation. Works for both user and assistant messages.
+export const retryMessage = command(
+	'unchecked',
+	async (input: { conversationId: string; messageId: string; model: string }) => {
+		const stub = stubFor(input.conversationId);
+		const result = await stub.retryFromMessage(input.conversationId, input.messageId, input.model);
+		if (result.status === 'busy') {
+			error(409, 'Conversation busy: a generation is already in progress');
+		}
+		if (result.status === 'invalid') {
+			error(400, `Invalid: ${result.reason}`);
+		}
+		return { ok: true as const };
+	},
+);
+
 // Form: archive a conversation. Soft-delete only — the row stays in D1 and
 // the DO storage is untouched, so unarchive restores everything.
 export const archive = form('unchecked', async (data: { conversationId?: unknown }) => {
