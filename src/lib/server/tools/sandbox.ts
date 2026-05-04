@@ -13,8 +13,12 @@ function getConversationSandbox(ctx: ToolContext) {
 }
 
 // ---------------------------------------------------------------------------
-// SSH key injection (one-time per conversation)
+// SSH key injection (one-time per conversation, keyed on key fingerprint)
 // ---------------------------------------------------------------------------
+// Keyed by `${conversationId}:${keyFingerprint}` so rotating
+// `SANDBOX_SSH_KEY` causes a re-injection on the next call (instead of
+// every conversation that already saw the old key being stuck with it
+// until the isolate cycles).
 const sshKeyInjected = new Set<string>();
 
 const SSH_KEY_PATH = '/root/.ssh/sandbox_key';
@@ -27,6 +31,23 @@ const SSH_CONFIG = `Host github.com
 	IdentitiesOnly yes
 	StrictHostKeyChecking accept-new
 `;
+
+// Stable, low-collision fingerprint of the key bytes. Not cryptographic —
+// just used to detect rotation. Hash via Web Crypto (SHA-256, first 16 hex
+// chars). Cached so we don't re-hash every call.
+const fingerprintCache = new Map<string, string>();
+async function fingerprintKey(key: string): Promise<string> {
+	const cached = fingerprintCache.get(key);
+	if (cached) return cached;
+	const bytes = new TextEncoder().encode(key);
+	const digest = await crypto.subtle.digest('SHA-256', bytes);
+	const hex = Array.from(new Uint8Array(digest))
+		.slice(0, 8)
+		.map((b) => b.toString(16).padStart(2, '0'))
+		.join('');
+	fingerprintCache.set(key, hex);
+	return hex;
+}
 
 async function injectSshKey(sandbox: ReturnType<typeof getSandbox>, key: string): Promise<void> {
 	try {
@@ -45,10 +66,12 @@ async function injectSshKey(sandbox: ReturnType<typeof getSandbox>, key: string)
 async function ensureSshKey(ctx: ToolContext): Promise<void> {
 	const key = ctx.env.SANDBOX_SSH_KEY;
 	if (!key) return;
-	if (sshKeyInjected.has(ctx.conversationId)) return;
+	const fp = await fingerprintKey(key);
+	const cacheKey = `${ctx.conversationId}:${fp}`;
+	if (sshKeyInjected.has(cacheKey)) return;
 	const sandbox = getConversationSandbox(ctx);
 	await injectSshKey(sandbox, key);
-	sshKeyInjected.add(ctx.conversationId);
+	sshKeyInjected.add(cacheKey);
 }
 
 function formatExecResult(result: Pick<ExecResult, 'exitCode' | 'success' | 'stdout' | 'stderr'>): ToolExecutionResult {

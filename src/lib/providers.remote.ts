@@ -3,13 +3,15 @@ import { error, redirect } from '@sveltejs/kit';
 import {
 	createProvider,
 	deleteProvider,
+	getProvider,
 	updateProvider,
 	isValidProviderId,
 } from '$lib/server/providers/store';
 import {
 	createModel,
 	deleteModel,
-	deleteModelsForProvider,
+	getModel,
+	listModelsForProvider,
 	updateModel,
 	swapModelOrder,
 } from '$lib/server/providers/models';
@@ -59,7 +61,6 @@ export const saveProvider = form(
 		const env = getEnv();
 
 		// Check if this is an update or create by seeing if the provider exists
-		const { getProvider } = await import('$lib/server/providers/store');
 		const existing = await getProvider(env, id);
 
 		if (existing) {
@@ -109,7 +110,6 @@ export const saveProviderModel = form(
 		}
 
 		const env = getEnv();
-		const { getModel } = await import('$lib/server/providers/models');
 		const existing = await getModel(env, providerId, modelId);
 
 		if (existing) {
@@ -159,7 +159,6 @@ export const reorderProviderModel = form(
 		if (direction !== 'up' && direction !== 'down') error(400, 'Direction must be up or down');
 
 		const env = getEnv();
-		const { listModelsForProvider } = await import('$lib/server/providers/models');
 		const models = await listModelsForProvider(env, providerId);
 		const idx = models.findIndex((m) => m.id === modelId);
 		if (idx === -1) error(400, 'Model not found');
@@ -202,6 +201,13 @@ export const addPresetProvider = form(
 		if (!preset) error(400, `Unknown preset: ${presetId}`);
 
 		const env = getEnv();
+
+		// Pre-check uniqueness so the user gets a clean 400 instead of
+		// a unique-constraint 500 from D1.
+		const conflict = await getProvider(env, providerId);
+		if (conflict) {
+			error(400, `Provider id "${providerId}" already exists. Edit it or pick a different id.`);
+		}
 
 		// Create the provider
 		await createProvider(env, {

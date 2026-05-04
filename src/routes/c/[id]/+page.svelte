@@ -8,7 +8,7 @@
 	import { attachConversationStream } from '$lib/conversation-stream';
 	import { createStreamingMarkdownRunner } from '$lib/streaming-markdown';
 	import { archive, destroy, regenerateTitle } from '$lib/conversations.remote';
-	import { confirmSubmit, justSubmit } from '$lib/form-actions';
+	import { confirmToastSubmit, toastSubmit } from '$lib/form-actions';
 	import { clickOutside } from '$lib/click-outside';
 	import type { PageData } from './$types';
 
@@ -153,14 +153,14 @@
 		<details bind:this={menuEl} class="conversation-menu" use:clickOutside={closeMenu}>
 			<summary class="title-action-button btn btn-sm" aria-label="Conversation actions" title="More actions">⋯</summary>
 			<div class="conversation-menu-panel" role="menu">
-				<form {...archive.for(data.conversation.id).enhance(justSubmit)}>
+				<form {...archive.for(data.conversation.id).enhance(toastSubmit('Conversation archived'))}>
 					<input type="hidden" name="conversationId" value={data.conversation.id} />
 					<button type="submit" class="conversation-menu-item" role="menuitem">Archive</button>
 				</form>
 				<form
 					{...destroy
 						.for(data.conversation.id)
-						.enhance(confirmSubmit(`Delete "${data.conversation.title}"? This cannot be undone.`))}
+						.enhance(confirmToastSubmit(`Delete "${data.conversation.title}"? This cannot be undone.`, 'Conversation deleted'))}
 				>
 					<input type="hidden" name="conversationId" value={data.conversation.id} />
 					<button type="submit" class="conversation-menu-item danger" role="menuitem">Delete</button>

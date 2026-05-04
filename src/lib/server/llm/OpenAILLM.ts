@@ -146,7 +146,10 @@ export class OpenAILLM implements LLM {
 		} catch (e) {
 			if (!emittedDone) {
 				yield { type: 'error', message: formatError(e) };
+				return;
 			}
+			// Throw-after-done indicates a bug elsewhere — surface so it isn't silent.
+			console.warn('OpenAILLM: error after done', formatError(e));
 		}
 	}
 }

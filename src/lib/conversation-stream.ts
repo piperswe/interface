@@ -78,30 +78,21 @@ export function applyThinkingDelta(state: ConversationState, ev: ThinkingDeltaEv
 
 export function applyToolCall(state: ConversationState, ev: ToolCallEvent): ConversationState {
 	return patchMessage(state, ev.messageId, (m) => {
-		const existing = m.toolCalls ?? [];
-		if (existing.some((tc) => tc.id === ev.id)) return m;
 		const parts = m.parts ?? [];
-		const partsHasIt = parts.some((p) => p.type === 'tool_use' && p.id === ev.id);
+		if (parts.some((p) => p.type === 'tool_use' && p.id === ev.id)) return m;
 		return {
 			...m,
-			toolCalls: [...existing, { id: ev.id, name: ev.name, input: ev.input }],
-			parts: partsHasIt ? parts : [...parts, { type: 'tool_use', id: ev.id, name: ev.name, input: ev.input }],
+			parts: [...parts, { type: 'tool_use', id: ev.id, name: ev.name, input: ev.input }],
 		};
 	});
 }
 
 export function applyToolResult(state: ConversationState, ev: ToolResultEvent): ConversationState {
 	return patchMessage(state, ev.messageId, (m) => {
-		const existing = m.toolResults ?? [];
-		const alreadyHas = existing.some((r) => r.toolUseId === ev.toolUseId);
-		const toolResults = alreadyHas
-			? existing.map((r) => (r.toolUseId === ev.toolUseId ? { toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError } : r))
-			: [...existing, { toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }];
 		const parts = m.parts ?? [];
 		const partsHasIt = parts.some((p) => p.type === 'tool_result' && p.toolUseId === ev.toolUseId);
 		return {
 			...m,
-			toolResults,
 			parts: partsHasIt
 				? parts.map((p) =>
 						p.type === 'tool_result' && p.toolUseId === ev.toolUseId
@@ -115,22 +106,20 @@ export function applyToolResult(state: ConversationState, ev: ToolResultEvent): 
 
 export function applyToolOutput(state: ConversationState, ev: ToolOutputEvent): ConversationState {
 	return patchMessage(state, ev.messageId, (m) => {
-		const existing = m.toolResults ?? [];
-		const alreadyHas = existing.some((r) => r.toolUseId === ev.toolUseId);
-		const toolResults = alreadyHas
-			? existing.map((r) =>
-					r.toolUseId === ev.toolUseId ? { ...r, content: r.content + ev.chunk, streaming: true as const } : r,
-				)
-			: [...existing, { toolUseId: ev.toolUseId, content: ev.chunk, isError: false, streaming: true as const }];
 		const parts = m.parts ?? [];
 		const partsHasIt = parts.some((p) => p.type === 'tool_result' && p.toolUseId === ev.toolUseId);
 		return {
 			...m,
-			toolResults,
 			parts: partsHasIt
 				? parts.map((p) =>
 						p.type === 'tool_result' && p.toolUseId === ev.toolUseId
-							? { type: 'tool_result', toolUseId: ev.toolUseId, content: (p as { content: string }).content + ev.chunk, isError: false, streaming: true as const }
+							? {
+									type: 'tool_result',
+									toolUseId: ev.toolUseId,
+									content: (p as { content: string }).content + ev.chunk,
+									isError: false,
+									streaming: true as const,
+								}
 							: p,
 					)
 				: [...parts, { type: 'tool_result', toolUseId: ev.toolUseId, content: ev.chunk, isError: false, streaming: true as const }],

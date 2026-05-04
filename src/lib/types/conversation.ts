@@ -7,21 +7,24 @@ export type Conversation = {
 	archived_at?: number | null;
 };
 
+// Token-usage shape persisted in `messages.usage_json`. Mirrors `Usage` in
+// `$lib/server/llm/LLM` — declared here too so frontend code can import it
+// without crossing the server-only boundary.
+export type ConversationUsage = {
+	inputTokens: number;
+	outputTokens: number;
+	totalTokens?: number;
+	cacheReadInputTokens?: number;
+	cacheCreationInputTokens?: number;
+	thinkingTokens?: number;
+};
+
 export interface MetaSnapshot {
 	startedAt: number;
 	firstTokenAt: number;
 	// Raw provider response chunk (OpenAI-compat shape or provider-specific)
 	lastChunk: unknown | null;
-	// Provider usage info
-	usage: {
-		promptTokens: number;
-		completionTokens: number;
-		totalTokens?: number;
-		promptTokensDetails?: { cachedTokens?: number; cacheWriteTokens?: number };
-		completionTokensDetails?: { reasoningTokens?: number };
-	} | null;
-	// OpenRouter generation metadata (optional, legacy)
-	generation: unknown | null;
+	usage: ConversationUsage | null;
 }
 
 // Artifact types start at the minimum viable set per Phase 0.5: code (syntax-
@@ -86,8 +89,6 @@ export type MessageRow = {
 	createdAt: number;
 	meta: MetaSnapshot | null;
 	artifacts?: Artifact[];
-	toolCalls?: ToolCallRecord[];
-	toolResults?: ToolResultRecord[];
 	parts?: MessagePart[];
 };
 

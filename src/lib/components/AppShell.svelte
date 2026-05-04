@@ -23,7 +23,15 @@
 		children: Snippet;
 	} = $props();
 
-	const now = Date.now();
+	// Reactive `now` so relative timestamps in the sidebar refresh while the
+	// page sits idle. 60s cadence matches `fmtRelative`'s minute resolution.
+	let now = $state(Date.now());
+	$effect(() => {
+		const id = setInterval(() => {
+			now = Date.now();
+		}, 60_000);
+		return () => clearInterval(id);
+	});
 	const grouped = $derived(groupByBand(conversations, now));
 
 	let creatingChat = $state(false);
