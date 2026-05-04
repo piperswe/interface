@@ -1,0 +1,25 @@
+src/routes/+page.svelte
+  95e330c4b482696c 12
+src/lib/components/AppShell.svelte
+  95e330c4b482696c 39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "0cb0df8bd12fb5119506f0e6d3efaa302374456d",
+  "prompts": {
+    "95e330c4b482696c": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_20f86da6cffeyZ4Ne02sDvD93i",
+        "model": "cloudflare-workers-ai/@cf/moonshotai/kimi-k2.6"
+      },
+      "human_author": "Piper McCorkle",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 2,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    }
+  }
+}
