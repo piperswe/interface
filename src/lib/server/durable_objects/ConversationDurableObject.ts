@@ -254,9 +254,9 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			// where the dead generation left off so the user doesn't have to
 			// retry. Resume also runs lazily on `subscribe` / `addUserMessage`;
 			// the alarm is a backstop for the no-traffic case.
-			const interrupted = this.#sql
-				.exec("SELECT id FROM messages WHERE status = 'streaming' LIMIT 1")
-				.toArray() as unknown as Array<{ id: string }>;
+			const interrupted = this.#sql.exec("SELECT id FROM messages WHERE status = 'streaming' LIMIT 1").toArray() as unknown as Array<{
+				id: string;
+			}>;
 			if (interrupted.length > 0) {
 				await ctx.storage.setAlarm(Date.now() + 200);
 			}
@@ -282,9 +282,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 				value TEXT NOT NULL
 			)
 		`);
-		const row = this.#sql
-			.exec("SELECT value FROM _meta WHERE key = 'schema_version'")
-			.toArray() as unknown as Array<{ value: string }>;
+		const row = this.#sql.exec("SELECT value FROM _meta WHERE key = 'schema_version'").toArray() as unknown as Array<{ value: string }>;
 		const current = row[0] ? Number.parseInt(row[0].value, 10) || 0 : 0;
 		for (const m of MIGRATIONS) {
 			if (m.version <= current) continue;
@@ -303,9 +301,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	// one-way).
 	#getConversationId(): string | null {
 		if (this.#conversationId) return this.#conversationId;
-		const row = this.#sql
-			.exec("SELECT value FROM _meta WHERE key = 'conversation_id'")
-			.toArray() as unknown as Array<{ value: string }>;
+		const row = this.#sql.exec("SELECT value FROM _meta WHERE key = 'conversation_id'").toArray() as unknown as Array<{ value: string }>;
 		this.#conversationId = row[0]?.value ?? null;
 		return this.#conversationId;
 	}
@@ -381,11 +377,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		const messageId = target.id;
 		const model = target.model;
 		if (!model) {
-			this.#sql.exec(
-				"UPDATE messages SET status = 'error', error = ? WHERE id = ?",
-				'Cannot resume generation: model unknown.',
-				messageId,
-			);
+			this.#sql.exec("UPDATE messages SET status = 'error', error = ? WHERE id = ?", 'Cannot resume generation: model unknown.', messageId);
 			this.#broadcast('refresh', {});
 			return;
 		}
@@ -405,9 +397,9 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		// partial text/thinking (those followed the last completed tool round
 		// and were unflushed when the DO died) and normalize any orphan
 		// tool_use blocks so the LLM history is valid.
-		const row = this.#sql
-			.exec('SELECT parts FROM messages WHERE id = ?', messageId)
-			.toArray() as unknown as Array<{ parts: string | null }>;
+		const row = this.#sql.exec('SELECT parts FROM messages WHERE id = ?', messageId).toArray() as unknown as Array<{
+			parts: string | null;
+		}>;
 		const persistedParts = parseJson<MessagePart[]>(row[0]?.parts ?? null) ?? [];
 		const trimmed = trimTrailingPartialOutput(persistedParts);
 		normalizeParts(trimmed, 'Generation interrupted by Durable Object restart; retrying.');
@@ -765,10 +757,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		try {
 			const llm = await this.#routeLLM(model);
 			const history = this.#sql
-				.exec(
-					`SELECT role, content, parts FROM messages WHERE id != ? AND ${COMPLETE_PREDICATE} ORDER BY created_at ASC`,
-					assistantId,
-				)
+				.exec(`SELECT role, content, parts FROM messages WHERE id != ? AND ${COMPLETE_PREDICATE} ORDER BY created_at ASC`, assistantId)
 				.toArray() as unknown as Array<{ role: string; content: string; parts: string | null }>;
 			let messages: Message[] = [];
 			for (const m of history) {
@@ -797,9 +786,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 
 			// Check whether we need to compact context before sending.
 			const lastUsageRow = this.#sql
-				.exec(
-					`SELECT usage_json FROM messages WHERE role = 'assistant' AND ${COMPLETE_PREDICATE} ORDER BY created_at DESC LIMIT 1`,
-				)
+				.exec(`SELECT usage_json FROM messages WHERE role = 'assistant' AND ${COMPLETE_PREDICATE} ORDER BY created_at DESC LIMIT 1`)
 				.toArray() as unknown as Array<{ usage_json: string | null }>;
 			const lastUsage = lastUsageRow[0]?.usage_json
 				? (parseJson<{
@@ -1333,7 +1320,9 @@ The user's bio, preferences, and context are provided separately in the user tur
 
 	#readArtifactsByMessage(): Map<string, Artifact[]> {
 		const rows = this.#sql
-			.exec(`SELECT id, message_id, type, name, language, version, content, content_html, created_at FROM artifacts ORDER BY created_at ASC`)
+			.exec(
+				`SELECT id, message_id, type, name, language, version, content, content_html, created_at FROM artifacts ORDER BY created_at ASC`,
+			)
 			.toArray() as unknown as Array<{
 			id: string;
 			message_id: string;
@@ -1494,18 +1483,12 @@ The user's bio, preferences, and context are provided separately in the user tur
 	// `onlyIfDefault` guards the auto-generated path so a user-edited title
 	// isn't clobbered by a slow waitUntil() catching up. `regenerateTitle`
 	// passes false because the user explicitly asked for a refresh.
-	async #writeTitle(
-		conversationId: string,
-		input: string,
-		opts: { systemPrompt: string; onlyIfDefault: boolean },
-	): Promise<void> {
+	async #writeTitle(conversationId: string, input: string, opts: { systemPrompt: string; onlyIfDefault: boolean }): Promise<void> {
 		const collapsed = input.replace(/\s+/g, ' ').trim();
 		// Pick the configured title model, or fall back to the first available model.
 		const globalIds = await listAllGlobalModelIds(this.env);
 		const configuredTitleModel = await getSetting(this.env, 'title_model');
-		const titleModel = configuredTitleModel && globalIds.includes(configuredTitleModel)
-			? configuredTitleModel
-			: globalIds[0];
+		const titleModel = configuredTitleModel && globalIds.includes(configuredTitleModel) ? configuredTitleModel : globalIds[0];
 		if (!titleModel) return; // No models configured, skip title generation
 
 		let title: string;
@@ -1517,7 +1500,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 					{ role: 'system', content: opts.systemPrompt },
 					{ role: 'user', content: collapsed },
 				],
-				maxTokens: 30,
+				maxTokens: 1024,
 				temperature: 0.5,
 			})) {
 				if (ev.type === 'text_delta') buf += ev.delta;
