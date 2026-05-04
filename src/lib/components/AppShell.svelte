@@ -95,7 +95,6 @@
 			// ignore
 		}
 	}
-
 	onMount(() => {
 		restoreWidth();
 	});
