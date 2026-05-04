@@ -62,9 +62,14 @@
 			convState = next;
 		},
 	);
-	onMount(() => {
+
+	// The page component is reused when navigating between conversations,
+	// so onMount only fires once. Attach the SSE stream reactively so
+	// every conversation change gets its own subscription.
+	$effect(() => {
+		const id = data.conversation.id;
 		const detach = attachConversationStream(
-			data.conversation.id,
+			id,
 			() => convState,
 			(next) => {
 				convState = next;
@@ -73,6 +78,11 @@
 		);
 		return () => {
 			detach();
+		};
+	});
+
+	onMount(() => {
+		return () => {
 			mdRunner.dispose();
 		};
 	});
