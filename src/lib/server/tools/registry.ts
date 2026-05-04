@@ -1,11 +1,5 @@
 import type { ToolDefinition } from '../llm/LLM';
 
-// Per-result content cap. Tool output is JSON-encoded into a single SQLite
-// cell on the conversation Durable Object; workerd's SQLite throws
-// SQLITE_TOOBIG once a value crosses ~2 MB. Capping every result here also
-// keeps a single oversized blob from blowing the next LLM turn's token budget.
-export const MAX_TOOL_RESULT_BYTES = 128 * 1024;
-
 // Result of a tool execution. The string `content` flows back into the next
 // LLM turn as a tool_result block; structured `citations` and `artifacts` are
 // surfaced to the UI separately by the tool execution loop.
@@ -76,7 +70,7 @@ export class ToolRegistry {
 			return { content: `Unknown tool: ${name}`, isError: true, errorCode: 'not_found' };
 		}
 		try {
-			return capResultContent(await tool.execute(ctx, input));
+			return await tool.execute(ctx, input);
 		} catch (e) {
 			return {
 				content: e instanceof Error ? e.message : String(e),
@@ -85,13 +79,4 @@ export class ToolRegistry {
 			};
 		}
 	}
-}
-
-function capResultContent(result: ToolExecutionResult): ToolExecutionResult {
-	const original = result.content.length;
-	if (original <= MAX_TOOL_RESULT_BYTES) return result;
-	return {
-		...result,
-		content: result.content.slice(0, MAX_TOOL_RESULT_BYTES) + `\n…[truncated, original ${original} bytes]`,
-	};
 }

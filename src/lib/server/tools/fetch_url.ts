@@ -3,7 +3,6 @@ import { parseHTML } from 'linkedom';
 import type { Tool, ToolContext, ToolExecutionResult } from './registry';
 
 const MAX_BYTES = 256 * 1024;
-const USER_AGENT = 'Interface/0.0 (+https://github.com/piperswe/interface)';
 
 const fetchUrlInputSchema = {
 	type: 'object',
@@ -42,25 +41,17 @@ function injectBaseHref(html: string, url: string): string {
 	return baseTag + html;
 }
 
-// Workers can't run jsdom (it pulls in `node:vm`/`node:fs`), so we use
-// linkedom — a lightweight DOM that ships its own HTML parser and works
-// in workerd. Readability only needs the standard query/traversal APIs,
-// which linkedom implements faithfully.
-function parseHtmlSafe(html: string, url: string): Document | null {
+function extractWithReadability(html: string, url: string): { content: string; title: string | null } | null {
+	// Workers can't run jsdom (it pulls in `node:vm`/`node:fs`), so we use
+	// linkedom — a lightweight DOM that ships its own HTML parser and works
+	// in workerd. Readability only needs the standard query/traversal APIs,
+	// which linkedom implements faithfully.
 	try {
 		const { document } = parseHTML(injectBaseHref(html, url));
 		// Readability's typings expect the lib-DOM `Document`; linkedom's
 		// document is structurally compatible for the methods Readability
 		// calls. The cast keeps both type checkers happy.
-		return document as unknown as Document;
-	} catch {
-		return null;
-	}
-}
-
-function extractFromDocument(document: Document): { content: string; title: string | null } | null {
-	try {
-		const reader = new Readability(document);
+		const reader = new Readability(document as unknown as Document);
 		const article = reader.parse();
 		if (!article) return null;
 		const text = article.textContent?.trim() ?? '';
@@ -74,17 +65,6 @@ function extractFromDocument(document: Document): { content: string; title: stri
 	} catch {
 		return null;
 	}
-}
-
-// Some sites (notably Cloudflare's docs) publish a hand-curated Markdown
-// copy of every page and advertise it via `<link rel="alternate"
-// type="text/markdown">`. When present, fetching it is strictly better than
-// running Readability over rendered HTML: cleaner tokens, headings preserved,
-// code blocks intact.
-function findMarkdownAlternateHref(document: Document): string | null {
-	const link = document.querySelector('link[rel~="alternate"][type="text/markdown"]');
-	const href = link?.getAttribute('href');
-	return href ? href : null;
 }
 
 export const fetchUrlTool: Tool = {
@@ -112,39 +92,22 @@ export const fetchUrlTool: Tool = {
 		const useReadability = args.readability !== false;
 		try {
 			const res = await fetch(parsed.toString(), {
-				headers: { 'User-Agent': USER_AGENT },
+				headers: { 'User-Agent': 'Interface/0.0 (+https://github.com/piperswe/interface)' },
 				redirect: 'follow',
 				signal: ctx.signal,
 			});
 			const contentType = res.headers.get('content-type');
-			const initial = await readBodyWithCap(res, cap);
+			const { text, originalBytes, hitCap } = await readBodyWithCap(res, cap);
 
-			let body = initial.text;
-			let originalBytes = initial.originalBytes;
-			let hitCap = initial.hitCap;
+			let body = text;
 			let mode = 'raw';
 			if (useReadability && res.ok && isHtml(contentType) && !hitCap) {
 				// Skip Readability when we hit the cap — partial HTML breaks the
 				// parser and the truncated raw text is more useful than nothing.
-				const document = parseHtmlSafe(initial.text, parsed.toString());
-				if (document) {
-					const altHref = findMarkdownAlternateHref(document);
-					if (altHref) {
-						const alt = await tryFetchMarkdownAlternate(altHref, parsed.toString(), ctx.signal, cap);
-						if (alt) {
-							body = alt.text;
-							originalBytes = alt.originalBytes;
-							hitCap = alt.hitCap;
-							mode = 'markdown-alternate';
-						}
-					}
-					if (mode === 'raw') {
-						const extracted = extractFromDocument(document);
-						if (extracted) {
-							body = extracted.content;
-							mode = 'readability';
-						}
-					}
+				const extracted = extractWithReadability(text, parsed.toString());
+				if (extracted) {
+					body = extracted.content;
+					mode = 'readability';
 				}
 			}
 
@@ -209,34 +172,4 @@ async function readBodyWithCap(
 		}
 	}
 	return { text, originalBytes: bytes, hitCap };
-}
-
-// Fetch the markdown alternate URL advertised by the page. Returns null on
-// any failure — caller falls back to Readability.
-async function tryFetchMarkdownAlternate(
-	href: string,
-	pageUrl: string,
-	signal: AbortSignal | undefined,
-	cap: number,
-): Promise<{ text: string; originalBytes: number; hitCap: boolean } | null> {
-	let altUrl: URL;
-	try {
-		altUrl = new URL(href, pageUrl);
-	} catch {
-		return null;
-	}
-	if (altUrl.protocol !== 'http:' && altUrl.protocol !== 'https:') return null;
-	try {
-		const res = await fetch(altUrl.toString(), {
-			headers: { 'User-Agent': USER_AGENT },
-			redirect: 'follow',
-			signal,
-		});
-		if (!res.ok) return null;
-		const body = await readBodyWithCap(res, cap);
-		if (!body.text.trim()) return null;
-		return body;
-	} catch {
-		return null;
-	}
 }

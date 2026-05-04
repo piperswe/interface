@@ -16,7 +16,7 @@ import { listMcpServers } from '../mcp_servers';
 import { listSubAgents } from '../sub_agents';
 import { createAgentTool } from '../tools/agent';
 import { createGetModelsTool } from '../tools/get_models';
-import { getCloudflareAIGatewayId, getModelList, getSystemPrompt, getUserBio } from '../settings';
+import { getModelList, getSystemPrompt, getUserBio } from '../settings';
 import { registerSandboxTools } from '../tools/sandbox';
 import { getSandbox } from '@cloudflare/sandbox';
 import type { Sandbox } from '@cloudflare/sandbox';
@@ -33,12 +33,6 @@ const TITLE_MAX = 60;
 const MAX_TOOL_ITERATIONS = 10;
 const TITLE_MODEL = 'deepseek/deepseek-v4-flash';
 const MCP_TOOL_CACHE_TTL_MS = 60_000;
-// Per-cell budget for the largest tool-result-bearing columns (`tool_results`,
-// `parts`, `parts_html`). workerd's SQLite throws SQLITE_TOOBIG once a value
-// crosses ~2 MB; we keep ~500 KB of headroom for JSON/HTML inflation. The
-// per-result cap in the tool registry (MAX_TOOL_RESULT_BYTES) handles the
-// single-large-blob case; this budget catches accumulation across many calls.
-export const MAX_ROW_PAYLOAD_BYTES = 1.5 * 1024 * 1024;
 // SQL fragment used by every history / state fetch on the messages table.
 const COMPLETE_PREDICATE = "status = 'complete' AND deleted_at IS NULL";
 
@@ -124,43 +118,6 @@ function trimTrailingPartialOutput(parts: MessagePart[]): MessagePart[] {
 		break;
 	}
 	return parts.slice(0, cut);
-}
-
-// Largest of the tool-result-bearing JSON payloads. We size the budget against
-// the worst single cell rather than their sum because the cell limit is
-// per-value, not per-row.
-function maxToolResultPayloadBytes(toolResults: RecordedToolResult[], parts: MessagePart[]): number {
-	return Math.max(JSON.stringify(toolResults).length, JSON.stringify(parts).length);
-}
-
-// Walk tool results oldest-first and replace .content with a small stub until
-// the serialized payload fits under MAX_ROW_PAYLOAD_BYTES. Mutates both arrays
-// in place so the matching ToolResultPart in `parts` stays consistent. The
-// in-memory `messages[]` fed to the LLM mid-turn is built separately and is
-// untouched, so the model still sees full content for the current turn — only
-// reload/regenerate sees the stub.
-export function elideOversizedToolResults(
-	toolCalls: RecordedToolCall[],
-	toolResults: RecordedToolResult[],
-	parts: MessagePart[],
-): void {
-	if (maxToolResultPayloadBytes(toolResults, parts) <= MAX_ROW_PAYLOAD_BYTES) return;
-	const nameById = new Map(toolCalls.map((c) => [c.id, c.name]));
-	for (let i = 0; i < toolResults.length; i++) {
-		const r = toolResults[i];
-		const name = nameById.get(r.toolUseId) ?? 'unknown';
-		const stub = `[result for ${name} elided — exceeded row size budget]`;
-		if (r.content === stub) continue;
-		toolResults[i] = { ...r, content: stub };
-		const partIdx = parts.findIndex((p) => p.type === 'tool_result' && p.toolUseId === r.toolUseId);
-		if (partIdx >= 0) {
-			const part = parts[partIdx];
-			if (part.type === 'tool_result') {
-				parts[partIdx] = { ...part, content: stub };
-			}
-		}
-		if (maxToolResultPayloadBytes(toolResults, parts) <= MAX_ROW_PAYLOAD_BYTES) return;
-	}
 }
 
 // Idempotent helper: run ALTER, swallow "duplicate column" errors so the same
@@ -655,60 +612,6 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		this.#broadcast('refresh', {});
 	}
 
-	// Retry from any message: soft-deletes all messages after the anchor user
-	// message (or after the target if it's a user message), then starts a new
-	// generation. For assistant messages the anchor is the immediately preceding
-	// user message; for user messages the message itself is the anchor.
-	async retryFromMessage(conversationId: string, messageId: string, model: string): Promise<AddMessageResult> {
-		this.#setConversationId(conversationId);
-		if (this.#inProgress || this.#resumePromise) return { status: 'busy' };
-		if (!model) return { status: 'invalid', reason: 'missing model' };
-
-		const msgRows = this.#sql
-			.exec('SELECT id, role, created_at FROM messages WHERE id = ? AND deleted_at IS NULL', messageId)
-			.toArray() as unknown as Array<{ id: string; role: string; created_at: number }>;
-
-		if (msgRows.length === 0) return { status: 'invalid', reason: 'message not found' };
-		const msg = msgRows[0];
-
-		let anchorCreatedAt: number;
-		if (msg.role === 'user') {
-			anchorCreatedAt = msg.created_at;
-		} else {
-			const userRows = this.#sql
-				.exec(
-					"SELECT created_at FROM messages WHERE role = 'user' AND created_at < ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1",
-					msg.created_at,
-				)
-				.toArray() as unknown as Array<{ created_at: number }>;
-			if (userRows.length === 0) return { status: 'invalid', reason: 'no preceding user message' };
-			anchorCreatedAt = userRows[0].created_at;
-		}
-
-		const now = nowMs();
-		this.#sql.exec(
-			'UPDATE messages SET deleted_at = ? WHERE created_at > ? AND deleted_at IS NULL',
-			now,
-			anchorCreatedAt,
-		);
-
-		const assistantId = uuid();
-		this.#sql.exec(
-			"INSERT INTO messages (id, role, content, model, status, created_at) VALUES (?, 'assistant', '', ?, 'streaming', ?)",
-			assistantId,
-			model,
-			now + 1,
-		);
-
-		this.#inProgress = { messageId: assistantId, content: '', thinking: '', parts: [] };
-		this.#broadcast('refresh', {});
-
-		await this.env.DB.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').bind(now, conversationId).run();
-
-		this.ctx.waitUntil(this.#generate(conversationId, assistantId, model));
-		return { status: 'started' };
-	}
-
 	// Wipe all DO storage. Cloudflare doesn't expose a "delete this DO from
 	// the namespace" API, but `ctx.storage.deleteAll()` drops every row in
 	// the SQLite store, so the next time something resolves this DO id it'll
@@ -807,7 +710,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		this.__llmOverrideCalls = [];
 	}
 
-	async #routeLLM(model: string): Promise<{ model: string; providerID: string; chat(req: ChatRequest): AsyncIterable<StreamEvent> }> {
+	#routeLLM(model: string): { model: string; providerID: string; chat(req: ChatRequest): AsyncIterable<StreamEvent> } {
 		const script = this.__llmOverrideScript;
 		if (script) {
 			const calls = this.__llmOverrideCalls;
@@ -825,7 +728,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 				},
 			};
 		}
-		return await routeLLM(this.env, model);
+		return routeLLM(this.env, model);
 	}
 
 	async #generate(conversationId: string, assistantId: string, model: string): Promise<void> {
@@ -872,7 +775,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		this.#sql.exec('UPDATE messages SET started_at = ? WHERE id = ?', startedAt, assistantId);
 
 		try {
-			const llm = await this.#routeLLM(model);
+			const llm = this.#routeLLM(model);
 			const history = this.#sql
 				.exec(
 					`SELECT role, content FROM messages WHERE id != ? AND ${COMPLETE_PREDICATE} ORDER BY created_at ASC`,
@@ -953,14 +856,13 @@ Be concise by default. Expand when the task genuinely calls for depth (design do
 
 The user's bio, preferences, and context are provided separately in the user turn. Use that context when it's actually relevant to the task — don't surface personal details just to demonstrate that you remember them.`;
 
-			const [convoRow, rawSystemPrompt, userBio, modelList, cfGatewayId] = await Promise.all([
+			const [convoRow, rawSystemPrompt, userBio, modelList] = await Promise.all([
 				this.env.DB.prepare('SELECT thinking_budget FROM conversations WHERE id = ?')
 					.bind(conversationId)
 					.first<{ thinking_budget: number | null }>(),
 				getSystemPrompt(this.env),
 				getUserBio(this.env),
 				getModelList(this.env),
-				getCloudflareAIGatewayId(this.env),
 			]);
 			const thinkingBudget = convoRow?.thinking_budget ?? null;
 
@@ -971,12 +873,10 @@ The user's bio, preferences, and context are provided separately in the user tur
 			let thinking: ChatRequest['thinking'] | undefined;
 
 			// Translate the per-conversation thinking budget into the right
-			// provider shape. Anthropic — whether direct (ANTHROPIC_KEY) or
-			// routed through AI Gateway — uses the legacy `thinking` field;
-			// everything else uses `reasoning`. Only one is set so
+			// provider shape. Native Anthropic uses the legacy `thinking`
+			// field; everything else uses `reasoning`. Only one is set so
 			// AnthropicLLM never has to disambiguate.
-			const isNativeAnthropic =
-				isAnthropicModel(model) && (typeof this.env.ANTHROPIC_KEY === 'string' || cfGatewayId != null);
+			const isNativeAnthropic = isAnthropicModel(model) && typeof this.env.ANTHROPIC_KEY === 'string';
 			if (thinkingBudget != null && thinkingBudget > 0) {
 				if (isNativeAnthropic) {
 					thinking = { type: 'enabled', budgetTokens: thinkingBudget };
@@ -1131,7 +1031,6 @@ The user's bio, preferences, and context are provided separately in the user tur
 					// consistent. We also need content/thinking flushed here so
 					// any debounced delta flush isn't beaten to the row.
 					this.#cancelFlush();
-					elideOversizedToolResults(accumulatedToolCalls, accumulatedToolResults, parts);
 					this.#sql.exec(
 						'UPDATE messages SET content = ?, thinking = ?, tool_calls = ?, tool_results = ?, parts = ? WHERE id = ?',
 						this.#inProgress!.content,
@@ -1199,10 +1098,6 @@ The user's bio, preferences, and context are provided separately in the user tur
 			this.#cancelFlush();
 			const finalText = this.#inProgress.content;
 			const finalThinking = this.#inProgress.thinking;
-			// Elide before rendering so `parts_html` mirrors whatever ends up
-			// in `parts` — otherwise we'd re-render full content into HTML and
-			// then write the stubbed parts, mismatching the two columns.
-			elideOversizedToolResults(accumulatedToolCalls, accumulatedToolResults, parts);
 			// Pre-render the heavy markdown / Shiki / KaTeX pipeline once at
 			// generation completion so subsequent page loads don't re-render
 			// every assistant message on every navigation. Best-effort: we
@@ -1645,7 +1540,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 		const collapsed = input.replace(/\s+/g, ' ').trim();
 		let title: string;
 		try {
-			const llm = await routeLLM(this.env, TITLE_MODEL);
+			const llm = routeLLM(this.env, TITLE_MODEL);
 			let buf = '';
 			for await (const ev of llm.chat({
 				messages: [

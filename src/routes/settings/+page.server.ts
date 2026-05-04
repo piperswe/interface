@@ -2,7 +2,6 @@ import { error } from '@sveltejs/kit';
 import { listMcpServers } from '$lib/server/mcp_servers';
 import {
 	describeSecretKeys,
-	getCloudflareAIGatewayId,
 	getContextCompactionSummaryTokens,
 	getContextCompactionThreshold,
 	getModelList,
@@ -16,7 +15,7 @@ import type { PageServerLoad } from './$types';
 export const load: PageServerLoad = async ({ platform }) => {
 	if (!platform) error(500, 'Cloudflare platform bindings unavailable');
 	const env = platform.env;
-	const [mcpServers, subAgents, threshold, summaryTokens, modelList, systemPrompt, userBio, cfAIGatewayId] = await Promise.all([
+	const [mcpServers, subAgents, threshold, summaryTokens, modelList, systemPrompt, userBio] = await Promise.all([
 		listMcpServers(env),
 		listSubAgents(env),
 		getContextCompactionThreshold(env),
@@ -24,7 +23,6 @@ export const load: PageServerLoad = async ({ platform }) => {
 		getModelList(env),
 		getSystemPrompt(env),
 		getUserBio(env),
-		getCloudflareAIGatewayId(env),
 	]);
 	return {
 		secretKeys: describeSecretKeys(env),
@@ -36,6 +34,5 @@ export const load: PageServerLoad = async ({ platform }) => {
 		defaultModelList: DEFAULT_MODEL_LIST,
 		systemPrompt: systemPrompt ?? '',
 		userBio: userBio ?? '',
-		cfAIGatewayId: cfAIGatewayId ?? '',
 	};
 };

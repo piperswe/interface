@@ -9,7 +9,7 @@
 	import MetaPanel from './MetaPanel.svelte';
 	import ToolCall from './ToolCall.svelte';
 
-	let { message, onRetry }: { message: MessageRow; onRetry?: () => void } = $props();
+	let { message }: { message: MessageRow } = $props();
 
 	const isAssistant = $derived(message.role === 'assistant');
 	const isStreaming = $derived(message.status === 'streaming');
@@ -111,11 +111,6 @@
 	{/if}
 	{#if isAssistant && !isStreaming}
 		<MetaPanel snapshot={message.meta} />
-	{/if}
-	{#if !isStreaming && onRetry}
-		<div class="message-actions">
-			<button type="button" class="retry-btn" onclick={onRetry} title="Retry">↺</button>
-		</div>
 	{/if}
 </div>
 
@@ -423,31 +418,5 @@
 	/* Nested adjustments */
 	details.thinking.nested {
 		padding-left: 0.35rem;
-	}
-
-	.message-actions {
-		display: flex;
-		margin-top: 0.15rem;
-	}
-
-	.message[data-role='user'] .message-actions {
-		justify-content: flex-end;
-	}
-
-	.retry-btn {
-		background: transparent;
-		border: none;
-		padding: 0.15rem 0.3rem;
-		font-size: 0.85rem;
-		line-height: 1;
-		color: var(--muted-2);
-		cursor: pointer;
-		border-radius: var(--bs-border-radius);
-		transition: color 120ms ease, background 120ms ease;
-	}
-
-	.retry-btn:hover {
-		color: var(--fg);
-		background: var(--bs-secondary-bg);
 	}
 </style>

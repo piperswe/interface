@@ -2,7 +2,6 @@
 	import '../app.scss';
 	import 'katex/dist/katex.min.css';
 	import AppShell from '$lib/components/AppShell.svelte';
-	import Toaster from '$lib/components/Toaster.svelte';
 	import { page } from '$app/state';
 	import type { Snippet } from 'svelte';
 	import type { LayoutData } from './$types';
@@ -17,4 +16,3 @@
 <AppShell conversations={data.conversations} {activeConversationId}>
 	{@render children()}
 </AppShell>
-<Toaster />

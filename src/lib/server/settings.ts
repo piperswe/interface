@@ -69,19 +69,6 @@ export async function getUserBio(env: Env, userId: number = SINGLE_USER_ID): Pro
 	return getSetting(env, 'user_bio', userId);
 }
 
-// ---- Cloudflare AI Gateway helpers -----------------------------------------------------
-
-// Non-secret D1 setting: the AI Gateway slug. When set, all third-party
-// provider traffic is re-routed through `env.AI.gateway(id)` (Workers AI is
-// always routed through the binding). Token auth comes from the
-// CF_AI_GATEWAY_TOKEN secret; provider keys are not sent.
-export async function getCloudflareAIGatewayId(env: Env, userId: number = SINGLE_USER_ID): Promise<string | null> {
-	const v = await getSetting(env, 'cf_ai_gateway_id', userId);
-	if (!v) return null;
-	const trimmed = v.trim();
-	return trimmed.length > 0 ? trimmed : null;
-}
-
 // ---- Model list helpers ----------------------------------------------------------------
 
 import { parseModelList, type ModelEntry } from './models/config';
@@ -106,10 +93,6 @@ export const KNOWN_SECRET_KEYS = [
 	'KAGI_KEY',
 	'YNAB_TOKEN',
 	'SANDBOX_SSH_KEY',
-	// Cloudflare API token sent as `cf-aig-authorization` when AI Gateway is
-	// configured. Required for Unified Billing / BYOK auth; provider keys
-	// (ANTHROPIC_KEY, OPENAI_KEY, …) are not sent through the Gateway path.
-	'CF_AI_GATEWAY_TOKEN',
 ] as const;
 
 export type SecretKeyName = (typeof KNOWN_SECRET_KEYS)[number];

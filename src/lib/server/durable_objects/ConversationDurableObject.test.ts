@@ -3,8 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createConversation } from '../conversations';
 import { textTurn, toolUseTurn } from '../../../../test/fakes/FakeLLM';
 import { getConversationStub, type ConversationStub } from './index';
-import { MAX_ROW_PAYLOAD_BYTES, elideOversizedToolResults } from './ConversationDurableObject';
-import type { ConversationState, MessagePart, ToolCallRecord, ToolResultRecord } from '$lib/types/conversation';
+import type { ConversationState } from '$lib/types/conversation';
 import type { ChatRequest, StreamEvent } from '../llm/LLM';
 
 type WithLLMOverride = {
@@ -627,65 +626,6 @@ describe('ConversationDurableObject', () => {
 				expect(rows).toHaveLength(1);
 				expect(Number(rows[0].value)).toBeGreaterThanOrEqual(2);
 			});
-		});
-	});
-
-	describe('elideOversizedToolResults', () => {
-		const oversized = 'A'.repeat(256 * 1024);
-
-		function buildOversizedTurn(numCalls: number): {
-			toolCalls: ToolCallRecord[];
-			toolResults: ToolResultRecord[];
-			parts: MessagePart[];
-		} {
-			const toolCalls: ToolCallRecord[] = [];
-			const toolResults: ToolResultRecord[] = [];
-			const parts: MessagePart[] = [];
-			for (let i = 0; i < numCalls; i++) {
-				toolCalls.push({ id: `t${i}`, name: 'big_tool', input: {} });
-				toolResults.push({ toolUseId: `t${i}`, content: oversized, isError: false });
-				parts.push({ type: 'tool_use', id: `t${i}`, name: 'big_tool', input: {} });
-				parts.push({ type: 'tool_result', toolUseId: `t${i}`, content: oversized, isError: false });
-			}
-			return { toolCalls, toolResults, parts };
-		}
-
-		it('is a no-op when payload is under budget', () => {
-			const { toolCalls, toolResults, parts } = buildOversizedTurn(2);
-			const before = JSON.stringify(toolResults);
-			elideOversizedToolResults(toolCalls, toolResults, parts);
-			expect(JSON.stringify(toolResults)).toBe(before);
-		});
-
-		it('elides oldest results first until payload fits under MAX_ROW_PAYLOAD_BYTES', () => {
-			const { toolCalls, toolResults, parts } = buildOversizedTurn(8);
-			expect(JSON.stringify(toolResults).length).toBeGreaterThan(MAX_ROW_PAYLOAD_BYTES);
-
-			elideOversizedToolResults(toolCalls, toolResults, parts);
-
-			const max = Math.max(JSON.stringify(toolResults).length, JSON.stringify(parts).length);
-			expect(max).toBeLessThanOrEqual(MAX_ROW_PAYLOAD_BYTES);
-			// Oldest result is stubbed; freshest survives intact.
-			expect(toolResults[0].content).toMatch(/elided/);
-			expect(toolResults.at(-1)!.content).toBe(oversized);
-		});
-
-		it('keeps parts and tool_results consistent for elided entries', () => {
-			const { toolCalls, toolResults, parts } = buildOversizedTurn(8);
-			elideOversizedToolResults(toolCalls, toolResults, parts);
-			for (const r of toolResults) {
-				if (!r.content.includes('elided')) continue;
-				const part = parts.find((p) => p.type === 'tool_result' && p.toolUseId === r.toolUseId);
-				expect(part?.type).toBe('tool_result');
-				if (part?.type === 'tool_result') expect(part.content).toBe(r.content);
-			}
-		});
-
-		it('uses the tool name from the matching tool_call in the stub', () => {
-			const { toolCalls, toolResults, parts } = buildOversizedTurn(8);
-			elideOversizedToolResults(toolCalls, toolResults, parts);
-			const elided = toolResults.find((r) => r.content.includes('elided'));
-			expect(elided?.content).toContain('big_tool');
 		});
 	});
 });
