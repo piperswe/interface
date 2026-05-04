@@ -1,0 +1,41 @@
+src/lib/server/durable_objects/ConversationDurableObject.ts
+  47401f8ad3fd84ae 19-20,298-306,672-675
+test/worker-entry.ts
+  47401f8ad3fd84ae 5
+Dockerfile
+  47401f8ad3fd84ae 1
+scripts/postbuild.mjs
+  47401f8ad3fd84ae 13,15-16,23
+src/lib/server/tools/sandbox.ts
+  47401f8ad3fd84ae 1-375
+src/app.d.ts
+  47401f8ad3fd84ae 9-10,41-43
+worker-configuration.d.ts
+  47401f8ad3fd84ae 2,10
+package.json
+  47401f8ad3fd84ae 36
+wrangler.test.jsonc
+  47401f8ad3fd84ae 17-28,36-38
+wrangler.jsonc
+  47401f8ad3fd84ae 20-31,39-41
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "70db49b24bb85517c9f634e7939542ca22638280",
+  "prompts": {
+    "47401f8ad3fd84ae": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_20fbddbb7ffeWr1rOXQ5GhEre0",
+        "model": "cloudflare-workers-ai/@cf/moonshotai/kimi-k2.6"
+      },
+      "human_author": "Piper McCorkle",
+      "messages": [],
+      "total_additions": 448,
+      "total_deletions": 15,
+      "accepted_lines": 434,
+      "overriden_lines": 0
+    }
+  }
+}
