@@ -9,7 +9,7 @@
 	import MetaPanel from './MetaPanel.svelte';
 	import ToolCall from './ToolCall.svelte';
 
-	let { message }: { message: MessageRow } = $props();
+	let { message, timestamp }: { message: MessageRow; timestamp?: number } = $props();
 
 	const isAssistant = $derived(message.role === 'assistant');
 	const isStreaming = $derived(message.status === 'streaming');
@@ -65,6 +65,11 @@
 	{/if}
 {/snippet}
 
+{#if timestamp !== undefined && message.role === 'user'}
+	<time class="message-timestamp" datetime={new Date(timestamp).toISOString()}>
+		{new Date(timestamp).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}
+	</time>
+{/if}
 <div class="message d-flex flex-column gap-1" data-message-id={message.id} data-role={message.role} data-status={message.status}>
 	<div class="role">
 		{message.role}{message.model ? ` · ${message.model}` : ''}
@@ -418,5 +423,13 @@
 	/* Nested adjustments */
 	details.thinking.nested {
 		padding-left: 0.35rem;
+	}
+
+	.message-timestamp {
+		display: block;
+		text-align: right;
+		font-size: 0.75rem;
+		color: var(--muted-2);
+		margin-bottom: -0.5rem;
 	}
 </style>

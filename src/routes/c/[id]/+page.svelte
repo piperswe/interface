@@ -177,8 +177,12 @@
 				<div class="empty">No messages yet — send the first one below.</div>
 			{:else}
 				<div class="messages d-flex flex-column gap-4">
-					{#each convState.messages as m (m.id)}
-						<Message message={m} />
+					{#each convState.messages as m, i (m.id)}
+						{#if m.role !== 'system'}
+							{@const prev = convState.messages[i - 1]}
+							{@const timestamp = m.role === 'user' && prev?.role === 'system' ? prev.createdAt : undefined}
+							<Message message={m} {timestamp} />
+						{/if}
 					{/each}
 				</div>
 			{/if}

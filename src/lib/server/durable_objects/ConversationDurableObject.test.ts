@@ -572,9 +572,10 @@ describe('ConversationDurableObject', () => {
 				const last = s.messages.at(-1);
 				return last?.status === 'complete';
 			});
-			expect(state.messages).toHaveLength(2);
-			expect(state.messages[0]).toMatchObject({ role: 'user', content: 'hi' });
-			expect(state.messages[1]).toMatchObject({ role: 'assistant', status: 'complete', content: 'hello back' });
+			expect(state.messages).toHaveLength(3);
+			expect(state.messages[0]).toMatchObject({ role: 'system' });
+			expect(state.messages[1]).toMatchObject({ role: 'user', content: 'hi' });
+			expect(state.messages[2]).toMatchObject({ role: 'assistant', status: 'complete', content: 'hello back' });
 			expect(state.inProgress).toBeNull();
 		});
 

@@ -78,7 +78,7 @@ export type MessagePart = TextPart | ThinkingPart | ToolUsePart | ToolResultPart
 
 export type MessageRow = {
 	id: string;
-	role: 'user' | 'assistant';
+	role: 'user' | 'assistant' | 'system';
 	content: string;
 	contentHtml?: string | null;
 	thinking?: string | null;
