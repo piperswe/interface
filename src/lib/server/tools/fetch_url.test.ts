@@ -91,4 +91,84 @@ describe('fetch_url tool', () => {
 		expect(result.content).toContain('mode=raw');
 		expect(result.content).toContain('"hello":"world"');
 	});
+
+	it('prefers a markdown alternate link over Readability when present', async () => {
+		const html = `<!doctype html><html><head>
+			<title>Cloudflare Page</title>
+			<link rel="alternate" type="text/markdown" href="/page.md">
+		</head><body><article><h1>HTML version</h1><p>Some chrome and rendered noise.</p></article></body></html>`;
+		const markdown = '# Hello\n\nThis is the curated markdown body.';
+		const fetchSpy = vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(
+				new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+			)
+			.mockResolvedValueOnce(
+				new Response(markdown, { status: 200, headers: { 'content-type': 'text/markdown' } }),
+			);
+		const result = await fetchUrlTool.execute(ctx, { url: 'https://example.com/page' });
+		expect(result.isError).toBeFalsy();
+		expect(result.content).toContain('mode=markdown-alternate');
+		expect(result.content).toContain('# Hello');
+		expect(result.content).toContain('curated markdown body');
+		expect(fetchSpy).toHaveBeenCalledTimes(2);
+		expect(fetchSpy.mock.calls[1][0]).toBe('https://example.com/page.md');
+	});
+
+	it('falls back to Readability when the markdown alternate fetch fails', async () => {
+		const html = `<!doctype html><html><head>
+			<title>Page</title>
+			<link rel="alternate" type="text/markdown" href="/missing.md">
+		</head><body>
+			<main><article>
+				<h1>Article heading</h1>
+				<p>This is a substantial paragraph of body text long enough that Readability decides it is the main article content of the page rather than chrome or boilerplate. We need enough words for the heuristic to score this section highly.</p>
+				<p>Another paragraph reinforces the main article body, ensuring Readability picks the article element. Lorem ipsum dolor sit amet consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.</p>
+			</article></main>
+		</body></html>`;
+		vi.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(
+				new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+			)
+			.mockResolvedValueOnce(new Response('not found', { status: 404 }));
+		const result = await fetchUrlTool.execute(ctx, { url: 'https://example.com/page' });
+		expect(result.isError).toBeFalsy();
+		expect(result.content).toContain('mode=readability');
+		expect(result.content).toContain('Article heading');
+	});
+
+	it('ignores the markdown alternate when readability is disabled', async () => {
+		const html = `<!doctype html><html><head>
+			<link rel="alternate" type="text/markdown" href="/page.md">
+		</head><body><h1>Raw</h1></body></html>`;
+		const fetchSpy = vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(
+				new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+			);
+		const result = await fetchUrlTool.execute(ctx, {
+			url: 'https://example.com/page',
+			readability: false,
+		});
+		expect(result.content).toContain('mode=raw');
+		expect(result.content).toContain('<h1>Raw</h1>');
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
+	});
+
+	it('resolves a relative markdown alternate href against the page URL', async () => {
+		const html = `<!doctype html><html><head>
+			<link rel="alternate" type="text/markdown" href="y.md">
+		</head><body><p>noise</p></body></html>`;
+		const fetchSpy = vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(
+				new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+			)
+			.mockResolvedValueOnce(
+				new Response('# Resolved\n', { status: 200, headers: { 'content-type': 'text/markdown' } }),
+			);
+		const result = await fetchUrlTool.execute(ctx, { url: 'https://example.com/docs/x/' });
+		expect(result.content).toContain('mode=markdown-alternate');
+		expect(fetchSpy.mock.calls[1][0]).toBe('https://example.com/docs/x/y.md');
+	});
 });
