@@ -1,8 +1,9 @@
 import { DurableObject } from 'cloudflare:workers';
 import { OpenRouter } from '@openrouter/sdk';
 import type { ChatStreamChunk, ChatUsage, GenerationResponseData } from '@openrouter/sdk/models';
-import { routeLLM } from '../llm/route';
+import { isAnthropicModel, routeLLM } from '../llm/route';
 import { compactHistory } from '../llm/context';
+import { formatError } from '../llm/errors';
 import type { ChatRequest, ContentBlock, Message, ReasoningEffort, StreamEvent, ToolDefinition, Usage } from '../llm/LLM';
 import { ToolRegistry } from '../tools/registry';
 import type { ToolCitation } from '../tools/registry';
@@ -29,6 +30,7 @@ const PING_INTERVAL_MS = 25_000;
 const TITLE_MAX = 60;
 const MAX_TOOL_ITERATIONS = 10;
 const TITLE_MODEL = 'deepseek/deepseek-v4-flash';
+const MCP_TOOL_CACHE_TTL_MS = 60_000;
 
 import type {
 	JsonValue,
@@ -66,16 +68,18 @@ function buildLegacyParts(
 	return parts;
 }
 
-function formatLLMError(e: unknown): string {
-	if (e instanceof Error && e.message) return e.message.slice(0, 500);
-	if (typeof e === 'object' && e !== null) {
-		try {
-			return JSON.stringify(e).slice(0, 500);
-		} catch {
-			/* fall through */
-		}
+// Append synthetic tool_result entries for any tool_use parts that don't
+// already have a matching result in the timeline. Used on abort and on
+// MAX_TOOL_ITERATIONS exit so we never persist a tool_use without a partner —
+// providers reject any history that contains an unmatched tool_use block.
+function normalizeParts(parts: MessagePart[], reason: string): void {
+	const matched = new Set<string>();
+	for (const p of parts) if (p.type === 'tool_result') matched.add(p.toolUseId);
+	for (const p of parts) {
+		if (p.type !== 'tool_use' || matched.has(p.id)) continue;
+		parts.push({ type: 'tool_result', toolUseId: p.id, content: reason, isError: true });
+		matched.add(p.id);
 	}
-	return String(e).slice(0, 500);
 }
 
 function usageToOpenRouter(usage: Usage): ChatUsage {
@@ -111,6 +115,10 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	} | null = null;
 	#pingInterval: ReturnType<typeof setInterval> | null = null;
 	#encoder = new TextEncoder();
+	// Per-DO cache of MCP tool descriptors keyed by server id. The clients
+	// themselves are reused inside the closure so we keep one instance per
+	// server. Refreshed on TTL expiry or when the cached entry is cleared.
+	#mcpCache = new Map<number, { fetchedAt: number; client: McpHttpClient; tools: import('../mcp/types').McpToolDescriptor[] }>();
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -281,6 +289,10 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	async abortGeneration(_conversationId: string): Promise<void> {
 		if (!this.#inProgress) return;
 		const ip = this.#inProgress;
+		// If a tool was in flight when abort fired, parts has a tool_use without
+		// its matching result. Synthesize an error result so future turns don't
+		// reject the history with an unmatched tool_use.
+		normalizeParts(ip.parts, 'Aborted by user before this tool completed.');
 		this.#sql.exec(
 			`UPDATE messages SET content = ?, status = 'complete', thinking = ?, parts = ? WHERE id = ?`,
 			ip.content,
@@ -420,9 +432,18 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 				)
 				.toArray() as unknown as Array<{ usage_json: string | null }>;
 			const lastUsage = lastUsageRow[0]?.usage_json
-				? (parseJson<{ promptTokens: number; inputTokens?: number }>(lastUsageRow[0].usage_json) ?? null)
+				? (parseJson<{
+						promptTokens: number;
+						inputTokens?: number;
+						promptTokensDetails?: { cachedTokens?: number };
+					}>(lastUsageRow[0].usage_json) ?? null)
 				: null;
-			const usageForCompaction = lastUsage ? { inputTokens: lastUsage.inputTokens ?? lastUsage.promptTokens } : null;
+			const usageForCompaction = lastUsage
+				? {
+						inputTokens: lastUsage.inputTokens ?? lastUsage.promptTokens,
+						cacheReadInputTokens: lastUsage.promptTokensDetails?.cachedTokens,
+					}
+				: null;
 			const compaction = await compactHistory(messages, model, this.env, usageForCompaction);
 			if (compaction.wasCompacted) {
 				const infoPart: MessagePart = {
@@ -477,19 +498,20 @@ The user's bio, preferences, and context are provided separately in the user tur
 			let reasoning: ReasoningConfig | undefined;
 			let thinking: ChatRequest['thinking'] | undefined;
 
+			// Translate the per-conversation thinking budget into the right
+			// provider shape. Native Anthropic uses the legacy `thinking`
+			// field; everything else uses `reasoning`. Only one is set so
+			// AnthropicLLM never has to disambiguate.
+			const isNativeAnthropic = isAnthropicModel(model) && typeof this.env.ANTHROPIC_KEY === 'string';
 			if (thinkingBudget != null && thinkingBudget > 0) {
-				if (reasoningType === 'effort') {
+				if (isNativeAnthropic) {
+					thinking = { type: 'enabled', budgetTokens: thinkingBudget };
+				} else if (reasoningType === 'effort') {
 					const effort = budgetToEffort(thinkingBudget);
 					if (effort) reasoning = { type: 'effort', effort };
 				} else if (reasoningType === 'max_tokens') {
 					reasoning = { type: 'max_tokens', maxTokens: thinkingBudget };
 				}
-			}
-
-			// Native Anthropic path still uses the legacy ThinkingConfig shape.
-			const isNativeAnthropic = model.startsWith('claude-') && typeof this.env.ANTHROPIC_KEY === 'string';
-			if (isNativeAnthropic && thinkingBudget != null && thinkingBudget > 0) {
-				thinking = { type: 'enabled', budgetTokens: thinkingBudget };
 			}
 
 			const COMPATIBILITY_NOTE =
@@ -502,10 +524,12 @@ The user's bio, preferences, and context are provided separately in the user tur
 			const registry = await this.#buildToolRegistry(model);
 			const tools: ToolDefinition[] | undefined = registry.definitions().length > 0 ? registry.definitions() : undefined;
 
+			let hitIterationCap = false;
 			for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
 				const turnToolCalls: RecordedToolCall[] = [];
 				let turnText = '';
 				let providerError: string | null = null;
+				const isLastIteration = iteration === MAX_TOOL_ITERATIONS - 1;
 
 				for await (const ev of llm.chat({
 					messages,
@@ -560,9 +584,14 @@ The user's bio, preferences, and context are provided separately in the user tur
 				messages.push({ role: 'assistant', content: assistantBlocks });
 
 				// Execute each tool, broadcast call+result events, append result to history.
+				// We push `tool_use` to the parts mirror only AFTER the tool finishes
+				// so an abort that fires mid-execution can never persist a tool_use
+				// without its matching tool_result. The client receives the
+				// `tool_call` SSE event up front and tracks the in-flight state on
+				// its own — the server-side mirror only needs to be consistent at
+				// persistence time.
 				for (const call of turnToolCalls) {
 					if (!this.#inProgress || this.#inProgress.messageId !== assistantId) break;
-					parts.push({ type: 'tool_use', id: call.id, name: call.name, input: call.input });
 					this.#broadcast('tool_call', {
 						messageId: assistantId,
 						id: call.id,
@@ -576,12 +605,23 @@ The user's bio, preferences, and context are provided separately in the user tur
 						isError: result.isError ?? false,
 					};
 					accumulatedToolResults.push(resultRecord);
+					parts.push({ type: 'tool_use', id: call.id, name: call.name, input: call.input });
 					parts.push({
 						type: 'tool_result',
 						toolUseId: call.id,
 						content: result.content,
 						isError: result.isError ?? false,
 					});
+					// Persist the running tool_calls/tool_results columns each step so
+					// stream death or DO eviction leaves a row that's still consistent
+					// — never a tool_use without a tool_result.
+					this.#sql.exec(
+						'UPDATE messages SET tool_calls = ?, tool_results = ?, parts = ? WHERE id = ?',
+						JSON.stringify(accumulatedToolCalls),
+						JSON.stringify(accumulatedToolResults),
+						JSON.stringify(parts),
+						assistantId,
+					);
 					if (result.citations) accumulatedCitations.push(...result.citations);
 					if (result.artifacts) {
 						for (const a of result.artifacts) {
@@ -613,7 +653,22 @@ The user's bio, preferences, and context are provided separately in the user tur
 						],
 					});
 				}
+
+				if (isLastIteration && this.#inProgress?.messageId === assistantId) {
+					// We executed this iteration's tools but the loop is about to
+					// exit, so the model never gets to respond to the results.
+					// Surface that explicitly so the user knows why the answer
+					// stops mid-flow.
+					hitIterationCap = true;
+					const infoPart: MessagePart = {
+						type: 'info',
+						text: `Tool iteration budget exhausted (${MAX_TOOL_ITERATIONS} rounds). The model did not produce a final answer; ask a follow-up to continue.`,
+					};
+					parts.push(infoPart);
+					this.#broadcast('part', { messageId: assistantId, part: infoPart });
+				}
 			}
+			void hitIterationCap;
 
 			if (!this.#inProgress || this.#inProgress.messageId !== assistantId) {
 				// Aborted by user — don't overwrite the row already persisted by abortGeneration.
@@ -653,7 +708,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 				// Already aborted and cleaned up by abortGeneration.
 				return;
 			}
-			const msg = formatLLMError(e);
+			const msg = formatError(e);
 			const partial = this.#inProgress.content;
 			this.#sql.exec(
 				"UPDATE messages SET content = ?, status = 'error', error = ?, first_token_at = ?, last_chunk_json = ?, usage_json = ? WHERE id = ?",
@@ -734,9 +789,19 @@ The user's bio, preferences, and context are provided separately in the user tur
 		authJson: string | null,
 	): Promise<void> {
 		try {
-			const client = new McpHttpClient({ url, authJson });
-			const tools = await client.listTools();
-			for (const tool of tools) {
+			const cached = this.#mcpCache.get(serverId);
+			const fresh = cached && Date.now() - cached.fetchedAt < MCP_TOOL_CACHE_TTL_MS;
+			let entry: { fetchedAt: number; client: McpHttpClient; tools: import('../mcp/types').McpToolDescriptor[] };
+			if (fresh && cached) {
+				entry = cached;
+			} else {
+				const client = new McpHttpClient({ url, authJson });
+				const tools = await client.listTools();
+				entry = { fetchedAt: Date.now(), client, tools };
+				this.#mcpCache.set(serverId, entry);
+			}
+			const callClient = entry.client;
+			for (const tool of entry.tools) {
 				const namespacedName = `mcp_${serverId}_${tool.name}`;
 				registry.register({
 					definition: {
@@ -745,7 +810,6 @@ The user's bio, preferences, and context are provided separately in the user tur
 						inputSchema: tool.inputSchema ?? { type: 'object' },
 					},
 					async execute(_ctx, input) {
-						const callClient = new McpHttpClient({ url, authJson });
 						try {
 							const result = await callClient.callTool(tool.name, input);
 							const text = result.content.map((c) => (c.type === 'text' ? c.text : `[${c.type}]`)).join('\n');
@@ -757,7 +821,8 @@ The user's bio, preferences, and context are provided separately in the user tur
 				});
 			}
 		} catch {
-			// Server unreachable during enumeration — skip.
+			// Server unreachable during enumeration — skip and try again next turn.
+			this.#mcpCache.delete(serverId);
 		}
 	}
 

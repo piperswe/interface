@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { Messages } from '@anthropic-ai/sdk/resources/messages/messages';
 import type LLM from './LLM';
 import type { CacheControl, ChatRequest, ContentBlock, Message, StreamEvent, ToolDefinition } from './LLM';
+import { formatError } from './errors';
 
 // Anthropic adapter. Honors:
 //   - thinking: ChatRequest.thinking → Anthropic `thinking` param.
@@ -43,15 +44,18 @@ export class AnthropicLLM implements LLM {
 			if (request.tools && request.tools.length > 0) {
 				params.tools = toAnthropicTools(request.tools, request.cacheControl);
 			}
+			// `thinking` and `reasoning` both map to Anthropic's thinking param.
+			// `thinking` is the legacy native-Anthropic shape and takes precedence
+			// when both are set (callers should pick one); `reasoning.max_tokens`
+			// is the unified shape used by the OpenRouter path.
 			if (request.thinking && request.thinking.type === 'enabled') {
 				params.thinking = { type: 'enabled', budget_tokens: request.thinking.budgetTokens };
-			}
-			if (request.reasoning && request.reasoning.type === 'max_tokens') {
+			} else if (request.reasoning && request.reasoning.type === 'max_tokens') {
 				params.thinking = { type: 'enabled', budget_tokens: request.reasoning.maxTokens };
 			}
 			if (request.temperature !== undefined) params.temperature = request.temperature;
 
-			const stream = this.#client.messages.stream(params);
+			const stream = this.#client.messages.stream(params, request.signal ? { signal: request.signal } : undefined);
 
 			for await (const ev of stream) {
 				if (ev.type === 'message_start') {
@@ -192,14 +196,3 @@ function toAnthropicTools(tools: ToolDefinition[], cacheControl: CacheControl | 
 	});
 }
 
-function formatError(e: unknown): string {
-	if (e instanceof Error && e.message) return e.message.slice(0, 500);
-	if (typeof e === 'object' && e !== null) {
-		try {
-			return JSON.stringify(e).slice(0, 500);
-		} catch {
-			/* fall through */
-		}
-	}
-	return String(e).slice(0, 500);
-}

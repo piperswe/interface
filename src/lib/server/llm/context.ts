@@ -1,7 +1,7 @@
-import { OpenRouter } from '@openrouter/sdk';
 import { getModelContextWindow } from '../openrouter/models';
 import { getContextCompactionThreshold, getContextCompactionSummaryTokens } from '../settings';
 import { routeLLM } from './route';
+import type LLM from './LLM';
 import type { Message } from './LLM';
 
 // Tokens ≈ characters / 4, with ~10% safety margin.
@@ -14,10 +14,18 @@ function estimateMessagesTokens(messages: Message[]): number {
 	for (const m of messages) {
 		if (typeof m.content === 'string') {
 			sum += estimateTokens(m.content);
-		} else {
-			for (const block of m.content) {
-				if (block.type === 'text') sum += estimateTokens(block.text);
-				else sum += estimateTokens(JSON.stringify(block));
+			continue;
+		}
+		for (const block of m.content) {
+			if (block.type === 'text' || block.type === 'thinking') {
+				sum += estimateTokens(block.text);
+			} else if (block.type === 'tool_result') {
+				sum += estimateTokens(block.content);
+			} else if (block.type === 'tool_use') {
+				// Rough fixed estimate for the JSON-encoded call wrapper.
+				sum += 64 + estimateTokens(JSON.stringify(block.input ?? {}));
+			} else {
+				// image / file blocks: tokens depend wildly on the model — skip.
 			}
 		}
 	}
@@ -41,11 +49,22 @@ export type CompactionResult = {
 	droppedCount: number;
 };
 
+export type CompactionUsage = {
+	inputTokens: number;
+	cacheReadInputTokens?: number;
+};
+
+export type CompactionDeps = {
+	// LLM factory; defaults to `routeLLM`. Tests inject a fake.
+	llm?: (env: Env, model: string) => LLM;
+};
+
 export async function compactHistory(
 	messages: Message[],
 	model: string,
 	env: Env,
-	lastUsage: { inputTokens: number } | null,
+	lastUsage: CompactionUsage | null,
+	deps: CompactionDeps = {},
 ): Promise<CompactionResult> {
 	const threshold = await getContextCompactionThreshold(env);
 	if (threshold === 0) {
@@ -56,8 +75,12 @@ export async function compactHistory(
 	const summaryTokens = await getContextCompactionSummaryTokens(env);
 	const maxAllowed = Math.floor(contextWindow * (threshold / 100));
 
-	// Estimate current token count.
-	let estimated = lastUsage?.inputTokens ?? estimateMessagesTokens(messages);
+	// Estimate current token count. When the prior turn reported usage, prefer
+	// it over a fresh re-count, but subtract cached tokens so heavily-cached
+	// runs don't trip compaction earlier than they should.
+	const reportedUsage =
+		lastUsage != null ? Math.max(0, lastUsage.inputTokens - (lastUsage.cacheReadInputTokens ?? 0)) : null;
+	let estimated = reportedUsage ?? estimateMessagesTokens(messages);
 	// Add safety margin for the new assistant response.
 	estimated += 1024;
 
@@ -75,17 +98,16 @@ export async function compactHistory(
 
 	// Walk from the oldest message forward, adding to the drop pile until
 	// the remaining messages (plus a system summary) fall under the threshold.
-	let dropIndex = 0;
-	for (let i = 0; i <= messages.length - minKeep; i++) {
+	// If no slice fits, drop the maximum we're allowed to (everything older
+	// than the most recent `minKeep` messages).
+	const maxDropIndex = messages.length - minKeep;
+	let dropIndex = maxDropIndex;
+	for (let i = 0; i <= maxDropIndex; i++) {
 		const remaining = messages.slice(i);
 		const remainingEstimate = estimateMessagesTokens(remaining) + estimateTokens('[summary]');
 		if (remainingEstimate <= maxAllowed) {
 			dropIndex = i;
 			break;
-		}
-		// If we've exhausted options, drop half the oldest messages.
-		if (i === messages.length - minKeep) {
-			dropIndex = Math.floor(i / 2);
 		}
 	}
 
@@ -95,7 +117,7 @@ export async function compactHistory(
 
 	let summary: string;
 	try {
-		const llm = routeLLM(env, model);
+		const llm = (deps.llm ?? routeLLM)(env, model);
 		let buf = '';
 		for await (const ev of llm.chat({
 			messages: [

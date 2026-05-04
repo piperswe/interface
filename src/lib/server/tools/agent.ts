@@ -11,7 +11,7 @@ import { routeLLM as defaultRouteLLM } from '../llm/route';
 import type { ChatRequest, ContentBlock, Message, ToolDefinition } from '../llm/LLM';
 import type LLM from '../llm/LLM';
 import { getSubAgentByName, type SubAgentRow } from '../sub_agents';
-import { ToolRegistry, type Tool, type ToolContext, type ToolExecutionResult } from './registry';
+import { ToolRegistry, type Tool, type ToolArtifactSpec, type ToolCitation, type ToolContext, type ToolExecutionResult } from './registry';
 
 const DEFAULT_MAX_INNER_ITERATIONS = 5;
 const AGENT_TOOL_NAME = 'agent';
@@ -138,8 +138,14 @@ export function createAgentTool(deps: AgentToolDeps, subAgents: SubAgentRow[]): 
 			const maxIter = subAgent.maxIterations && subAgent.maxIterations > 0 ? subAgent.maxIterations : DEFAULT_MAX_INNER_ITERATIONS;
 
 			let finalText = '';
+			let stoppedNaturally = false;
+			const accumulatedCitations: ToolCitation[] = [];
+			const accumulatedArtifacts: ToolArtifactSpec[] = [];
 
 			for (let iter = 0; iter < maxIter; iter++) {
+				if (ctx.signal?.aborted) {
+					return { content: `Sub-agent "${subAgent.name}" cancelled.`, isError: true };
+				}
 				const turnToolCalls: { id: string; name: string; input: unknown }[] = [];
 				let turnText = '';
 				let providerError: string | null = null;
@@ -148,6 +154,7 @@ export function createAgentTool(deps: AgentToolDeps, subAgents: SubAgentRow[]): 
 					messages,
 					systemPrompt: subAgent.systemPrompt,
 					...(innerTools.length > 0 ? { tools: innerTools } : {}),
+					...(ctx.signal ? { signal: ctx.signal } : {}),
 				};
 
 				for await (const ev of llm.chat(req)) {
@@ -166,6 +173,7 @@ export function createAgentTool(deps: AgentToolDeps, subAgents: SubAgentRow[]): 
 
 				if (turnToolCalls.length === 0) {
 					finalText = turnText;
+					stoppedNaturally = true;
 					break;
 				}
 
@@ -215,6 +223,8 @@ export function createAgentTool(deps: AgentToolDeps, subAgents: SubAgentRow[]): 
 						call.name,
 						call.input,
 					);
+					if (result.citations) accumulatedCitations.push(...result.citations);
+					if (result.artifacts) accumulatedArtifacts.push(...result.artifacts);
 					messages.push({
 						role: 'tool',
 						content: [
@@ -230,15 +240,27 @@ export function createAgentTool(deps: AgentToolDeps, subAgents: SubAgentRow[]): 
 			}
 
 			const trimmed = finalText.trim();
-			if (!trimmed) {
+			if (!stoppedNaturally) {
 				return {
 					content: `Sub-agent "${subAgent.name}" exhausted its ${maxIter}-iteration budget without producing a final answer.`,
 					isError: true,
 				};
 			}
+			if (!trimmed) {
+				return {
+					content: `Sub-agent "${subAgent.name}" returned an empty response.`,
+					isError: true,
+				};
+			}
 			// Prefix with a small header so the parent agent — and the UI —
-			// can tell at a glance which sub-agent produced this block.
-			return { content: `[${subAgent.name}] ${trimmed}` };
+			// can tell at a glance which sub-agent produced this block. Pass
+			// citations and artifacts from inner tool calls back through to
+			// the parent loop so they surface in the conversation UI.
+			return {
+				content: `[${subAgent.name}] ${trimmed}`,
+				...(accumulatedCitations.length > 0 ? { citations: accumulatedCitations } : {}),
+				...(accumulatedArtifacts.length > 0 ? { artifacts: accumulatedArtifacts } : {}),
+			};
 		},
 	};
 }
