@@ -191,6 +191,72 @@ describe('ConversationDurableObject', () => {
 		expect(row?.thinking_budget).toBeNull();
 	});
 
+	describe('setSystemPrompt', () => {
+		it('persists a non-empty prompt to the conversations row', async () => {
+			const id = await createConversation(env);
+			const stub = stubFor(id);
+			await stub.setSystemPrompt(id, 'Speak like a pirate.');
+			const row = await env.DB.prepare('SELECT system_prompt FROM conversations WHERE id = ?')
+				.bind(id)
+				.first<{ system_prompt: string | null }>();
+			expect(row?.system_prompt).toBe('Speak like a pirate.');
+		});
+
+		it('trims whitespace, treating whitespace-only as null', async () => {
+			const id = await createConversation(env);
+			const stub = stubFor(id);
+			await stub.setSystemPrompt(id, '   ');
+			const row = await env.DB.prepare('SELECT system_prompt FROM conversations WHERE id = ?')
+				.bind(id)
+				.first<{ system_prompt: string | null }>();
+			expect(row?.system_prompt).toBeNull();
+		});
+
+		it('null clears the override', async () => {
+			const id = await createConversation(env);
+			const stub = stubFor(id);
+			await stub.setSystemPrompt(id, 'override');
+			await stub.setSystemPrompt(id, null);
+			const row = await env.DB.prepare('SELECT system_prompt FROM conversations WHERE id = ?')
+				.bind(id)
+				.first<{ system_prompt: string | null }>();
+			expect(row?.system_prompt).toBeNull();
+		});
+	});
+
+	describe('setStyle', () => {
+		it('persists a positive id to style_id', async () => {
+			const id = await createConversation(env);
+			const stub = stubFor(id);
+			await stub.setStyle(id, 42);
+			const row = await env.DB.prepare('SELECT style_id FROM conversations WHERE id = ?')
+				.bind(id)
+				.first<{ style_id: number | null }>();
+			expect(row?.style_id).toBe(42);
+		});
+
+		it('null clears the selection', async () => {
+			const id = await createConversation(env);
+			const stub = stubFor(id);
+			await stub.setStyle(id, 7);
+			await stub.setStyle(id, null);
+			const row = await env.DB.prepare('SELECT style_id FROM conversations WHERE id = ?')
+				.bind(id)
+				.first<{ style_id: number | null }>();
+			expect(row?.style_id).toBeNull();
+		});
+
+		it('zero or negative ids are stored as null', async () => {
+			const id = await createConversation(env);
+			const stub = stubFor(id);
+			await stub.setStyle(id, 0);
+			const row = await env.DB.prepare('SELECT style_id FROM conversations WHERE id = ?')
+				.bind(id)
+				.first<{ style_id: number | null }>();
+			expect(row?.style_id).toBeNull();
+		});
+	});
+
 	it('addArtifact persists a code artifact and bumps versions', async () => {
 		const id = await createConversation(env);
 		const stub = stubFor(id);
@@ -636,6 +702,136 @@ describe('ConversationDurableObject', () => {
 				expect(rows).toHaveLength(1);
 				expect(Number(rows[0].value)).toBeGreaterThanOrEqual(2);
 			});
+		});
+
+		it('records started_at and ended_at timestamps on tool_result parts', async () => {
+			const id = await createConversation(env);
+			const stub = stubFor(id);
+			// First turn: a tool call. Second turn: final text. We use the
+			// built-in `remember` tool because its execution is fast and
+			// deterministic — no network calls.
+			await setOverride(stub, [
+				toolUseTurn('t1', 'remember', { content: 'I prefer brief replies' }).events,
+				textTurn('saved').events,
+			]);
+			await stub.addUserMessage(id, 'remember this', 'fake/model');
+			const state = await waitForState(stub, (s) => s.messages.at(-1)?.status === 'complete');
+			const last = state.messages.at(-1)!;
+			const toolUse = last.parts?.find((p) => p.type === 'tool_use' && p.id === 't1');
+			const toolResult = last.parts?.find((p) => p.type === 'tool_result' && p.toolUseId === 't1');
+			expect(toolUse).toBeTruthy();
+			expect(toolResult).toBeTruthy();
+			if (toolUse?.type === 'tool_use') {
+				expect(typeof toolUse.startedAt).toBe('number');
+				expect(toolUse.startedAt!).toBeGreaterThan(0);
+			}
+			if (toolResult?.type === 'tool_result') {
+				expect(typeof toolResult.startedAt).toBe('number');
+				expect(typeof toolResult.endedAt).toBe('number');
+				expect(toolResult.endedAt!).toBeGreaterThanOrEqual(toolResult.startedAt!);
+			}
+			// Cleanup the memory the tool created so other tests start clean.
+			await env.DB.prepare('DELETE FROM memories').run();
+		});
+	});
+
+	describe('system prompt assembly', () => {
+		afterEach(async () => {
+			await env.DB.prepare('DELETE FROM settings').run();
+			await env.DB.prepare('DELETE FROM memories').run();
+			await env.DB.prepare('DELETE FROM styles').run();
+		});
+
+		async function captureSystemPrompt(stub: ConversationStub): Promise<string> {
+			const calls = await readLLMCalls(stub);
+			expect(calls.length).toBeGreaterThan(0);
+			return calls[0].systemPrompt ?? '';
+		}
+
+		it('uses the global system prompt setting when no override is set', async () => {
+			const id = await createConversation(env);
+			const stub = stubFor(id);
+			await env.DB.prepare(
+				`INSERT OR REPLACE INTO settings (user_id, key, value, updated_at) VALUES (1, 'system_prompt', 'GLOBAL_PROMPT', 1)`,
+			).run();
+			await setOverride(stub, [textTurn('ok').events]);
+			await stub.addUserMessage(id, 'hi', 'fake/model');
+			await waitForState(stub, (s) => s.messages.at(-1)?.status === 'complete');
+			const sp = await captureSystemPrompt(stub);
+			expect(sp).toContain('GLOBAL_PROMPT');
+		});
+
+		it('per-conversation override replaces the global setting', async () => {
+			const id = await createConversation(env);
+			const stub = stubFor(id);
+			await env.DB.prepare(
+				`INSERT OR REPLACE INTO settings (user_id, key, value, updated_at) VALUES (1, 'system_prompt', 'GLOBAL_PROMPT', 1)`,
+			).run();
+			await stub.setSystemPrompt(id, 'OVERRIDE_PROMPT');
+			await setOverride(stub, [textTurn('ok').events]);
+			await stub.addUserMessage(id, 'hi', 'fake/model');
+			await waitForState(stub, (s) => s.messages.at(-1)?.status === 'complete');
+			const sp = await captureSystemPrompt(stub);
+			expect(sp).toContain('OVERRIDE_PROMPT');
+			expect(sp).not.toContain('GLOBAL_PROMPT');
+		});
+
+		it('selected style is prepended to the (possibly overridden) base prompt', async () => {
+			const id = await createConversation(env);
+			const stub = stubFor(id);
+			const styleResult = await env.DB.prepare(
+				`INSERT INTO styles (user_id, name, system_prompt, created_at, updated_at)
+				 VALUES (1, 'Concise', 'STYLE_TEXT', 1, 1) RETURNING id`,
+			).first<{ id: number }>();
+			await stub.setStyle(id, styleResult!.id);
+			await stub.setSystemPrompt(id, 'BASE_OVERRIDE');
+			await setOverride(stub, [textTurn('ok').events]);
+			await stub.addUserMessage(id, 'hi', 'fake/model');
+			await waitForState(stub, (s) => s.messages.at(-1)?.status === 'complete');
+			const sp = await captureSystemPrompt(stub);
+			expect(sp.indexOf('STYLE_TEXT')).toBeLessThan(sp.indexOf('BASE_OVERRIDE'));
+		});
+
+		it('memories are appended as a Memories block', async () => {
+			const id = await createConversation(env);
+			const stub = stubFor(id);
+			await env.DB.prepare(
+				`INSERT INTO memories (user_id, type, content, source, created_at) VALUES
+					(1, 'manual', 'My dog is Pepper.', 'user', 100),
+					(1, 'auto', 'I work in TypeScript.', 'tool:remember', 200)`,
+			).run();
+			await setOverride(stub, [textTurn('ok').events]);
+			await stub.addUserMessage(id, 'hi', 'fake/model');
+			await waitForState(stub, (s) => s.messages.at(-1)?.status === 'complete');
+			const sp = await captureSystemPrompt(stub);
+			expect(sp).toMatch(/Memories/);
+			expect(sp).toContain('My dog is Pepper.');
+			expect(sp).toContain('I work in TypeScript.');
+		});
+
+		it('user_bio is appended', async () => {
+			const id = await createConversation(env);
+			const stub = stubFor(id);
+			await env.DB.prepare(
+				`INSERT OR REPLACE INTO settings (user_id, key, value, updated_at) VALUES (1, 'user_bio', 'BIO_TEXT', 1)`,
+			).run();
+			await setOverride(stub, [textTurn('ok').events]);
+			await stub.addUserMessage(id, 'hi', 'fake/model');
+			await waitForState(stub, (s) => s.messages.at(-1)?.status === 'complete');
+			const sp = await captureSystemPrompt(stub);
+			expect(sp).toContain('User bio:');
+			expect(sp).toContain('BIO_TEXT');
+		});
+
+		it('falls back to the default prompt when nothing is configured', async () => {
+			const id = await createConversation(env);
+			const stub = stubFor(id);
+			await setOverride(stub, [textTurn('ok').events]);
+			await stub.addUserMessage(id, 'hi', 'fake/model');
+			await waitForState(stub, (s) => s.messages.at(-1)?.status === 'complete');
+			const sp = await captureSystemPrompt(stub);
+			// Default prompt mentions being a computer and being concise.
+			expect(sp.length).toBeGreaterThan(100);
 		});
 	});
 });

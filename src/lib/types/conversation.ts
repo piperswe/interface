@@ -5,6 +5,8 @@ export type Conversation = {
 	updated_at: number;
 	thinking_budget?: number | null;
 	archived_at?: number | null;
+	style_id?: number | null;
+	system_prompt?: string | null;
 };
 
 // Token-usage shape persisted in `messages.usage_json`. Mirrors `Usage` in
@@ -54,8 +56,21 @@ export type Artifact = {
 export type JsonValue = any;
 export type JsonRecord = string | number | boolean | null | JsonRecord[] | { [k: string]: JsonRecord };
 
-export type ToolCallRecord = { id: string; name: string; input: JsonValue; thoughtSignature?: string };
-export type ToolResultRecord = { toolUseId: string; content: string; isError: boolean; streaming?: boolean };
+export type ToolCallRecord = {
+	id: string;
+	name: string;
+	input: JsonValue;
+	thoughtSignature?: string;
+	startedAt?: number;
+};
+export type ToolResultRecord = {
+	toolUseId: string;
+	content: string;
+	isError: boolean;
+	streaming?: boolean;
+	startedAt?: number;
+	endedAt?: number;
+};
 
 // Ordered timeline of an assistant turn: thinking, text segments, tool
 // invocations, and their results, in the sequence the model produced them.
@@ -65,13 +80,22 @@ export type ToolResultRecord = { toolUseId: string; content: string; isError: bo
 //    {type:'thinking'}, {type:'text'}]
 export type TextPart = { type: 'text'; text: string; textHtml?: string };
 export type ThinkingPart = { type: 'thinking'; text: string; textHtml?: string };
-export type ToolUsePart = { type: 'tool_use'; id: string; name: string; input: JsonValue; thoughtSignature?: string };
+export type ToolUsePart = {
+	type: 'tool_use';
+	id: string;
+	name: string;
+	input: JsonValue;
+	thoughtSignature?: string;
+	startedAt?: number;
+};
 export type ToolResultPart = {
 	type: 'tool_result';
 	toolUseId: string;
 	content: string;
 	isError: boolean;
 	streaming?: boolean;
+	startedAt?: number;
+	endedAt?: number;
 };
 export type InfoPart = { type: 'info'; text: string };
 export type MessagePart = TextPart | ThinkingPart | ToolUsePart | ToolResultPart | InfoPart;

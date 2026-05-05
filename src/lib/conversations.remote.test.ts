@@ -14,6 +14,8 @@ const destroyConv = remote.destroy as unknown as AnyArgs;
 const regenerateTitle = remote.regenerateTitle as unknown as AnyArgs;
 const sendMessage = remote.sendMessage as unknown as AnyArgs;
 const setThinkingBudget = remote.setThinkingBudget as unknown as AnyArgs;
+const setConversationSystemPrompt = remote.setConversationSystemPrompt as unknown as AnyArgs;
+const setConversationStyle = remote.setConversationStyle as unknown as AnyArgs;
 const unarchive = remote.unarchive as unknown as AnyArgs;
 import {
 	createConversation,
@@ -159,6 +161,54 @@ describe('setThinkingBudget', () => {
 	it('rejects malformed ids', async () => {
 		await expectError(
 			setThinkingBudget({ conversationId: 'bad', budget: 1 }) as Promise<unknown>,
+			400,
+		);
+	});
+});
+
+describe('setConversationSystemPrompt', () => {
+	it('persists a non-empty override', async () => {
+		const id = await createConversation(env);
+		await setConversationSystemPrompt({ conversationId: id, prompt: 'be terse' });
+		const row = await getConversation(env, id);
+		expect(row?.system_prompt).toBe('be terse');
+	});
+
+	it('null clears the override', async () => {
+		const id = await createConversation(env);
+		await setConversationSystemPrompt({ conversationId: id, prompt: 'override' });
+		await setConversationSystemPrompt({ conversationId: id, prompt: null });
+		const row = await getConversation(env, id);
+		expect(row?.system_prompt).toBeNull();
+	});
+
+	it('rejects malformed ids', async () => {
+		await expectError(
+			setConversationSystemPrompt({ conversationId: 'bad', prompt: 'x' }) as Promise<unknown>,
+			400,
+		);
+	});
+});
+
+describe('setConversationStyle', () => {
+	it('persists a positive style id', async () => {
+		const id = await createConversation(env);
+		await setConversationStyle({ conversationId: id, styleId: 7 });
+		const row = await getConversation(env, id);
+		expect(row?.style_id).toBe(7);
+	});
+
+	it('null clears the style', async () => {
+		const id = await createConversation(env);
+		await setConversationStyle({ conversationId: id, styleId: 5 });
+		await setConversationStyle({ conversationId: id, styleId: null });
+		const row = await getConversation(env, id);
+		expect(row?.style_id).toBeNull();
+	});
+
+	it('rejects malformed ids', async () => {
+		await expectError(
+			setConversationStyle({ conversationId: 'bad', styleId: 1 }) as Promise<unknown>,
 			400,
 		);
 	});

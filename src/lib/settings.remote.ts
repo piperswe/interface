@@ -8,6 +8,9 @@ import {
 	isValidSubAgentName,
 	setSubAgentEnabled,
 } from '$lib/server/sub_agents';
+import { createMemory, deleteMemory } from '$lib/server/memories';
+import { createStyle, deleteStyle, updateStyle } from '$lib/server/styles';
+import { getMcpPreset } from '$lib/server/mcp/presets';
 import { invalidateThemeCache } from '../hooks.server';
 
 function getEnv(): Env {
@@ -182,4 +185,104 @@ export const toggleSubAgent = form(
 		redirect(303, '/settings');
 	},
 );
+
+export const addMemory = form('unchecked', async (data: { content?: unknown }) => {
+	const content = String(data.content ?? '').trim();
+	if (!content) error(400, 'Memory content is required');
+	try {
+		await createMemory(getEnv(), { type: 'manual', content, source: 'user' });
+	} catch (e) {
+		error(400, e instanceof Error ? e.message : String(e));
+	}
+	redirect(303, '/settings');
+});
+
+export const removeMemory = form('unchecked', async (data: { id?: unknown }) => {
+	const id = Number.parseInt(String(data.id ?? ''), 10);
+	if (!Number.isFinite(id) || id <= 0) error(400, 'Invalid id');
+	await deleteMemory(getEnv(), id);
+	redirect(303, '/settings');
+});
+
+export const addStyle = form(
+	'unchecked',
+	async (data: { name?: unknown; system_prompt?: unknown }) => {
+		const name = String(data.name ?? '').trim();
+		const systemPrompt = String(data.system_prompt ?? '');
+		if (!name) error(400, 'Name is required');
+		if (!systemPrompt.trim()) error(400, 'System prompt is required');
+		try {
+			await createStyle(getEnv(), { name, systemPrompt });
+		} catch (e) {
+			error(400, e instanceof Error ? e.message : String(e));
+		}
+		redirect(303, '/settings');
+	},
+);
+
+export const saveStyle = form(
+	'unchecked',
+	async (data: { id?: unknown; name?: unknown; system_prompt?: unknown }) => {
+		const id = Number.parseInt(String(data.id ?? ''), 10);
+		if (!Number.isFinite(id) || id <= 0) error(400, 'Invalid id');
+		const name = String(data.name ?? '').trim();
+		const systemPrompt = String(data.system_prompt ?? '');
+		if (!name) error(400, 'Name is required');
+		if (!systemPrompt.trim()) error(400, 'System prompt is required');
+		try {
+			await updateStyle(getEnv(), id, { name, systemPrompt });
+		} catch (e) {
+			error(400, e instanceof Error ? e.message : String(e));
+		}
+		redirect(303, '/settings');
+	},
+);
+
+export const removeStyle = form('unchecked', async (data: { id?: unknown }) => {
+	const id = Number.parseInt(String(data.id ?? ''), 10);
+	if (!Number.isFinite(id) || id <= 0) error(400, 'Invalid id');
+	await deleteStyle(getEnv(), id);
+	redirect(303, '/settings');
+});
+
+// Add an MCP server from the curated catalog. For OAuth-protected servers we
+// create the row with `enabled = 0` and immediately redirect into the OAuth
+// connect flow; for header-auth or no-auth servers we just create and return
+// to settings.
+export const addMcpFromPreset = form('unchecked', async (data: { preset_id?: unknown }) => {
+	const presetId = String(data.preset_id ?? '');
+	const preset = getMcpPreset(presetId);
+	if (!preset) error(400, `Unknown MCP preset: ${presetId}`);
+	const env = getEnv();
+	const id = await createMcpServer(env, {
+		name: preset.label,
+		transport: preset.transport,
+		url: preset.url,
+		authJson: null,
+	});
+	if (preset.authMode === 'oauth') {
+		// Disable until OAuth completes — the server's tools require a valid
+		// access token.
+		await env.DB.prepare('UPDATE mcp_servers SET enabled = 0 WHERE id = ?').bind(id).run();
+		redirect(303, `/settings/mcp/${id}/connect`);
+	}
+	redirect(303, '/settings');
+});
+
+export const disconnectMcpServer = form('unchecked', async (data: { id?: unknown }) => {
+	const id = Number.parseInt(String(data.id ?? ''), 10);
+	if (!Number.isFinite(id) || id <= 0) error(400, 'Invalid id');
+	const env = getEnv();
+	await env.DB.prepare(
+		`UPDATE mcp_servers SET
+			oauth_access_token = NULL,
+			oauth_refresh_token = NULL,
+			oauth_expires_at = NULL,
+			enabled = 0
+		 WHERE id = ?`,
+	)
+		.bind(id)
+		.run();
+	redirect(303, '/settings');
+});
 

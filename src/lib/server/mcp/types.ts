@@ -32,4 +32,21 @@ export type McpServerRow = {
 	envJson: string | null;
 	authJson: string | null;
 	enabled: boolean;
+	oauth: McpOauthState | null;
+};
+
+// Materialised OAuth state for an MCP server. Only present when at least one
+// of the oauth_* columns is set on the row; if the server is OAuth-protected
+// but unconnected, `accessToken` will be null.
+export type McpOauthState = {
+	authorizationServer: string | null;
+	authorizationEndpoint: string | null;
+	tokenEndpoint: string | null;
+	registrationEndpoint: string | null;
+	clientId: string | null;
+	clientSecret: string | null;
+	scopes: string | null;
+	accessToken: string | null;
+	refreshToken: string | null;
+	expiresAt: number | null;
 };

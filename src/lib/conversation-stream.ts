@@ -22,7 +22,13 @@ export type SyncEvent = {
 };
 export type DeltaEvent = { messageId: string; content: string };
 export type ThinkingDeltaEvent = { messageId: string; content: string };
-export type ToolCallEvent = { messageId: string; id: string; name: string; input: JsonValue };
+export type ToolCallEvent = {
+	messageId: string;
+	id: string;
+	name: string;
+	input: JsonValue;
+	startedAt?: number;
+};
 export type ToolResultEvent = ToolResultRecord & { messageId: string };
 export type ToolOutputEvent = { messageId: string; toolUseId: string; chunk: string };
 export type ArtifactEvent = { artifact: Artifact };
@@ -83,7 +89,10 @@ export function applyToolCall(state: ConversationState, ev: ToolCallEvent): Conv
 		if (parts.some((p) => p.type === 'tool_use' && p.id === ev.id)) return m;
 		return {
 			...m,
-			parts: [...parts, { type: 'tool_use', id: ev.id, name: ev.name, input: ev.input }],
+			parts: [
+				...parts,
+				{ type: 'tool_use', id: ev.id, name: ev.name, input: ev.input, startedAt: ev.startedAt },
+			],
 		};
 	});
 }
@@ -92,15 +101,20 @@ export function applyToolResult(state: ConversationState, ev: ToolResultEvent): 
 	return patchMessage(state, ev.messageId, (m) => {
 		const parts = m.parts ?? [];
 		const partsHasIt = parts.some((p) => p.type === 'tool_result' && p.toolUseId === ev.toolUseId);
+		const next = {
+			type: 'tool_result' as const,
+			toolUseId: ev.toolUseId,
+			content: ev.content,
+			isError: ev.isError,
+			...(ev.streaming ? { streaming: true as const } : {}),
+			...(ev.startedAt !== undefined ? { startedAt: ev.startedAt } : {}),
+			...(ev.endedAt !== undefined ? { endedAt: ev.endedAt } : {}),
+		};
 		return {
 			...m,
 			parts: partsHasIt
-				? parts.map((p) =>
-						p.type === 'tool_result' && p.toolUseId === ev.toolUseId
-							? { type: 'tool_result', toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }
-							: p,
-					)
-				: [...parts, { type: 'tool_result', toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }],
+				? parts.map((p) => (p.type === 'tool_result' && p.toolUseId === ev.toolUseId ? next : p))
+				: [...parts, next],
 		};
 	});
 }

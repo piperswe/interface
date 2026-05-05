@@ -12,11 +12,17 @@ import { createYnabTools } from '../tools/ynab';
 import { createOpenWeatherMapTools } from '../tools/openweathermap';
 import { KagiSearchBackend } from '../search/kagi';
 import { McpHttpClient } from '../mcp/client';
-import { listMcpServers } from '../mcp_servers';
+import { listMcpServers, getMcpServer } from '../mcp_servers';
+import { getValidAccessToken } from '../mcp/oauth_store';
 import { listSubAgents } from '../sub_agents';
+import { listMemories } from '../memories';
+import { listStyles } from '../styles';
+import type { MemoryRow } from '../memories';
+import type { StyleRow } from '../styles';
 import { createAgentTool } from '../tools/agent';
 import { createGetModelsTool } from '../tools/get_models';
 import { createSwitchModelTool } from '../tools/switch_model';
+import { createRememberTool } from '../tools/remember';
 import { getSetting, getSystemPrompt, getUserBio } from '../settings';
 import { registerSandboxTools } from '../tools/sandbox';
 import { getSandbox } from '@cloudflare/sandbox';
@@ -52,6 +58,8 @@ type ConversationContext = {
 	allModels: ProviderModel[];
 	subAgents: SubAgentRow[];
 	mcpServers: McpServerRow[];
+	memories: MemoryRow[];
+	styles: StyleRow[];
 };
 
 import type {
@@ -687,6 +695,24 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		await this.env.DB.prepare('UPDATE conversations SET thinking_budget = ? WHERE id = ?').bind(value, conversationId).run();
 	}
 
+	async setSystemPrompt(conversationId: string, prompt: string | null): Promise<void> {
+		this.#setConversationId(conversationId);
+		const trimmed = prompt?.trim() || null;
+		await this.env.DB.prepare('UPDATE conversations SET system_prompt = ? WHERE id = ?')
+			.bind(trimmed, conversationId)
+			.run();
+		this.#broadcast('refresh', {});
+	}
+
+	async setStyle(conversationId: string, styleId: number | null): Promise<void> {
+		this.#setConversationId(conversationId);
+		const value = styleId != null && styleId > 0 ? Math.floor(styleId) : null;
+		await this.env.DB.prepare('UPDATE conversations SET style_id = ? WHERE id = ?')
+			.bind(value, conversationId)
+			.run();
+		this.#broadcast('refresh', {});
+	}
+
 	async abortGeneration(conversationId: string): Promise<void> {
 		this.#setConversationId(conversationId);
 		if (!this.#inProgress) return;
@@ -1070,11 +1096,15 @@ The user's bio, preferences, and context are provided separately in the user tur
 
 			const [context, convoRow] = await Promise.all([
 				this.#getContext(),
-				this.env.DB.prepare('SELECT thinking_budget FROM conversations WHERE id = ?')
+				this.env.DB.prepare(
+					'SELECT thinking_budget, style_id, system_prompt FROM conversations WHERE id = ?',
+				)
 					.bind(conversationId)
-					.first<{ thinking_budget: number | null }>(),
+					.first<{ thinking_budget: number | null; style_id: number | null; system_prompt: string | null }>(),
 			]);
 			const thinkingBudget = convoRow?.thinking_budget ?? null;
+			const conversationStyleId = convoRow?.style_id ?? null;
+			const conversationSystemPromptOverride = convoRow?.system_prompt ?? null;
 
 			// Resolve the routed model from the cached models list rather than
 			// hitting D1 again. `getResolvedModel`'s D1 reads happen inside
@@ -1105,10 +1135,22 @@ The user's bio, preferences, and context are provided separately in the user tur
 
 			const COMPATIBILITY_NOTE =
 				'Your output is rendered in a UI that uses KaTeX for math typesetting. Dollar signs ($) are treated as LaTeX math delimiters, so be careful with dollar signs in non-math contexts (e.g. prices, currency). To include a literal dollar sign, escape it as \\$.';
-			const effectiveSystemPrompt = context.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
-			const systemPrompt = context.userBio
-				? `${effectiveSystemPrompt}\n\n${COMPATIBILITY_NOTE}\n\nUser bio:\n${context.userBio}`
-				: `${effectiveSystemPrompt}\n\n${COMPATIBILITY_NOTE}`;
+			// Per-conversation override replaces the global setting; the global
+			// only applies when the override is absent. The default prompt is
+			// the final fallback.
+			const baseSystemPrompt =
+				conversationSystemPromptOverride ?? context.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+			const activeStyle =
+				conversationStyleId != null ? context.styles.find((s) => s.id === conversationStyleId) : null;
+			const memoriesBlock =
+				context.memories.length > 0
+					? `\n\nMemories (persistent context the user has saved):\n${context.memories
+							.map((m) => `- ${m.content}`)
+							.join('\n')}`
+					: '';
+			const styleBlock = activeStyle ? `${activeStyle.systemPrompt}\n\n` : '';
+			const userBioBlock = context.userBio ? `\n\nUser bio:\n${context.userBio}` : '';
+			const systemPrompt = `${styleBlock}${baseSystemPrompt}\n\n${COMPATIBILITY_NOTE}${userBioBlock}${memoriesBlock}`;
 
 			const registry = await this.#buildToolRegistry(model, context);
 			const tools: ToolDefinition[] | undefined = registry.definitions().length > 0 ? registry.definitions() : undefined;
@@ -1178,24 +1220,41 @@ The user's bio, preferences, and context are provided separately in the user tur
 				let pendingModelSwitch: string | null = null;
 				for (const call of turnToolCalls) {
 					if (!this.#inProgress || this.#inProgress.messageId !== assistantId) break;
-					parts.push({ type: 'tool_use', id: call.id, name: call.name, input: call.input, thoughtSignature: call.thoughtSignature });
+					const callStartedAt = nowMs();
+					parts.push({
+						type: 'tool_use',
+						id: call.id,
+						name: call.name,
+						input: call.input,
+						thoughtSignature: call.thoughtSignature,
+						startedAt: callStartedAt,
+					});
 					this.#broadcast('tool_call', {
 						messageId: assistantId,
 						id: call.id,
 						name: call.name,
 						input: call.input,
 						thoughtSignature: call.thoughtSignature,
+						startedAt: callStartedAt,
 					});
 					// Seed a preliminary streaming tool_result so the UI shows the
 					// call as active while output arrives. Replaced with the final
 					// result once execution completes.
-					parts.push({ type: 'tool_result', toolUseId: call.id, content: '', isError: false, streaming: true });
+					parts.push({
+						type: 'tool_result',
+						toolUseId: call.id,
+						content: '',
+						isError: false,
+						streaming: true,
+						startedAt: callStartedAt,
+					});
 					this.#broadcast('tool_result', {
 						messageId: assistantId,
 						toolUseId: call.id,
 						content: '',
 						isError: false,
 						streaming: true,
+						startedAt: callStartedAt,
 					});
 					const result = await registry.execute(
 						{
@@ -1217,6 +1276,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 						call.name,
 						call.input,
 					);
+					const callEndedAt = nowMs();
 					// Swap the preliminary streaming part for the final result.
 					const partsIdx = parts.findIndex((p) => p.type === 'tool_result' && p.toolUseId === call.id);
 					if (partsIdx >= 0) {
@@ -1225,6 +1285,8 @@ The user's bio, preferences, and context are provided separately in the user tur
 							toolUseId: call.id,
 							content: result.content,
 							isError: result.isError ?? false,
+							startedAt: callStartedAt,
+							endedAt: callEndedAt,
 						};
 					} else {
 						parts.push({
@@ -1232,6 +1294,8 @@ The user's bio, preferences, and context are provided separately in the user tur
 							toolUseId: call.id,
 							content: result.content,
 							isError: result.isError ?? false,
+							startedAt: callStartedAt,
+							endedAt: callEndedAt,
 						});
 					}
 					// Persist the running parts column each step so stream death
@@ -1263,6 +1327,8 @@ The user's bio, preferences, and context are provided separately in the user tur
 						toolUseId: call.id,
 						content: result.content,
 						isError: result.isError ?? false,
+						startedAt: callStartedAt,
+						endedAt: callEndedAt,
 					});
 
 					messages.push({
@@ -1399,14 +1465,24 @@ The user's bio, preferences, and context are provided separately in the user tur
 	async #getContext(): Promise<ConversationContext> {
 		const cached = this.#contextCache;
 		if (cached && nowMs() - cached.fetchedAt < CONTEXT_CACHE_TTL_MS) return cached.context;
-		const [systemPrompt, userBio, allModels, subAgents, mcpServers] = await Promise.all([
+		const [systemPrompt, userBio, allModels, subAgents, mcpServers, memories, styles] = await Promise.all([
 			getSystemPrompt(this.env),
 			getUserBio(this.env),
 			listAllModels(this.env),
 			listSubAgents(this.env),
 			listMcpServers(this.env),
+			listMemories(this.env),
+			listStyles(this.env),
 		]);
-		const context: ConversationContext = { systemPrompt, userBio, allModels, subAgents, mcpServers };
+		const context: ConversationContext = {
+			systemPrompt,
+			userBio,
+			allModels,
+			subAgents,
+			mcpServers,
+			memories,
+			styles,
+		};
 		this.#contextCache = { fetchedAt: nowMs(), context };
 		return context;
 	}
@@ -1421,6 +1497,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 	async #buildBaseToolRegistry(mcpServers: McpServerRow[]): Promise<ToolRegistry> {
 		const registry = new ToolRegistry();
 		registry.register(fetchUrlTool);
+		registry.register(createRememberTool());
 		if (this.env.KAGI_KEY) {
 			registry.register(createWebSearchTool(new KagiSearchBackend(this.env.KAGI_KEY)));
 		}
@@ -1438,7 +1515,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 			await Promise.all(
 				mcpServers
 					.filter((s) => s.enabled && (s.transport === 'http' || s.transport === 'sse') && s.url)
-					.map((s) => this.#registerMcpServerTools(registry, s.id, s.name, s.url!, s.authJson)),
+					.map((s) => this.#registerMcpServerTools(registry, s)),
 			);
 		} catch {
 			// MCP enumeration failures are best-effort.
@@ -1471,13 +1548,25 @@ The user's bio, preferences, and context are provided separately in the user tur
 		return registry;
 	}
 
-	async #registerMcpServerTools(
-		registry: ToolRegistry,
-		serverId: number,
-		serverName: string,
-		url: string,
-		authJson: string | null,
-	): Promise<void> {
+	async #registerMcpServerTools(registry: ToolRegistry, server: McpServerRow): Promise<void> {
+		const serverId = server.id;
+		const serverName = server.name;
+		const url = server.url!;
+		const authJson = server.authJson;
+		const env = this.env;
+		// Token resolver: re-reads the OAuth row each call so a refresh from
+		// another tool turn is visible. `force` ignores the row's expiry by
+		// pretending it just expired — used to recover from a 401.
+		const getAccessToken = server.oauth
+			? async ({ force = false }: { force?: boolean } = {}) => {
+					const fresh = await getMcpServer(env, serverId);
+					if (!fresh?.oauth) return null;
+					const oauthState = force
+						? { ...fresh.oauth, expiresAt: 0 }
+						: fresh.oauth;
+					return getValidAccessToken(env, serverId, oauthState);
+				}
+			: undefined;
 		try {
 			const cached = this.#mcpCache.get(serverId);
 			const fresh = cached && nowMs() - cached.fetchedAt < MCP_TOOL_CACHE_TTL_MS;
@@ -1485,7 +1574,7 @@ The user's bio, preferences, and context are provided separately in the user tur
 			if (fresh && cached) {
 				entry = cached;
 			} else {
-				const client = new McpHttpClient({ url, authJson });
+				const client = new McpHttpClient({ url, authJson, getAccessToken });
 				const tools = await client.listTools();
 				entry = { fetchedAt: nowMs(), client, tools };
 				this.#mcpCache.set(serverId, entry);

@@ -16,6 +16,13 @@
 		addSubAgent,
 		removeSubAgent,
 		toggleSubAgent,
+		addMemory,
+		removeMemory,
+		addStyle,
+		saveStyle,
+		removeStyle,
+		addMcpFromPreset,
+		disconnectMcpServer,
 	} from '$lib/settings.remote';
 	import { confirmToastSubmit, justSubmit, toastSubmit } from '$lib/form-actions';
 	import { page } from '$app/state';
@@ -59,6 +66,25 @@
 
 	// Provider edit state
 	let editProviderId = $state<string | null>(null);
+
+	// Style edit state
+	let editStyleId = $state<number | null>(null);
+	let editStyleName = $state('');
+	let editStylePrompt = $state('');
+
+	function startEditStyle(s: { id: number; name: string; systemPrompt: string }) {
+		editStyleId = s.id;
+		editStyleName = s.name;
+		editStylePrompt = s.systemPrompt;
+	}
+	function cancelEditStyle() {
+		editStyleId = null;
+		editStyleName = '';
+		editStylePrompt = '';
+	}
+
+	// MCP preset state
+	let selectedMcpPreset = $state('');
 
 
 	async function onFetchPresetModels() {
@@ -373,15 +399,32 @@
 		{:else}
 			<ul class="list-group">
 				{#each data.mcpServers as s}
+					{@const oauthConnected = !!s.oauth?.accessToken}
+					{@const oauthRequired = !!s.oauth || (s.oauth === null && !s.authJson && !s.enabled)}
 					<li class="list-group-item d-flex justify-content-between align-items-center">
 						<div>
 							<strong>{s.name}</strong>
 							<span class="badge text-bg-secondary ms-1">{s.transport}</span>
+							{#if s.oauth}
+								<span class="badge ms-1 {oauthConnected ? 'text-bg-success' : 'text-bg-warning'}">
+									{oauthConnected ? 'Connected' : 'Disconnected'}
+								</span>
+							{/if}
 						</div>
-							<form {...removeMcpServer.for(s.id).enhance(confirmToastSubmit(`Delete server "${s.name}"?`, 'MCP server deleted'))}>
-							<input type="hidden" name="id" value={s.id} />
-							<button type="submit" class="btn btn-sm btn-link text-danger">Delete</button>
-						</form>
+						<div class="d-flex gap-2 align-items-center">
+							{#if s.oauth && !oauthConnected}
+								<a class="btn btn-sm btn-outline-primary" href={`/settings/mcp/${s.id}/connect`}>Connect</a>
+							{:else if s.oauth && oauthConnected}
+								<form {...disconnectMcpServer.for(s.id).enhance(confirmToastSubmit(`Disconnect "${s.name}"?`, 'MCP server disconnected'))} class="m-0">
+									<input type="hidden" name="id" value={s.id} />
+									<button type="submit" class="btn btn-sm btn-link">Disconnect</button>
+								</form>
+							{/if}
+							<form {...removeMcpServer.for(s.id).enhance(confirmToastSubmit(`Delete server "${s.name}"?`, 'MCP server deleted'))} class="m-0">
+								<input type="hidden" name="id" value={s.id} />
+								<button type="submit" class="btn btn-sm btn-link text-danger">Delete</button>
+							</form>
+						</div>
 					</li>
 				{/each}
 			</ul>
@@ -395,6 +438,25 @@
 			<input name="url" placeholder="URL" class="form-control form-control-sm" required />
 			<button type="submit" class="btn btn-sm btn-primary">Add</button>
 		</form>
+
+		<div class="mt-3">
+			<h6 class="mb-1">Add from catalog</h6>
+			<form {...addMcpFromPreset.enhance(toastSubmit('MCP server added'))} class="d-flex gap-2 align-items-start">
+				<select name="preset_id" class="form-select form-select-sm" bind:value={selectedMcpPreset} required>
+					<option value="">Choose a server…</option>
+					{#each data.mcpPresets as preset (preset.id)}
+						<option value={preset.id}>{preset.label} · {preset.authMode}</option>
+					{/each}
+				</select>
+				<button type="submit" class="btn btn-sm btn-primary" disabled={!selectedMcpPreset}>Add</button>
+			</form>
+			{#if selectedMcpPreset}
+				{@const p = data.mcpPresets.find((x) => x.id === selectedMcpPreset)}
+				{#if p}
+					<div class="small text-muted mt-1">{p.description}</div>
+				{/if}
+			{/if}
+		</div>
 	</section>
 
 	<!-- Sub-agents -->
@@ -427,6 +489,83 @@
 			<input name="description" placeholder="Description" class="form-control form-control-sm" required />
 			<input name="system_prompt" placeholder="System prompt" class="form-control form-control-sm" required />
 			<button type="submit" class="btn btn-sm btn-primary">Add sub-agent</button>
+		</form>
+	</section>
+
+	<!-- Styles -->
+	<section class="mb-4">
+		<h2 class="h5">Styles</h2>
+		<p class="small text-muted mb-2">Saved system-prompt presets that can be applied per conversation from the chat header.</p>
+		{#if data.styles.length === 0}
+			<p class="text-muted">No styles configured.</p>
+		{:else}
+			<ul class="list-group">
+				{#each data.styles as s (s.id)}
+					<li class="list-group-item">
+						{#if editStyleId === s.id}
+							<form {...saveStyle.for(`edit-${s.id}`).enhance(toastSubmit('Style saved'))} class="d-flex flex-column gap-2">
+								<input type="hidden" name="id" value={s.id} />
+								<input name="name" class="form-control form-control-sm" bind:value={editStyleName} required />
+								<textarea name="system_prompt" class="form-control form-control-sm" rows="4" bind:value={editStylePrompt} required></textarea>
+								<div class="d-flex gap-2">
+									<button type="submit" class="btn btn-sm btn-primary">Save</button>
+									<button type="button" class="btn btn-sm btn-outline-secondary" onclick={cancelEditStyle}>Cancel</button>
+								</div>
+							</form>
+						{:else}
+							<div class="d-flex justify-content-between align-items-center">
+								<div>
+									<strong>{s.name}</strong>
+									<div class="small text-muted text-truncate" style="max-width: 60ch;">{s.systemPrompt}</div>
+								</div>
+								<div class="d-flex gap-2">
+									<button type="button" class="btn btn-sm btn-link p-0" onclick={() => startEditStyle(s)}>Edit</button>
+									<form {...removeStyle.for(s.id).enhance(confirmToastSubmit(`Delete style "${s.name}"?`, 'Style deleted'))} class="m-0">
+										<input type="hidden" name="id" value={s.id} />
+										<button type="submit" class="btn btn-sm btn-link text-danger p-0">Delete</button>
+									</form>
+								</div>
+							</div>
+						{/if}
+					</li>
+				{/each}
+			</ul>
+		{/if}
+		<form {...addStyle.enhance(toastSubmit('Style added'))} class="mt-2 d-flex flex-column gap-2">
+			<input name="name" placeholder="Style name (e.g. Concise, Tutor)" class="form-control form-control-sm" required />
+			<textarea name="system_prompt" placeholder="System prompt prepended in front of the global one" class="form-control form-control-sm" rows="3" required></textarea>
+			<button type="submit" class="btn btn-sm btn-primary align-self-start">Add style</button>
+		</form>
+	</section>
+
+	<!-- Memories -->
+	<section class="mb-4">
+		<h2 class="h5">Memories</h2>
+		<p class="small text-muted mb-2">Persistent facts injected into every conversation's system prompt. The model can also save memories itself via the <code>remember</code> tool.</p>
+		{#if data.memories.length === 0}
+			<p class="text-muted">No memories saved.</p>
+		{:else}
+			<ul class="list-group">
+				{#each data.memories as m (m.id)}
+					<li class="list-group-item d-flex justify-content-between align-items-start gap-2">
+						<div>
+							<div>{m.content}</div>
+							<div class="small text-muted">
+								{m.type === 'auto' ? 'auto · ' : ''}{new Date(m.createdAt).toLocaleString()}
+								{#if m.source}<span> · {m.source}</span>{/if}
+							</div>
+						</div>
+						<form {...removeMemory.for(m.id).enhance(confirmToastSubmit('Delete this memory?', 'Memory deleted'))} class="m-0">
+							<input type="hidden" name="id" value={m.id} />
+							<button type="submit" class="btn btn-sm btn-link text-danger p-0">Delete</button>
+						</form>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+		<form {...addMemory.enhance(toastSubmit('Memory added'))} class="mt-2 d-flex flex-column gap-2">
+			<textarea name="content" placeholder="A fact to remember about yourself, your projects, or your preferences." class="form-control form-control-sm" rows="2" required></textarea>
+			<button type="submit" class="btn btn-sm btn-primary align-self-start">Add memory</button>
 		</form>
 	</section>
 

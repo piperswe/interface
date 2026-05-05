@@ -1,5 +1,5 @@
 import { now as nowMs } from './clock';
-import type { McpServerRow } from './mcp/types';
+import type { McpOauthState, McpServerRow } from './mcp/types';
 
 const SINGLE_USER_ID = 1;
 
@@ -13,7 +13,45 @@ type Row = {
 	auth_json: string | null;
 	enabled: number;
 	user_id: number;
+	oauth_authorization_server: string | null;
+	oauth_authorization_endpoint: string | null;
+	oauth_token_endpoint: string | null;
+	oauth_registration_endpoint: string | null;
+	oauth_client_id: string | null;
+	oauth_client_secret: string | null;
+	oauth_scopes: string | null;
+	oauth_access_token: string | null;
+	oauth_refresh_token: string | null;
+	oauth_expires_at: number | null;
 };
+
+const SELECT_COLS = `id, name, transport, url, command, env_json, auth_json, enabled, user_id,
+	oauth_authorization_server, oauth_authorization_endpoint, oauth_token_endpoint,
+	oauth_registration_endpoint, oauth_client_id, oauth_client_secret, oauth_scopes,
+	oauth_access_token, oauth_refresh_token, oauth_expires_at`;
+
+function rowToOauth(r: Row): McpOauthState | null {
+	const anySet =
+		r.oauth_authorization_server ||
+		r.oauth_authorization_endpoint ||
+		r.oauth_token_endpoint ||
+		r.oauth_client_id ||
+		r.oauth_access_token ||
+		r.oauth_refresh_token;
+	if (!anySet) return null;
+	return {
+		authorizationServer: r.oauth_authorization_server,
+		authorizationEndpoint: r.oauth_authorization_endpoint,
+		tokenEndpoint: r.oauth_token_endpoint,
+		registrationEndpoint: r.oauth_registration_endpoint,
+		clientId: r.oauth_client_id,
+		clientSecret: r.oauth_client_secret,
+		scopes: r.oauth_scopes,
+		accessToken: r.oauth_access_token,
+		refreshToken: r.oauth_refresh_token,
+		expiresAt: r.oauth_expires_at,
+	};
+}
 
 function rowToServer(r: Row): McpServerRow {
 	return {
@@ -25,13 +63,13 @@ function rowToServer(r: Row): McpServerRow {
 		envJson: r.env_json,
 		authJson: r.auth_json,
 		enabled: r.enabled === 1,
+		oauth: rowToOauth(r),
 	};
 }
 
 export async function listMcpServers(env: Env, userId: number = SINGLE_USER_ID): Promise<McpServerRow[]> {
 	const result = await env.DB.prepare(
-		`SELECT id, name, transport, url, command, env_json, auth_json, enabled, user_id
-		 FROM mcp_servers WHERE user_id = ? ORDER BY name`,
+		`SELECT ${SELECT_COLS} FROM mcp_servers WHERE user_id = ? ORDER BY name`,
 	)
 		.bind(userId)
 		.all<Row>();
@@ -40,12 +78,70 @@ export async function listMcpServers(env: Env, userId: number = SINGLE_USER_ID):
 
 export async function getMcpServer(env: Env, id: number): Promise<McpServerRow | null> {
 	const row = await env.DB.prepare(
-		`SELECT id, name, transport, url, command, env_json, auth_json, enabled, user_id
-		 FROM mcp_servers WHERE id = ?`,
+		`SELECT ${SELECT_COLS} FROM mcp_servers WHERE id = ?`,
 	)
 		.bind(id)
 		.first<Row>();
 	return row ? rowToServer(row) : null;
+}
+
+export type StoredOauthTokens = {
+	accessToken: string;
+	refreshToken: string | null;
+	expiresAt: number | null;
+};
+
+export async function setMcpServerOauthTokens(
+	env: Env,
+	id: number,
+	tokens: StoredOauthTokens,
+): Promise<void> {
+	await env.DB.prepare(
+		`UPDATE mcp_servers
+		 SET oauth_access_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, enabled = 1
+		 WHERE id = ?`,
+	)
+		.bind(tokens.accessToken, tokens.refreshToken, tokens.expiresAt, id)
+		.run();
+}
+
+export type OauthClientRegistration = {
+	authorizationServer: string;
+	authorizationEndpoint: string;
+	tokenEndpoint: string;
+	registrationEndpoint: string | null;
+	clientId: string;
+	clientSecret: string | null;
+	scopes: string | null;
+};
+
+export async function setMcpServerOauthClient(
+	env: Env,
+	id: number,
+	reg: OauthClientRegistration,
+): Promise<void> {
+	await env.DB.prepare(
+		`UPDATE mcp_servers SET
+			oauth_authorization_server = ?,
+			oauth_authorization_endpoint = ?,
+			oauth_token_endpoint = ?,
+			oauth_registration_endpoint = ?,
+			oauth_client_id = ?,
+			oauth_client_secret = ?,
+			oauth_scopes = ?
+		 WHERE id = ?`,
+	)
+		.bind(
+			reg.authorizationServer,
+			reg.authorizationEndpoint,
+			reg.tokenEndpoint,
+			reg.registrationEndpoint,
+			reg.clientId,
+			reg.clientSecret,
+			reg.scopes,
+			id,
+		)
+		.run();
 }
 
 export type CreateMcpServerInput = {

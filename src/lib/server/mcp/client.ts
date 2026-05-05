@@ -6,22 +6,37 @@ import type { McpJsonRpcRequest, McpJsonRpcResponse, McpToolCallResult, McpToolD
 // Phase 0.6 — the v1 use case is "operator runs an MCP server, we POST tools
 // and call_tool, parse single-shot replies."
 
+export type AccessTokenGetter = (opts?: { force?: boolean }) => Promise<string | null>;
+
 export type McpClientOptions = {
 	url: string;
 	authJson?: string | null;
 	signal?: AbortSignal;
+	// Returns the current access token. Called each request; `force: true` is
+	// passed on retry after a 401 so the resolver can refresh even when its
+	// cached token isn't expired by clock.
+	getAccessToken?: AccessTokenGetter;
 };
+
+export class McpAuthError extends Error {
+	constructor(message = 'MCP server requires authorization') {
+		super(message);
+		this.name = 'McpAuthError';
+	}
+}
 
 export class McpHttpClient {
 	#url: string;
 	#auth: Record<string, string> | null;
 	#signal: AbortSignal | undefined;
+	#getAccessToken: AccessTokenGetter | null;
 	#nextId = 1;
 
-	constructor({ url, authJson, signal }: McpClientOptions) {
+	constructor({ url, authJson, signal, getAccessToken }: McpClientOptions) {
 		this.#url = url;
 		this.#auth = parseAuth(authJson);
 		this.#signal = signal;
+		this.#getAccessToken = getAccessToken ?? null;
 	}
 
 	async listTools(): Promise<McpToolDescriptor[]> {
@@ -34,20 +49,34 @@ export class McpHttpClient {
 		return result ?? { content: [], isError: true };
 	}
 
-	async #request(method: string, params: unknown): Promise<unknown> {
-		const id = this.#nextId++;
-		const body: McpJsonRpcRequest = { jsonrpc: '2.0', id, method, params };
+	async #buildHeaders(force: boolean): Promise<Record<string, string>> {
 		const headers: Record<string, string> = {
 			'Content-Type': 'application/json',
 			Accept: 'application/json, text/event-stream',
 		};
 		if (this.#auth) Object.assign(headers, this.#auth);
-		const res = await fetch(this.#url, {
-			method: 'POST',
-			headers,
-			body: JSON.stringify(body),
-			signal: this.#signal,
-		});
+		if (this.#getAccessToken) {
+			const token = await this.#getAccessToken({ force });
+			if (token) headers.Authorization = `Bearer ${token}`;
+		}
+		return headers;
+	}
+
+	async #request(method: string, params: unknown): Promise<unknown> {
+		const id = this.#nextId++;
+		const body: McpJsonRpcRequest = { jsonrpc: '2.0', id, method, params };
+		const bodyJson = JSON.stringify(body);
+		let headers = await this.#buildHeaders(false);
+		let res = await fetch(this.#url, { method: 'POST', headers, body: bodyJson, signal: this.#signal });
+		// One retry on 401 with a forced token refresh — covers servers that
+		// invalidate access tokens before our cached expiry.
+		if (res.status === 401 && this.#getAccessToken) {
+			headers = await this.#buildHeaders(true);
+			res = await fetch(this.#url, { method: 'POST', headers, body: bodyJson, signal: this.#signal });
+		}
+		if (res.status === 401) {
+			throw new McpAuthError(`MCP server requires authorization (${this.#url})`);
+		}
 		if (!res.ok) throw new Error(`MCP HTTP ${res.status}`);
 		const ct = res.headers.get('content-type') ?? '';
 		const response = ct.includes('text/event-stream')

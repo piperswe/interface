@@ -124,6 +124,24 @@
 										? 'exists'
 										: call.name,
 	);
+
+	const startedAt = $derived(result?.startedAt ?? call.startedAt ?? null);
+	const endedAt = $derived(result?.endedAt ?? null);
+	const latencyMs = $derived(startedAt != null && endedAt != null ? endedAt - startedAt : null);
+	function fmtLatency(ms: number): string {
+		if (ms < 1000) return `${ms}ms`;
+		if (ms < 60_000) return `${(ms / 1000).toFixed(2)}s`;
+		const m = Math.floor(ms / 60_000);
+		const s = Math.round((ms % 60_000) / 1000);
+		return `${m}m${s}s`;
+	}
+	function fmtTimestamp(ts: number): string {
+		try {
+			return new Date(ts).toLocaleTimeString();
+		} catch {
+			return String(ts);
+		}
+	}
 </script>
 
 <details class="tool-call{nested ? ' nested' : ''}" data-tool-name={call.name} {open}>
@@ -146,6 +164,9 @@
 			<span class="status running ms-auto">streaming<span class="dot" aria-hidden="true">●</span></span>
 		{:else}
 			<span class="status done ms-auto">done</span>
+		{/if}
+		{#if latencyMs != null}
+			<span class="latency" title={`Started ${fmtTimestamp(startedAt!)} · ended ${fmtTimestamp(endedAt!)}`}>{fmtLatency(latencyMs)}</span>
 		{/if}
 	</summary>
 
@@ -289,6 +310,31 @@
 			{:else}
 				<div class="pending-output">running…</div>
 			{/if}
+		{/if}
+
+		{#if startedAt != null || result}
+			<details class="tool-details">
+				<summary>Details</summary>
+				<dl class="detail-grid">
+					<dt>name</dt><dd><code>{call.name}</code></dd>
+					{#if startedAt != null}
+						<dt>started</dt><dd>{fmtTimestamp(startedAt)}</dd>
+					{/if}
+					{#if endedAt != null}
+						<dt>ended</dt><dd>{fmtTimestamp(endedAt)}</dd>
+					{/if}
+					{#if latencyMs != null}
+						<dt>latency</dt><dd>{fmtLatency(latencyMs)}</dd>
+					{/if}
+					<dt>id</dt><dd><code>{call.id}</code></dd>
+				</dl>
+				<div class="output-label mt-2">raw input</div>
+				<pre class="code-block"><code>{JSON.stringify(call.input ?? {}, null, 2)}</code></pre>
+				{#if result}
+					<div class="output-label mt-2">raw output</div>
+					<pre class="code-block{isError ? ' error' : ''}"><code>{result.content}</code></pre>
+				{/if}
+			</details>
 		{/if}
 	</div>
 </details>
@@ -668,5 +714,65 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.2rem;
+	}
+
+	.latency {
+		font-size: 0.7rem;
+		color: var(--muted-2);
+		font-variant-numeric: tabular-nums;
+		flex-shrink: 0;
+	}
+
+	.tool-details {
+		margin-top: 0.25rem;
+		font-size: 0.85em;
+	}
+
+	.tool-details summary {
+		cursor: pointer;
+		color: var(--muted-2);
+		padding: 0.2rem 0;
+		font-size: 0.78rem;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		list-style: none;
+	}
+
+	.tool-details summary::-webkit-details-marker,
+	.tool-details summary::marker {
+		display: none;
+		content: '';
+	}
+
+	.tool-details summary::before {
+		content: '▸';
+		font-size: 0.7em;
+		color: var(--muted-2);
+		display: inline-block;
+		margin-right: 0.3rem;
+		transition: transform 100ms ease;
+	}
+
+	.tool-details[open] summary::before {
+		transform: rotate(90deg);
+	}
+
+	.detail-grid {
+		display: grid;
+		grid-template-columns: max-content 1fr;
+		gap: 0.15rem 0.6rem;
+		margin: 0.25rem 0 0;
+		font-size: 0.85em;
+	}
+
+	.detail-grid dt {
+		color: var(--muted-2);
+		font-weight: 500;
+	}
+
+	.detail-grid dd {
+		margin: 0;
+		color: var(--fg);
+		word-break: break-all;
 	}
 </style>

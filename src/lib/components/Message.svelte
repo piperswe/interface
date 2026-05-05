@@ -57,8 +57,8 @@
 	{:else if part.type === 'tool_use'}
 		{@const result = results.get(part.id)}
 		<ToolCall
-			call={{ id: part.id, name: part.name, input: part.input }}
-			result={result ? { toolUseId: result.toolUseId, content: result.content, isError: result.isError, streaming: result.streaming } : undefined}
+			call={{ id: part.id, name: part.name, input: part.input, startedAt: part.startedAt }}
+			result={result ? { toolUseId: result.toolUseId, content: result.content, isError: result.isError, streaming: result.streaming, startedAt: result.startedAt, endedAt: result.endedAt } : undefined}
 			defaultOpen={isStreaming && !result}
 			{nested}
 		/>
