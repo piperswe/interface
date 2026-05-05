@@ -1,8 +1,8 @@
 <script lang="ts" module>
 	import type { Conversation } from '$lib/types/conversation';
 	import type { Tag } from '$lib/server/tags';
-	import { BAND_ORDER, groupByBand } from './sidebar';
-	export { groupByBand, BAND_ORDER };
+	import { BAND_ORDER, groupByBand, mergeOptimisticConversations } from './sidebar';
+	export { groupByBand, BAND_ORDER, mergeOptimisticConversations };
 </script>
 
 <script lang="ts">
@@ -67,8 +67,10 @@
 		}
 	});
 	const visibleConversations = $derived(
-		[...optimisticallyCreated, ...filteredConversations].filter(
-			(c) => !optimisticallyArchived.has(c.id),
+		mergeOptimisticConversations(
+			optimisticallyCreated,
+			filteredConversations,
+			optimisticallyArchived,
 		),
 	);
 	const grouped = $derived(groupByBand(visibleConversations, now));
