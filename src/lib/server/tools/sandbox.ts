@@ -461,6 +461,138 @@ export const sandboxExistsTool: Tool = {
 };
 
 // ---------------------------------------------------------------------------
+// sandbox_create_artifact
+// ---------------------------------------------------------------------------
+const createArtifactInputSchema = {
+	type: 'object',
+	properties: {
+		path: { type: 'string', description: 'Absolute path of the file to turn into an artifact.' },
+		type: {
+			type: 'string',
+			enum: ['code', 'markdown', 'html', 'svg', 'mermaid'],
+			description: 'Artifact type (default: auto-detected from file extension).',
+		},
+		name: { type: 'string', description: 'Optional display name for the artifact (default: filename).' },
+		language: { type: 'string', description: 'Optional language hint for code artifacts (default: auto-detected).' },
+	},
+	required: ['path'],
+} as const;
+
+function inferArtifactType(path: string): 'code' | 'markdown' | 'html' | 'svg' | 'mermaid' {
+	const lower = path.toLowerCase();
+	if (lower.endsWith('.html') || lower.endsWith('.htm')) return 'html';
+	if (lower.endsWith('.svg')) return 'svg';
+	if (lower.endsWith('.md') || lower.endsWith('.markdown')) return 'markdown';
+	if (lower.endsWith('.mmd') || lower.endsWith('.mermaid')) return 'mermaid';
+	return 'code';
+}
+
+function inferLanguage(path: string): string | undefined {
+	const ext = path.split('.').pop()?.toLowerCase();
+	switch (ext) {
+		case 'ts':
+			return 'typescript';
+		case 'tsx':
+			return 'tsx';
+		case 'js':
+			return 'javascript';
+		case 'jsx':
+			return 'jsx';
+		case 'py':
+			return 'python';
+		case 'rs':
+			return 'rust';
+		case 'go':
+			return 'go';
+		case 'java':
+			return 'java';
+		case 'c':
+			return 'c';
+		case 'cpp':
+		case 'cc':
+			return 'cpp';
+		case 'h':
+			return 'c';
+		case 'hpp':
+			return 'cpp';
+		case 'rb':
+			return 'ruby';
+		case 'php':
+			return 'php';
+		case 'sh':
+			return 'bash';
+		case 'csv':
+			return 'csv';
+		case 'json':
+			return 'json';
+		case 'yaml':
+		case 'yml':
+			return 'yaml';
+		case 'xml':
+			return 'xml';
+		case 'sql':
+			return 'sql';
+		case 'css':
+			return 'css';
+		case 'scss':
+		case 'sass':
+			return 'scss';
+		case 'html':
+		case 'htm':
+			return 'html';
+		case 'md':
+			return 'markdown';
+		default:
+			return undefined;
+	}
+}
+
+export const sandboxCreateArtifactTool: Tool = {
+	definition: {
+		name: 'sandbox_create_artifact',
+		description:
+			"Read a file from the sandbox and expose it as a visual artifact in the conversation. Use this to share code, HTML pages, SVG images, markdown documents, or mermaid diagrams with the user. The artifact will appear in the side panel for easy viewing.",
+		inputSchema: createArtifactInputSchema,
+	},
+	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
+		const args = (input ?? {}) as {
+			path?: string;
+			type?: 'code' | 'markdown' | 'html' | 'svg' | 'mermaid';
+			name?: string;
+			language?: string;
+		};
+		if (!args.path || typeof args.path !== 'string') {
+			return { content: 'Missing required parameter: path', isError: true };
+		}
+		try {
+			const sandbox = getConversationSandbox(ctx);
+			const file = await sandbox.readFile(args.path);
+			const type = args.type ?? inferArtifactType(args.path);
+			const name = args.name ?? args.path.split('/').pop() ?? args.path;
+			const language =
+				args.language ?? (type === 'code' ? inferLanguage(args.path) : undefined);
+
+			return {
+				content: `Created artifact from ${args.path}`,
+				artifacts: [
+					{
+						type,
+						name,
+						...(language ? { language } : {}),
+						content: file.content,
+					},
+				],
+			};
+		} catch (e) {
+			return {
+				content: e instanceof Error ? e.message : String(e),
+				isError: true,
+			};
+		}
+	},
+};
+
+// ---------------------------------------------------------------------------
 // Registry helper
 // ---------------------------------------------------------------------------
 export function registerSandboxTools(registry: { register(tool: Tool): void }): void {
@@ -471,4 +603,5 @@ export function registerSandboxTools(registry: { register(tool: Tool): void }): 
 	registry.register(sandboxDeleteFileTool);
 	registry.register(sandboxMkdirTool);
 	registry.register(sandboxExistsTool);
+	registry.register(sandboxCreateArtifactTool);
 }
