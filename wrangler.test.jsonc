@@ -55,6 +55,12 @@
 			"migrations_dir": "migrations",
 		},
 	],
+	"r2_buckets": [
+		{
+			"binding": "WORKSPACE_BUCKET",
+			"bucket_name": "interface-workspace-test",
+		},
+	],
 	"worker_loaders": [
 		{
 			"binding": "RUN_JS_LOADER",

@@ -32,7 +32,7 @@ import {
 } from './conversation/tool-registry-builder';
 import { readMessages } from './conversation/state-readers';
 import { writeTitle, TITLE_GEN_SYSTEM_PROMPT, TITLE_REGEN_SYSTEM_PROMPT } from './conversation/title-generator';
-import { listSandboxFiles, getSandboxPreviewPorts, destroySandbox } from './conversation/sandbox';
+import { getSandboxPreviewPorts, destroySandbox } from './conversation/sandbox';
 import { insertArtifact, type AddArtifactInput } from './conversation/artifacts';
 
 export type { AddMessageResult, Artifact, ArtifactType, ConversationState, MessageRow, MetaSnapshot };
@@ -503,10 +503,6 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	// -------------------------------------------------------------------------
 	// Sandbox helpers
 	// -------------------------------------------------------------------------
-
-	async listSandboxFiles(path: string): Promise<{ path: string; type: 'file' | 'directory' }[]> {
-		return listSandboxFiles(this.env, this.#getConversationId(), path);
-	}
 
 	async getSandboxPreviewPorts(): Promise<{ port: number; url: string; name?: string }[]> {
 		return getSandboxPreviewPorts(this.env, this.#getConversationId());

@@ -41,6 +41,10 @@ declare global {
 		// Optional Sandbox binding. When present, conversation-scoped
 		// sandbox tools are registered in the tool registry.
 		SANDBOX?: DurableObjectNamespace<Sandbox>;
+		// Optional R2 bucket backing the sandbox /workspace mount. When
+		// present, each conversation's /workspace is sync-mounted to the
+		// `conversations/{id}/` prefix so files survive sandbox cycles.
+		WORKSPACE_BUCKET?: R2Bucket;
 		// Optional SSH private key injected into every sandbox container
 		// so the agent can interact with GitHub (clone, push, etc.).
 		SANDBOX_SSH_KEY?: string;

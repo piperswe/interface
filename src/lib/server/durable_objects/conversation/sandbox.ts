@@ -1,32 +1,6 @@
 import { getSandbox } from '@cloudflare/sandbox';
 import type { Sandbox } from '@cloudflare/sandbox';
 
-export async function listSandboxFiles(
-	env: Env,
-	conversationId: string | null,
-	path: string,
-): Promise<{ path: string; type: 'file' | 'directory' }[]> {
-	if (!env.SANDBOX || !conversationId) return [];
-	try {
-		const sandbox = getSandbox(env.SANDBOX as unknown as DurableObjectNamespace<Sandbox>, conversationId);
-		const result = await sandbox.exec(`find ${path} -mindepth 1 -maxdepth 3 -printf '%y %p\\n' | sort`);
-		if (!result.success) return [];
-		return result.stdout
-			.split('\n')
-			.filter(Boolean)
-			.map((line) => {
-				const typeChar = line[0];
-				const filePath = line.slice(2);
-				return {
-					path: filePath,
-					type: typeChar === 'd' ? 'directory' : ('file' as 'file' | 'directory'),
-				};
-			});
-	} catch {
-		return [];
-	}
-}
-
 export async function getSandboxPreviewPorts(
 	env: Env,
 	conversationId: string | null,

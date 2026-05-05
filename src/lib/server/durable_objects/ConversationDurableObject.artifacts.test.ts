@@ -69,13 +69,6 @@ describe('ConversationDurableObject — artifacts & sandbox', () => {
 		expect(m?.artifacts).toHaveLength(3);
 	});
 
-	it('listSandboxFiles returns an empty array gracefully when sandbox is unavailable', async () => {
-		const id = await createConversation(env);
-		const stub = stubFor(id);
-		const files = await stub.listSandboxFiles('/workspace');
-		expect(Array.isArray(files)).toBe(true);
-	});
-
 	it('getSandboxPreviewPorts returns an empty array gracefully when sandbox is unavailable', async () => {
 		const id = await createConversation(env);
 		const stub = stubFor(id);
