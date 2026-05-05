@@ -18,6 +18,10 @@
 			"new_sqlite_classes": ["Sandbox"],
 			"tag": "v2",
 		},
+		{
+			"new_sqlite_classes": ["SchedulerDurableObject"],
+			"tag": "v3",
+		},
 	],
 	"containers": [
 		{
@@ -32,6 +36,10 @@
 			{
 				"class_name": "ConversationDurableObject",
 				"name": "CONVERSATION_DURABLE_OBJECT",
+			},
+			{
+				"class_name": "SchedulerDurableObject",
+				"name": "SCHEDULER_DURABLE_OBJECT",
 			},
 			{
 				"class_name": "Sandbox",

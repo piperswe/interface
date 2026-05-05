@@ -1,5 +1,6 @@
 import { now, uuid } from './clock';
 import type { Conversation } from '$lib/types/conversation';
+import { indexTitle, unindexConversation } from './search';
 
 export type { Conversation };
 
@@ -26,6 +27,7 @@ export async function createConversation(env: Env): Promise<string> {
 	await env.DB.prepare(`INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, 'New conversation', ?, ?)`)
 		.bind(id, ts, ts)
 		.run();
+	await indexTitle(env, id, 'New conversation', ts);
 	return id;
 }
 
@@ -56,4 +58,5 @@ export async function unarchiveConversation(env: Env, id: string): Promise<void>
 // them so the next time the DO wakes it's empty.
 export async function deleteConversation(env: Env, id: string): Promise<void> {
 	await env.DB.prepare('DELETE FROM conversations WHERE id = ?').bind(id).run();
+	await unindexConversation(env, id);
 }
