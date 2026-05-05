@@ -49,5 +49,10 @@ export default defineConfig({
 		// Worker runtime modules can't be loaded by Node.js during the SSR
 		// build; keep them external so the adapter bundles them correctly.
 		external: ['cloudflare:workers', 'cloudflare:sockets', 'cloudflare:test'],
+		// Bundle these so `fixContainersPlugin` can rewrite the broken
+		// extensionless imports inside `@cloudflare/containers`. Otherwise
+		// Node's strict ESM resolver chokes on them when SvelteKit's
+		// prerender worker dynamically imports the SSR bundle.
+		noExternal: ['@cloudflare/sandbox', '@cloudflare/containers'],
 	},
 });
