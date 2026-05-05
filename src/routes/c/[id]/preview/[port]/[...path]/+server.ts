@@ -11,8 +11,10 @@ import type { RequestHandler } from './$types';
 // Exported for unit testing — `new URL(path, base)` drops query strings if
 // the path-component lacks them, which broke any sandboxed app that read
 // URL params. Keeping this in a pure helper makes the regression case
-// trivial to assert.
-export function buildPreviewUrl(opts: {
+// trivial to assert. The `_` prefix opts out of SvelteKit's `+server.ts`
+// export validator, which would otherwise reject any export that isn't a
+// recognised HTTP method.
+export function _buildPreviewUrl(opts: {
 	port: number;
 	conversationId: string;
 	hostname: string;
@@ -47,7 +49,7 @@ async function proxyToPreview({ params, request, url, platform }: Parameters<Req
 		console.warn('exposePort failed:', e instanceof Error ? e.message : String(e));
 	}
 
-	const previewUrl = buildPreviewUrl({
+	const previewUrl = _buildPreviewUrl({
 		port,
 		conversationId,
 		hostname,

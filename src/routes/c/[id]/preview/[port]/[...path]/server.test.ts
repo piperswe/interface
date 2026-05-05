@@ -1,15 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { buildPreviewUrl } from './+server';
+import { _buildPreviewUrl } from './+server';
 
 const CONV_ID = '12345678-1234-1234-1234-123456789abc';
 
-describe('buildPreviewUrl', () => {
+describe('_buildPreviewUrl', () => {
 	// Regression: `new URL(path, base)` only carries forward what's in the
 	// path argument; if we pass just the pathname the original query string
 	// is lost. Sandboxed apps that read URL params (?id=42, ?token=...)
 	// would break silently. The fix appends `url.search` to the path.
 	it('preserves the query string from the incoming request', () => {
-		const out = buildPreviewUrl({
+		const out = _buildPreviewUrl({
 			port: 3000,
 			conversationId: CONV_ID,
 			hostname: 'interface.example',
@@ -22,7 +22,7 @@ describe('buildPreviewUrl', () => {
 	});
 
 	it('routes to the Sandbox preview hostname pattern', () => {
-		const out = buildPreviewUrl({
+		const out = _buildPreviewUrl({
 			port: 8080,
 			conversationId: CONV_ID,
 			hostname: 'app.example',
@@ -34,7 +34,7 @@ describe('buildPreviewUrl', () => {
 	});
 
 	it('handles a missing path with no query string', () => {
-		const out = buildPreviewUrl({
+		const out = _buildPreviewUrl({
 			port: 3000,
 			conversationId: CONV_ID,
 			hostname: 'app.example',
@@ -46,7 +46,7 @@ describe('buildPreviewUrl', () => {
 	});
 
 	it('preserves nested paths joined by SvelteKit catch-all params', () => {
-		const out = buildPreviewUrl({
+		const out = _buildPreviewUrl({
 			port: 3000,
 			conversationId: CONV_ID,
 			hostname: 'app.example',
