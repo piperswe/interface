@@ -44,6 +44,9 @@ declare global {
 		// Optional SSH private key injected into every sandbox container
 		// so the agent can interact with GitHub (clone, push, etc.).
 		SANDBOX_SSH_KEY?: string;
+		// Optional Worker Loader binding. When present, the `run_js` tool
+		// is registered so the model can evaluate JS in a fresh isolate.
+		RUN_JS_LOADER?: WorkerLoader;
 		}
 	}
 }
