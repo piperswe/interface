@@ -30,6 +30,7 @@ RUN apt-get update \
     curl \
     wget \
     ca-certificates \
+    file \
  && apt-get clean -y \
  && rm -rf /var/lib/apt/lists/*
 
