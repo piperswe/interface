@@ -19,6 +19,8 @@
 		thinkingBudget,
 		busy,
 		contextUsed = 0,
+		onOptimisticSubmit,
+		onOptimisticRevert,
 	}: {
 		conversationId: string;
 		models: ProviderModel[];
@@ -26,6 +28,8 @@
 		thinkingBudget: number | null;
 		busy: boolean;
 		contextUsed?: number;
+		onOptimisticSubmit?: (content: string, model: string) => void;
+		onOptimisticRevert?: () => void;
 	} = $props();
 
 	let formEl: HTMLFormElement | null = $state(null);
@@ -133,9 +137,24 @@
 <form
 	bind:this={formEl}
 	{...sendMessage.for(conversationId).enhance(async ({ form, submit }) => {
-		await submit();
 		const textarea = form.querySelector<HTMLTextAreaElement>('textarea[name="content"]');
-		if (textarea) textarea.value = '';
+		const rawContent = textarea?.value ?? '';
+		const trimmed = rawContent.trim();
+		const optimistic = trimmed.length > 0 && onOptimisticSubmit != null;
+		if (optimistic) {
+			onOptimisticSubmit!(trimmed, selectedModel);
+			if (textarea) textarea.value = '';
+		}
+		try {
+			await submit();
+			if (!optimistic && textarea) textarea.value = '';
+		} catch (err) {
+			if (optimistic) {
+				onOptimisticRevert?.();
+				if (textarea) textarea.value = rawContent;
+			}
+			throw err;
+		}
 	})}
 	class="compose d-flex flex-column gap-2 bg-body border rounded-4 p-2 ps-3"
 >

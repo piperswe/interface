@@ -1,11 +1,32 @@
 <script lang="ts">
 	import type { PageData } from './$types';
 	import { destroy, unarchive } from '$lib/conversations.remote';
-	import { confirmToastSubmit, toastSubmit } from '$lib/form-actions';
 	import { fmtRelative } from '$lib/formatters';
+	import { pushToast } from '$lib/toasts';
 
 	let { data }: { data: PageData } = $props();
 	const now = Date.now();
+
+	let pending = $state(new Set<string>());
+	$effect(() => {
+		const visible = new Set(data.archived.map((c) => c.id));
+		const stale = [...pending].filter((id) => !visible.has(id));
+		if (stale.length > 0) {
+			const next = new Set(pending);
+			for (const id of stale) next.delete(id);
+			pending = next;
+		}
+	});
+	const visibleArchived = $derived(data.archived.filter((c) => !pending.has(c.id)));
+
+	function markPending(id: string) {
+		pending = new Set([...pending, id]);
+	}
+	function unmarkPending(id: string) {
+		const next = new Set(pending);
+		next.delete(id);
+		pending = next;
+	}
 </script>
 
 <svelte:head>
@@ -14,11 +35,11 @@
 
 <div class="archive-layout d-flex flex-column gap-3 mx-auto w-100 p-3 overflow-auto">
 	<h1 class="archive-title fs-3 fw-medium m-0">Archived conversations</h1>
-	{#if data.archived.length === 0}
+	{#if visibleArchived.length === 0}
 		<div class="empty">No archived conversations.</div>
 	{:else}
 		<ul class="archive-list list-unstyled d-flex flex-column gap-2 m-0 p-0">
-			{#each data.archived as c (c.id)}
+			{#each visibleArchived as c (c.id)}
 				<li class="archive-item d-flex align-items-center justify-content-between gap-3 flex-wrap border rounded p-2 bg-body">
 					<a href={`/c/${c.id}`} class="archive-item-link text-decoration-none text-body d-flex flex-column min-vw-0 flex-fill">
 						<span class="archive-item-title fw-medium text-truncate">{c.title}</span>
@@ -27,11 +48,30 @@
 						</span>
 					</a>
 					<div class="archive-item-actions d-flex gap-2 flex-shrink-0">
-						<form {...unarchive.for(c.id).enhance(toastSubmit('Conversation unarchived'))}>
+						<form {...unarchive.for(c.id).enhance(async ({ submit }) => {
+							markPending(c.id);
+							try {
+								await submit();
+								pushToast('Conversation unarchived', 'success');
+							} catch (err) {
+								unmarkPending(c.id);
+								pushToast(err instanceof Error ? err.message : String(err), 'error');
+							}
+						})}>
 							<input type="hidden" name="conversationId" value={c.id} />
 							<button type="submit" class="btn btn-sm btn-outline-secondary">Unarchive</button>
 						</form>
-						<form {...destroy.for(c.id).enhance(confirmToastSubmit(`Delete "${c.title}"? This cannot be undone.`, 'Conversation deleted'))}>
+						<form {...destroy.for(c.id).enhance(async ({ submit }) => {
+							if (!confirm(`Delete "${c.title}"? This cannot be undone.`)) return;
+							markPending(c.id);
+							try {
+								await submit();
+								pushToast('Conversation deleted', 'success');
+							} catch (err) {
+								unmarkPending(c.id);
+								pushToast(err instanceof Error ? err.message : String(err), 'error');
+							}
+						})}>
 							<input type="hidden" name="conversationId" value={c.id} />
 							<button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
 						</form>

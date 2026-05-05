@@ -56,17 +56,31 @@
 		if (menuEl?.open) menuEl.open = false;
 	}
 
+	let optimisticStyleId = $state<number | null | undefined>(undefined);
+	const styleSelectValue = $derived(
+		(optimisticStyleId === undefined ? data.styleId : optimisticStyleId) == null
+			? ''
+			: String(optimisticStyleId === undefined ? data.styleId : optimisticStyleId),
+	);
+
 	async function onStyleChange(e: Event) {
 		const target = e.target as HTMLSelectElement;
 		const v = target.value;
 		const styleId = v ? Number.parseInt(v, 10) : null;
+		optimisticStyleId = styleId;
 		try {
 			await setConversationStyle({ conversationId: data.conversation.id, styleId });
 			pushToast(styleId ? 'Style applied' : 'Style cleared');
 		} catch (err) {
+			optimisticStyleId = undefined;
 			pushToast(err instanceof Error ? err.message : 'Failed to update style', 'error');
 		}
 	}
+
+	$effect(() => {
+		void data.styleId;
+		optimisticStyleId = undefined;
+	});
 
 	async function onSavePrompt() {
 		const trimmed = promptDraft.trim();
@@ -91,10 +105,17 @@
 
 	$effect(() => {
 		const server = initialState;
-		// Only skip syncing when both sides agree a stream is still in flight.
-		// If the server has already finished (inProgress === null) but our
-		// local mirror is stale, we need to sync so the spinner disappears.
-		if (convState.inProgress !== null && server.inProgress !== null) return;
+		// Skip syncing when both sides agree a real stream is in flight against
+		// the same message — the SSE deltas are authoritative for content. If
+		// our local inProgress is an optimistic placeholder (different id), or
+		// the server has already finished, we must reconcile.
+		if (
+			convState.inProgress !== null &&
+			server.inProgress !== null &&
+			convState.inProgress.messageId === server.inProgress.messageId
+		) {
+			return;
+		}
 		const localLast = convState.messages.at(-1);
 		const serverLast = server.messages.at(-1);
 		if (!localLast && !serverLast) return;
@@ -104,6 +125,48 @@
 			convState = server;
 		}
 	});
+
+	function pushOptimisticUserMessage(content: string, model: string) {
+		const now = Date.now();
+		const userId = `optimistic-user-${now}`;
+		const asstId = `optimistic-asst-${now}`;
+		convState = {
+			messages: [
+				...convState.messages,
+				{
+					id: userId,
+					role: 'user',
+					content,
+					model: null,
+					status: 'complete',
+					error: null,
+					createdAt: now,
+					meta: null,
+				},
+				{
+					id: asstId,
+					role: 'assistant',
+					content: '',
+					model,
+					status: 'streaming',
+					error: null,
+					createdAt: now + 1,
+					meta: null,
+					parts: [],
+				},
+			],
+			inProgress: { messageId: asstId, content: '' },
+		};
+	}
+
+	function revertOptimisticUserMessage() {
+		convState = {
+			messages: convState.messages.filter((m) => !m.id.startsWith('optimistic-')),
+			inProgress: convState.inProgress && convState.inProgress.messageId.startsWith('optimistic-')
+				? null
+				: convState.inProgress,
+		};
+	}
 
 	const busy = $derived(convState.inProgress !== null);
 	const lastModel = $derived(
@@ -219,7 +282,7 @@
 		{#if data.styles.length > 0}
 			<select
 				class="form-select form-select-sm w-auto"
-				value={data.styleId == null ? '' : String(data.styleId)}
+				value={styleSelectValue}
 				onchange={onStyleChange}
 				title="Style"
 				aria-label="Style"
@@ -320,6 +383,8 @@
 						thinkingBudget={data.thinkingBudget}
 						{busy}
 						{contextUsed}
+						onOptimisticSubmit={pushOptimisticUserMessage}
+						onOptimisticRevert={revertOptimisticUserMessage}
 					/>
 				</div>
 			</div>

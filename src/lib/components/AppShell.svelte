@@ -11,7 +11,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { createNewConversation, archive } from '$lib/conversations.remote';
-	import { justSubmit } from '$lib/form-actions';
+	import { pushToast } from '$lib/toasts';
 
 	let {
 		conversations,
@@ -32,7 +32,23 @@
 		}, 60_000);
 		return () => clearInterval(id);
 	});
-	const grouped = $derived(groupByBand(conversations, now));
+	let optimisticallyArchived = $state(new Set<string>());
+	$effect(() => {
+		// Drop ids from the optimistic set once the server-side list reflects the
+		// archive (the conversation no longer appears in `conversations`). Avoids
+		// the set growing unbounded across many archive operations.
+		const visible = new Set(conversations.map((c) => c.id));
+		const stale = [...optimisticallyArchived].filter((id) => !visible.has(id));
+		if (stale.length > 0) {
+			const next = new Set(optimisticallyArchived);
+			for (const id of stale) next.delete(id);
+			optimisticallyArchived = next;
+		}
+	});
+	const visibleConversations = $derived(
+		conversations.filter((c) => !optimisticallyArchived.has(c.id)),
+	);
+	const grouped = $derived(groupByBand(visibleConversations, now));
 
 	let creatingChat = $state(false);
 	let appShellEl: HTMLDivElement | null = $state(null);
@@ -145,7 +161,17 @@
 										</a>
 												<form
 													class="sidebar-archive-form"
-													{...archive.for(`sidebar-${c.id}`).enhance(justSubmit)}
+													{...archive.for(`sidebar-${c.id}`).enhance(async ({ submit }) => {
+														optimisticallyArchived = new Set([...optimisticallyArchived, c.id]);
+														try {
+															await submit();
+														} catch (err) {
+															const next = new Set(optimisticallyArchived);
+															next.delete(c.id);
+															optimisticallyArchived = next;
+															pushToast(err instanceof Error ? err.message : 'Failed to archive', 'error');
+														}
+													})}
 												>
 											<input type="hidden" name="conversationId" value={c.id} />
 											<input
