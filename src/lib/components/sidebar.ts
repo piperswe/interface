@@ -16,3 +16,23 @@ export function groupByBand(conversations: Conversation[], now: number): Map<Rec
 	}
 	return groups;
 }
+
+// Merge optimistic conversations with the canonical server list. When a
+// fire-and-forget create commits before the layout loader query lands, the
+// same id appears in both lists; spreading them naïvely produces a duplicate
+// key in the sidebar's `{#each ... (c.id)}` block, and Svelte 5 aborts the
+// render with `each_key_duplicate` — which detaches the sidebar `<a>` nodes
+// and silently breaks SPA link clicks until refresh. Deduping inside the
+// derived (rather than relying on a follow-up effect that runs a frame too
+// late) keeps the rendered list keyed-unique on every frame. Server rows win;
+// optimistic-only rows go first so a freshly-created chat lands at the top
+// of the `today` band.
+export function mergeOptimisticConversations(
+	optimistic: Conversation[],
+	server: Conversation[],
+	archived: ReadonlySet<string>,
+): Conversation[] {
+	const serverIds = new Set(server.map((c) => c.id));
+	const opt = optimistic.filter((c) => !serverIds.has(c.id));
+	return [...opt, ...server].filter((c) => !archived.has(c.id));
+}
