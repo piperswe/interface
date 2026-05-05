@@ -1,15 +1,15 @@
-# Base on the official sandbox image's python variant — it bundles the
-# `/container-server/sandbox` server, the JavaScript / TypeScript / Python
-# runtime executors, an ipython-capable Python 3.11 toolchain, and Node.js.
-# The plain `cloudflare/sandbox:<ver>` tag has Python disabled (no python3
-# binary), which is what produced the
-#   Failed to create code context: ENOENT: ... posix_spawn 'python3'
-# error. Keep this version in lockstep with the @cloudflare/sandbox npm
-# package version in package.json.
-FROM docker.io/cloudflare/sandbox:0.9.2-python
+FROM debian:testing
 
-# Extra tooling the agent expects at runtime: a C toolchain, git over SSH,
-# and a few libs for building things from source inside the sandbox.
+# Pull the sandbox server binary AND its bundled runtime executors from the
+# official image. The 0.9.x SDK's interpreter spawns python3 / node via
+# scripts at /container-server/dist/runtime/executors/{python,javascript}/...
+# which weren't being copied before — that's what produced
+#   Failed to create code context: ENOENT: ... posix_spawn 'python3'
+# (the server couldn't find the executor and reported it as a missing
+# python3). Keep this tag in lockstep with the @cloudflare/sandbox npm
+# package version in package.json.
+COPY --from=docker.io/cloudflare/sandbox:0.9.2-python /container-server /container-server
+
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
     build-essential \
@@ -18,12 +18,32 @@ RUN apt-get update \
     flex \
     libncurses-dev \
     openssh-client \
+    nodejs \
+    npm \
+    python3 \
+    python3-pip \
+    python-is-python3 \
+    ipython3 \
+    python3-matplotlib \
+    python3-numpy \
+    python3-pandas \
+    curl \
     wget \
+    ca-certificates \
  && apt-get clean -y \
  && rm -rf /var/lib/apt/lists/*
 
+WORKDIR /container-server
+
+# Match the official image's interpreter pool sizing so all three pools are
+# warmed at startup.
+ENV PYTHON_POOL_MIN_SIZE=3 \
+    JAVASCRIPT_POOL_MIN_SIZE=3 \
+    TYPESCRIPT_POOL_MIN_SIZE=3
+
 # Ports commonly used by dev servers inside the sandbox (required for
 # local `wrangler dev` preview exposure; ignored in production).
+EXPOSE 3000
 EXPOSE 3001
 EXPOSE 4000
 EXPOSE 4200
@@ -33,3 +53,5 @@ EXPOSE 8000
 EXPOSE 8080
 EXPOSE 9000
 EXPOSE 9001
+
+ENTRYPOINT ["/container-server/sandbox"]
