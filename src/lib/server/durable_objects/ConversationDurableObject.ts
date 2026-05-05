@@ -19,7 +19,7 @@ import type { ResolvedModel } from '../providers/types';
 import type { MessagePart, ToolCallRecord as RecordedToolCall } from '$lib/types/conversation';
 
 import { runMigrations } from './conversation/migrations';
-import { parseJson, normalizeParts, trimTrailingPartialOutput, partsToMessages } from './conversation/parts';
+import { parseJson, normalizeParts, trimTrailingPartialOutput, partsToMessages, dedupeCitationsByUrl } from './conversation/parts';
 import { buildHistory, buildHistoryWithRowIds } from './conversation/history';
 import { resolveReasoningConfig } from './conversation/reasoning';
 import { composeSystemPrompt } from './conversation/system-prompt';
@@ -957,6 +957,15 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			// Cancel any pending debounced flush so a stale write doesn't land
 			// after the canonical final UPDATE below resets status to complete.
 			this.#cancelFlush();
+			// Surface accumulated citations as a dedicated part so the UI gets
+			// a "Sources" block. Dedupe by URL — a turn that runs `web_search`
+			// twice for the same query shouldn't list each result twice.
+			let citationsPart: MessagePart | null = null;
+			if (accumulatedCitations.length > 0) {
+				const deduped = dedupeCitationsByUrl(accumulatedCitations);
+				citationsPart = { type: 'citations', citations: deduped };
+				parts.push(citationsPart);
+			}
 			const finalText = this.#inProgress.content;
 			const finalThinking = this.#inProgress.thinking;
 			this.#sql.exec(
@@ -985,8 +994,8 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 				messageId: assistantId,
 				snapshot: { startedAt: ip.startedAt, firstTokenAt: ip.firstTokenAt, lastChunk: ip.lastChunk, usage: ip.usage },
 			});
-			if (accumulatedCitations.length > 0) {
-				this.#subscribers.broadcast('citations', { messageId: assistantId, citations: accumulatedCitations });
+			if (citationsPart) {
+				this.#subscribers.broadcast('part', { messageId: assistantId, part: citationsPart });
 			}
 			this.#subscribers.broadcast('refresh', {});
 		} catch (e) {

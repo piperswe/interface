@@ -87,6 +87,28 @@ that re-exports the DO and 404s for HTTP). Unit tests target the modules
 under `src/lib/server/` directly; component behaviour goes through the DO
 end-to-end test in `src/lib/server/durable_objects/`.
 
+#### Bug fixes must include a regression test
+
+Every PR that fixes a bug must add at least one test that fails on the
+old code and passes on the new. The point isn't proving the fix works
+once — it's making sure the same bug can't sneak back in next quarter.
+
+Practical guidance:
+- Pick the smallest scope that reproduces the bug. A pure helper test
+  against an extracted function is better than a sprawling end-to-end
+  flow that's slow and brittle.
+- If the buggy code path isn't testable in its current shape, refactor
+  it just enough to make a regression test possible (e.g. pull a pure
+  helper out of a SvelteKit `+server.ts` and import it from a sibling
+  `server.test.ts` — see `routes/c/[id]/preview/[port]/[...path]/`
+  for the pattern).
+- Reference the bug in a comment on the test. Future readers should
+  understand *why* this assertion exists, not just what it asserts.
+  A one-line "Regression: ..." comment is enough.
+- For UI/integration concerns where a unit test is genuinely impossible,
+  document the manual smoke-test steps in the PR description and call it
+  out — but assume the reviewer will push back on this.
+
 ## Commands
 
 | Command | Purpose |

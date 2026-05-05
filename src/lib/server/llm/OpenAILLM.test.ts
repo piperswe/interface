@@ -222,6 +222,22 @@ describe('OpenAILLM', () => {
 		expect(capture.params!.reasoning_effort).toBe('high');
 	});
 
+	it('maps xhigh effort onto OpenAI high (top of the supported enum)', async () => {
+		const capture: { params?: { reasoning_effort?: string } } = {};
+		const c = fakeClient([chunk({}, { finish_reason: 'stop' })], capture);
+		const llm = new OpenAILLM(c, 'gpt-5.5', 'openai-via-aig');
+		await collect(llm.chat({ messages: [], reasoning: { type: 'effort', effort: 'xhigh' } }));
+		expect(capture.params!.reasoning_effort).toBe('high');
+	});
+
+	it('omits reasoning_effort when effort is none', async () => {
+		const capture: { params?: { reasoning_effort?: string } } = {};
+		const c = fakeClient([chunk({}, { finish_reason: 'stop' })], capture);
+		const llm = new OpenAILLM(c, 'gpt-5.5', 'openai-via-aig');
+		await collect(llm.chat({ messages: [], reasoning: { type: 'effort', effort: 'none' } }));
+		expect(capture.params!.reasoning_effort).toBeUndefined();
+	});
+
 	it('throws on tool message with no tool_result block', async () => {
 		const llm = new OpenAILLM(fakeClient([]), 'gpt-5.5', 'openai-via-aig');
 		const events = await collect(llm.chat({ messages: [{ role: 'tool', content: 'oops' }] }));

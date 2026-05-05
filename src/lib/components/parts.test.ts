@@ -154,4 +154,18 @@ describe('groupParts', () => {
 			expect(groups[0].isLast).toBe(true);
 		}
 	});
+	it('keeps a citations part standalone and flushes the preceding bundle', () => {
+		const parts: MessagePart[] = [
+			{ type: 'thinking', text: 'pre' },
+			{ type: 'tool_use', id: 't1', name: 'web_search', input: {} },
+			{ type: 'tool_result', toolUseId: 't1', content: 'ok', isError: false },
+			{ type: 'citations', citations: [{ url: 'https://example.com', title: 'Example' }] },
+		];
+		const groups = groupParts(parts, false, buildResultsMap(parts));
+		expect(groups.map((g) => g.kind)).toEqual(['bundle', 'standalone']);
+		const last = groups.at(-1);
+		if (last?.kind === 'standalone') {
+			expect(last.part.type).toBe('citations');
+		}
+	});
 });

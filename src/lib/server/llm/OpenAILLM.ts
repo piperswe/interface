@@ -61,7 +61,7 @@ export class OpenAILLM implements LLM {
 				...(tools ? { tools } : {}),
 				...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
 				...(request.maxTokens !== undefined ? { max_completion_tokens: request.maxTokens } : {}),
-				...(request.reasoning?.type === 'effort' && request.reasoning.effort !== 'none' && request.reasoning.effort !== 'xhigh'
+				...(request.reasoning?.type === 'effort' && request.reasoning.effort !== 'none'
 					? { reasoning_effort: mapReasoningEffort(request.reasoning.effort) }
 					: {}),
 				// Pass through custom reasoning param (e.g. OpenRouter)
@@ -184,6 +184,11 @@ function mapReasoningEffort(effort: ReasoningEffort): 'minimal' | 'low' | 'mediu
 		case 'medium':
 			return 'medium';
 		case 'high':
+			return 'high';
+		// OpenAI's reasoning_effort enum tops out at 'high'; map our 'xhigh'
+		// to it so users who pick "extra high" still get the strongest valid
+		// signal instead of the param being silently dropped.
+		case 'xhigh':
 			return 'high';
 		default:
 			return 'medium';

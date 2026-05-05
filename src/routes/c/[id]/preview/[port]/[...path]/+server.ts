@@ -4,6 +4,28 @@ import type { Sandbox } from '@cloudflare/sandbox';
 import { CONVERSATION_ID_PATTERN } from '$lib/conversation-id';
 import type { RequestHandler } from './$types';
 
+// Build the upstream URL that hits the Sandbox DO's preview hostname. The
+// Sandbox routes by hostname pattern `{port}-{id}-{token}.{host}`; we
+// reconstruct that and preserve the original path + query string.
+//
+// Exported for unit testing — `new URL(path, base)` drops query strings if
+// the path-component lacks them, which broke any sandboxed app that read
+// URL params. Keeping this in a pure helper makes the regression case
+// trivial to assert.
+export function buildPreviewUrl(opts: {
+	port: number;
+	conversationId: string;
+	hostname: string;
+	path: string | undefined;
+	search: string;
+}): URL {
+	const { port, conversationId, hostname, path, search } = opts;
+	const token = 'preview';
+	const previewHostname = `${port}-${conversationId}-${token}.${hostname}`;
+	const targetPath = '/' + (path ?? '') + search;
+	return new URL(targetPath, `http://${previewHostname}`);
+}
+
 async function proxyToPreview({ params, request, url, platform }: Parameters<RequestHandler>[0]) {
 	if (!platform) error(500, 'Cloudflare platform bindings unavailable');
 	const conversationId = params.id;
@@ -25,12 +47,13 @@ async function proxyToPreview({ params, request, url, platform }: Parameters<Req
 		console.warn('exposePort failed:', e instanceof Error ? e.message : String(e));
 	}
 
-	// The Sandbox DO routes by hostname pattern `{port}-{id}-{token}.{host}`.
-	// Reconstruct that hostname so the DO knows which container port to hit.
-	const token = 'preview';
-	const previewHostname = `${port}-${conversationId}-${token}.${hostname}`;
-	const targetPath = '/' + (params.path ?? '');
-	const previewUrl = new URL(targetPath, `http://${previewHostname}`);
+	const previewUrl = buildPreviewUrl({
+		port,
+		conversationId,
+		hostname,
+		path: params.path,
+		search: url.search,
+	});
 
 	const id = ns.idFromName(conversationId);
 	const stub = ns.get(id);

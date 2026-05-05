@@ -58,6 +58,20 @@ export function trimTrailingPartialOutput(parts: MessagePart[]): MessagePart[] {
 	return parts.slice(0, cut);
 }
 
+// Dedupe a citations list by URL, preserving the order of first appearance.
+// Used at end-of-turn so a turn that calls `web_search` twice for the same
+// query doesn't list each URL twice in the persisted `citations` part.
+export function dedupeCitationsByUrl<T extends { url: string }>(citations: T[]): T[] {
+	const seen = new Set<string>();
+	const out: T[] = [];
+	for (const c of citations) {
+		if (seen.has(c.url)) continue;
+		seen.add(c.url);
+		out.push(c);
+	}
+	return out;
+}
+
 // Convert a recovered `parts` timeline into the `assistant` + `tool` Message
 // pairs the LLM expects, so a resumed generation sees the work that was
 // already done. Mirrors the in-loop construction at the tool execution
@@ -100,7 +114,7 @@ export function partsToMessages(parts: MessagePart[]): Message[] {
 				...(p.isError ? { isError: true } : {}),
 			});
 		}
-		// `info` parts are UI-only; skip.
+		// `info` and `citations` parts are UI-only; skip.
 	}
 	flushAssistant();
 	flushTool();
