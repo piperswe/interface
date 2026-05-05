@@ -1,4 +1,3 @@
-import { renderMarkdown, renderArtifactCode } from '../../markdown';
 import { now as nowMs, uuid } from '../../clock';
 import type { Artifact, ArtifactType } from '$lib/types/conversation';
 
@@ -17,23 +16,9 @@ export async function insertArtifact(sql: SqlStorage, input: AddArtifactInput): 
 		.exec('SELECT MAX(version) AS v FROM artifacts WHERE message_id = ?', input.messageId)
 		.toArray() as unknown as Array<{ v: number | null }>;
 	const version = (versionRow[0]?.v ?? 0) + 1;
-	// Pre-render to HTML once at insert so SSR doesn't re-tokenise on every load.
-	let contentHtml: string | null = null;
-	try {
-		if (input.type === 'code') {
-			contentHtml = await renderArtifactCode(input.content, input.language ?? 'text');
-		} else if (input.type === 'markdown') {
-			contentHtml = await renderMarkdown(input.content);
-		} else if (input.type === 'svg') {
-			contentHtml = input.content;
-		}
-		// html and mermaid are rendered client-side; leave contentHtml null.
-	} catch {
-		/* SSR will re-render on demand */
-	}
 	sql.exec(
-		`INSERT INTO artifacts (id, message_id, type, name, language, version, content, content_html, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO artifacts (id, message_id, type, name, language, version, content, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		id,
 		input.messageId,
 		input.type,
@@ -41,7 +26,6 @@ export async function insertArtifact(sql: SqlStorage, input: AddArtifactInput): 
 		input.language ?? null,
 		version,
 		input.content,
-		contentHtml,
 		now,
 	);
 	// Update artifact_ids on the parent message.
@@ -67,7 +51,6 @@ export async function insertArtifact(sql: SqlStorage, input: AddArtifactInput): 
 		language: input.language ?? null,
 		version,
 		content: input.content,
-		contentHtml,
 		createdAt: now,
 	};
 }

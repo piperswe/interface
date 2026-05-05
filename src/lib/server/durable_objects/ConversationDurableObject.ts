@@ -10,7 +10,6 @@ import { listSubAgents } from '../sub_agents';
 import { listMemories } from '../memories';
 import { listStyles } from '../styles';
 import { getSystemPrompt, getUserBio } from '../settings';
-import { renderMarkdown } from '../markdown';
 import { indexMessage as indexSearchMessage } from '../search';
 import { now as nowMs, uuid } from '../clock';
 import type { AddMessageResult, Artifact, ArtifactType, ConversationState, MessageRow, MetaSnapshot } from '$lib/types/conversation';
@@ -301,18 +300,10 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			now,
 		);
 
-		// Pre-render the user message so the page load doesn't have to.
-		let userContentHtml: string | null = null;
-		try {
-			userContentHtml = await renderMarkdown(trimmed);
-		} catch {
-			/* SSR will re-render on demand */
-		}
 		this.#sql.exec(
-			"INSERT INTO messages (id, role, content, content_html, model, status, created_at) VALUES (?, 'user', ?, ?, NULL, 'complete', ?)",
+			"INSERT INTO messages (id, role, content, model, status, created_at) VALUES (?, 'user', ?, NULL, 'complete', ?)",
 			userId,
 			trimmed,
-			userContentHtml,
 			now + 1,
 		);
 		this.#sql.exec(
@@ -968,44 +959,15 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			this.#cancelFlush();
 			const finalText = this.#inProgress.content;
 			const finalThinking = this.#inProgress.thinking;
-			// Pre-render the heavy markdown / Shiki / KaTeX pipeline once at
-			// generation completion so subsequent page loads don't re-render
-			// every assistant message on every navigation. Best-effort: we
-			// fall through to a null write if anything throws, and the SSR
-			// path will re-render on demand.
-			let contentHtml: string | null = null;
-			let thinkingHtml: string | null = null;
-			// Enrich text/thinking parts with `textHtml` so SSR doesn't have to
-			// re-render on every load. The enriched parts replace the raw
-			// `parts` column — one column, two read paths (live vs cached).
-			let enrichedParts: MessagePart[] = parts;
-			try {
-				contentHtml = finalText ? await renderMarkdown(finalText) : null;
-				thinkingHtml = finalThinking ? await renderMarkdown(finalThinking) : null;
-				if (parts.length > 0) {
-					enrichedParts = await Promise.all(
-						parts.map(async (part) => {
-							if (part.type === 'text' || part.type === 'thinking') {
-								return { ...part, textHtml: await renderMarkdown(part.text) };
-							}
-							return part;
-						}),
-					);
-				}
-			} catch {
-				/* fall back to live SSR re-rendering */
-			}
 			this.#sql.exec(
-				`UPDATE messages SET content = ?, status = 'complete', first_token_at = ?, last_chunk_json = ?, usage_json = ?, provider = ?, thinking = ?, parts = ?, content_html = ?, thinking_html = ? WHERE id = ?`,
+				`UPDATE messages SET content = ?, status = 'complete', first_token_at = ?, last_chunk_json = ?, usage_json = ?, provider = ?, thinking = ?, parts = ? WHERE id = ?`,
 				finalText,
 				ip.firstTokenAt || null,
 				ip.lastChunk ? JSON.stringify(ip.lastChunk) : null,
 				ip.usage ? JSON.stringify(ip.usage) : null,
 				llm.providerID,
 				finalThinking || null,
-				enrichedParts.length > 0 ? JSON.stringify(enrichedParts) : null,
-				contentHtml,
-				thinkingHtml,
+				parts.length > 0 ? JSON.stringify(parts) : null,
 				assistantId,
 			);
 			this.#inProgress = null;
