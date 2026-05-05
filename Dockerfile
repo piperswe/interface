@@ -31,6 +31,56 @@ RUN apt-get update \
     wget \
     ca-certificates \
     file \
+    golang \
+    rustc \
+    cargo \
+    php-cli \
+    ruby \
+    procps \
+    net-tools \
+    vim \
+    nano \
+    neovim \
+    iproute2 \
+    unzip \
+    zip \
+    p7zip-full \
+    tar \
+    gzip \
+    lsof \
+    strace \
+    htop \
+    tmux \
+    screen \
+    zsh \
+    fish \
+    ripgrep \
+    fd-find \
+    bat \
+    eza \
+    tree \
+    default-jdk \
+    cmake \
+    ninja-build \
+    meson \
+    autoconf \
+    automake \
+    libtool \
+    dnsutils \
+    netcat-openbsd \
+    jq \
+    httpie \
+    xh \
+    openssl \
+    tcpdump \
+    pandoc \
+    libreoffice \
+    chromium \
+    firefox-esr \
+    ffmpeg \
+    xdotool \
+    imagemagick \
+    task-lxqt-desktop \
  && apt-get clean -y \
  && rm -rf /var/lib/apt/lists/*
 
