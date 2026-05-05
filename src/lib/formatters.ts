@@ -2,16 +2,6 @@ export function fmtNumber(n: unknown): string {
 	return typeof n === 'number' ? n.toLocaleString() : '—';
 }
 
-export function fmtCost(n: unknown): string {
-	if (typeof n !== 'number') return '—';
-	if (n === 0) return '$0';
-	const abs = Math.abs(n);
-	// Auto-scale: cents-and-fractions for tiny costs, dollars-and-cents for
-	// real money. Avoids "$0.012345" looking like noise next to "$1.234567".
-	const decimals = abs < 0.01 ? 6 : abs < 1 ? 4 : 2;
-	return '$' + n.toFixed(decimals);
-}
-
 export function fmtMs(ms: number): string {
 	if (!ms || ms < 0) return '—';
 	return ms < 1000 ? ms + ' ms' : (ms / 1000).toFixed(2) + ' s';

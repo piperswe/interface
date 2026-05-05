@@ -5,7 +5,13 @@
 	import { fmtRelative } from '$lib/formatters';
 
 	let { data }: { data: PageData } = $props();
-	const now = Date.now();
+	let now = $state(Date.now());
+	$effect(() => {
+		const id = setInterval(() => {
+			now = Date.now();
+		}, 60_000);
+		return () => clearInterval(id);
+	});
 </script>
 
 <svelte:head>

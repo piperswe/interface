@@ -146,7 +146,7 @@
 	<section class="mb-4">
 		<h2 class="h5">Worker secrets</h2>
 		<ul class="list-group">
-			{#each data.secretKeys as s}
+			{#each data.secretKeys as s (s.name)}
 				<li class="list-group-item d-flex justify-content-between align-items-center">
 					<code>{s.name}</code>
 					<span class="badge {s.configured ? 'text-bg-success' : 'text-bg-secondary'}">
@@ -161,7 +161,10 @@
 	<section class="mb-4">
 		<h2 class="h5">Providers & Models</h2>
 
-		{#each data.providers as p}
+		{#each data.providers as p (p.id)}
+			{@const providerModels = data.models
+				.filter((m) => m.providerId === p.id)
+				.sort((a, b) => a.sortOrder - b.sortOrder)}
 			<div class="card mb-3">
 				<div class="card-header d-flex justify-content-between align-items-center">
 					<div>
@@ -200,8 +203,7 @@
 
 					<h6 class="mt-3">Models</h6>
 					<ul class="list-group list-group-flush">
-					{#each data.models.filter((m) => m.providerId === p.id).sort((a, b) => a.sortOrder - b.sortOrder) as m, i (m.id)}
-						{@const providerModels = data.models.filter((x) => x.providerId === p.id).sort((a, b) => a.sortOrder - b.sortOrder)}
+					{#each providerModels as m, i (m.id)}
 						<li class="list-group-item d-flex justify-content-between align-items-center">
 							<div>
 								<code>{m.id}</code>
@@ -320,7 +322,7 @@
 				<div class="mb-2">
 					<select class="form-select form-select-sm" bind:value={selectedPreset}>
 						<option value="">Choose a preset...</option>
-						{#each data.presets as preset}
+						{#each data.presets as preset (preset.id)}
 							<option value={preset.id}>{preset.label}</option>
 						{/each}
 					</select>
@@ -346,7 +348,7 @@
 						<button type="button" class="btn btn-sm btn-outline-secondary mb-2" onclick={onFetchPresetModels}>Fetch models</button>
 						{#if fetchedPresetModels.length > 0}
 							<div class="mb-2" style="max-height: 200px; overflow-y: auto;">
-								{#each fetchedPresetModels as m}
+								{#each fetchedPresetModels as m (m.id)}
 									<label class="d-flex align-items-center gap-2 p-1">
 										<input type="checkbox" checked={selectedPresetModels.has(m.id)} onchange={() => togglePresetModel(m.id)} />
 										<span class="small">{m.name}</span>
@@ -381,7 +383,7 @@
 			<input type="hidden" name="key" value="title_model" />
 			<select name="value" class="form-select form-select-sm w-auto">
 				<option value="">Auto (first available)</option>
-				{#each data.models.sort((a, b) => a.providerId.localeCompare(b.providerId) || a.sortOrder - b.sortOrder) as m}
+				{#each [...data.models].sort((a, b) => a.providerId.localeCompare(b.providerId) || a.sortOrder - b.sortOrder) as m (`${m.providerId}/${m.id}`)}
 					<option value={`${m.providerId}/${m.id}`} selected={data.titleModel === `${m.providerId}/${m.id}`}>
 						{m.providerId}/{m.name || m.id}
 					</option>
@@ -398,9 +400,8 @@
 			<p class="text-muted">No MCP servers configured.</p>
 		{:else}
 			<ul class="list-group">
-				{#each data.mcpServers as s}
+				{#each data.mcpServers as s (s.id)}
 					{@const oauthConnected = !!s.oauth?.accessToken}
-					{@const oauthRequired = !!s.oauth || (s.oauth === null && !s.authJson && !s.enabled)}
 					<li class="list-group-item d-flex justify-content-between align-items-center">
 						<div>
 							<strong>{s.name}</strong>
@@ -466,7 +467,7 @@
 			<p class="text-muted">No sub-agents configured.</p>
 		{:else}
 			<ul class="list-group">
-				{#each data.subAgents as sa}
+				{#each data.subAgents as sa (sa.id)}
 					<li class="list-group-item d-flex justify-content-between align-items-center">
 						<div class="d-flex align-items-center gap-2">
 							<form {...toggleSubAgent.for(sa.id).enhance(justSubmit)} class="m-0">

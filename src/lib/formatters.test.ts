@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-	fmtCost,
 	fmtMs,
 	fmtNumber,
 	fmtRelative,
@@ -18,20 +17,6 @@ describe('fmtNumber', () => {
 		expect(fmtNumber(null)).toBe('—');
 		expect(fmtNumber('42')).toBe('—');
 		expect(fmtNumber(NaN)).toBe(NaN.toLocaleString());
-	});
-});
-
-describe('fmtCost', () => {
-	it('auto-scales decimals based on magnitude', () => {
-		expect(fmtCost(0.0001)).toBe('$0.000100');
-		expect(fmtCost(0.0125)).toBe('$0.0125');
-		expect(fmtCost(0.5)).toBe('$0.5000');
-		expect(fmtCost(1)).toBe('$1.00');
-		expect(fmtCost(0)).toBe('$0');
-	});
-	it('returns em dash for non-numbers', () => {
-		expect(fmtCost(undefined)).toBe('—');
-		expect(fmtCost('$5')).toBe('—');
 	});
 });
 

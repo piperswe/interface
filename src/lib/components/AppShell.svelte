@@ -32,7 +32,15 @@
 		}, 60_000);
 		return () => clearInterval(id);
 	});
-	const grouped = $derived(groupByBand(conversations, now));
+	let searchQuery = $state('');
+	const filteredConversations = $derived(
+		searchQuery.trim()
+			? conversations.filter((c) =>
+					c.title.toLowerCase().includes(searchQuery.trim().toLowerCase()),
+				)
+			: conversations,
+	);
+	const grouped = $derived(groupByBand(filteredConversations, now));
 
 	let creatingChat = $state(false);
 	let appShellEl: HTMLDivElement | null = $state(null);
@@ -119,11 +127,19 @@
 			</div>
 		</div>
 		<div class="sidebar-search">
-			<input type="search" class="form-control form-control-sm" placeholder="Search conversations…" disabled aria-label="Search" />
+			<input
+				type="search"
+				class="form-control form-control-sm"
+				placeholder="Search conversations…"
+				bind:value={searchQuery}
+				aria-label="Search conversations"
+			/>
 		</div>
 		<nav class="sidebar-nav flex-fill overflow-auto">
 			{#if conversations.length === 0}
 				<div class="sidebar-empty p-2 text-muted small">No conversations yet.</div>
+			{:else if filteredConversations.length === 0}
+				<div class="sidebar-empty p-2 text-muted small">No matches for “{searchQuery}”.</div>
 			{:else}
 				{#each BAND_ORDER as band (band)}
 					{@const items = grouped.get(band) ?? []}
