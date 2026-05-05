@@ -8,7 +8,7 @@ import { defineConfig } from 'vite';
 const fixContainersPlugin = () => ({
 	name: 'fix-cloudflare-containers',
 	enforce: 'pre',
-	resolveId(id, importer) {
+	resolveId(id: string, importer: string | undefined) {
 		if (id.startsWith('@cloudflare/containers/')) {
 			// Resolve sub-imports to the actual JS file
 			const subPath = id.replace('@cloudflare/containers/', '');
