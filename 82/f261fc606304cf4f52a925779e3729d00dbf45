@@ -1,0 +1,21 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "82f261fc606304cf4f52a925779e3729d00dbf45",
+  "prompts": {
+    "6daaa4e95e73b85a": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_20a1c5d62ffesHVzI59KS1ZD9u",
+        "model": "cloudflare-workers-ai/@cf/moonshotai/kimi-k2.6"
+      },
+      "human_author": "Piper McCorkle",
+      "messages": [],
+      "total_additions": 37,
+      "total_deletions": 4,
+      "accepted_lines": 5,
+      "overriden_lines": 6
+    }
+  }
+}
