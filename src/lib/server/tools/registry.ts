@@ -10,7 +10,7 @@ export type ToolCitation = {
 };
 
 export type ToolArtifactSpec = {
-	type: 'code' | 'markdown';
+	type: 'code' | 'markdown' | 'html' | 'svg' | 'mermaid';
 	name?: string;
 	language?: string;
 	content: string;

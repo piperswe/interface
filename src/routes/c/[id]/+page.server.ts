@@ -12,6 +12,8 @@ import type { PageServerLoad } from './$types';
 async function renderArtifactHtml(a: Artifact): Promise<string> {
 	if (a.type === 'code') return await renderArtifactCode(a.content, a.language ?? 'text');
 	if (a.type === 'markdown') return await renderMarkdown(a.content);
+	if (a.type === 'svg') return a.content;
+	// html and mermaid are client-side rendered.
 	return '';
 }
 

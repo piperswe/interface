@@ -827,6 +827,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	// fully evict a conversation. Closes any live SSE subscribers first so
 	// they don't keep streaming on an already-vanished conversation.
 	async destroy(): Promise<void> {
+		const conversationId = this.#conversationId;
 		this.#inProgress = null;
 		this.#cancelFlush();
 		this.#conversationId = null;
@@ -841,13 +842,69 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		this.#stopPingIfEmpty();
 		await this.ctx.storage.deleteAll();
 		// Tear down the conversation's sandbox container (best-effort).
-		if (this.env.SANDBOX) {
+		if (this.env.SANDBOX && conversationId) {
 			try {
-				const sandbox = getSandbox(this.env.SANDBOX as unknown as DurableObjectNamespace<Sandbox>, this.ctx.id.toString());
+				const sandbox = getSandbox(this.env.SANDBOX as unknown as DurableObjectNamespace<Sandbox>, conversationId);
 				await sandbox.destroy();
 			} catch {
 				/* ignore */
 			}
+		}
+	}
+
+	// -------------------------------------------------------------------------
+	// Sandbox helpers
+	// -------------------------------------------------------------------------
+
+	async listSandboxFiles(path: string): Promise<{ path: string; type: 'file' | 'directory' }[]> {
+		if (!this.env.SANDBOX) return [];
+		const conversationId = this.#getConversationId();
+		if (!conversationId) return [];
+		try {
+			const sandbox = getSandbox(
+				this.env.SANDBOX as unknown as DurableObjectNamespace<Sandbox>,
+				conversationId,
+			);
+			const result = await sandbox.exec(`find ${path} -mindepth 1 -maxdepth 3 -printf '%y %p\\n' | sort`);
+			if (!result.success) return [];
+			return result.stdout
+				.split('\n')
+				.filter(Boolean)
+				.map((line) => {
+					const typeChar = line[0];
+					const filePath = line.slice(2);
+					return {
+						path: filePath,
+						type: typeChar === 'd' ? 'directory' : ('file' as 'file' | 'directory'),
+					};
+				});
+		} catch {
+			return [];
+		}
+	}
+
+	async getSandboxPreviewPorts(): Promise<{ port: number; url: string; name?: string }[]> {
+		if (!this.env.SANDBOX) return [];
+		const conversationId = this.#getConversationId();
+		if (!conversationId) return [];
+		try {
+			const sandbox = getSandbox(
+				this.env.SANDBOX as unknown as DurableObjectNamespace<Sandbox>,
+				conversationId,
+			);
+			// The @cloudflare/sandbox SDK return shape drifts across versions;
+			// defensively normalise both array and object shapes.
+			const result = await (sandbox as any).getExposedPorts();
+			const ports = Array.isArray(result)
+				? result
+				: (result.ports ?? []);
+			return ports.map((p: any) => ({
+				port: p.port as number,
+				url: p.url as string,
+				name: p.name as string | undefined,
+			}));
+		} catch {
+			return [];
 		}
 	}
 
@@ -1706,7 +1763,10 @@ The user's bio, preferences, and context are provided separately in the user tur
 				contentHtml = await renderArtifactCode(input.content, input.language ?? 'text');
 			} else if (input.type === 'markdown') {
 				contentHtml = await renderMarkdown(input.content);
+			} else if (input.type === 'svg') {
+				contentHtml = input.content;
 			}
+			// html and mermaid are rendered client-side; leave contentHtml null.
 		} catch {
 			/* SSR will re-render on demand */
 		}

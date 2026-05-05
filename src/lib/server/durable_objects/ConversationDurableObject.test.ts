@@ -293,6 +293,45 @@ describe('ConversationDurableObject', () => {
 		});
 	});
 
+	it('addArtifact supports html, svg, and mermaid types', async () => {
+		const id = await createConversation(env);
+		const stub = stubFor(id);
+		await runInDurableObject(stub, async (_instance, ctx) => {
+			ctx.storage.sql.exec(
+				"INSERT INTO messages (id, role, content, model, status, created_at) VALUES ('a1', 'assistant', 'see artifact', 'm', 'complete', 1)",
+			);
+		});
+
+		const html = await stub.addArtifact({ messageId: 'a1', type: 'html', name: 'page.html', content: '<h1>Hello</h1>' });
+		const svg = await stub.addArtifact({ messageId: 'a1', type: 'svg', name: 'icon.svg', content: '<svg><circle r="5"/></svg>' });
+		const mermaid = await stub.addArtifact({ messageId: 'a1', type: 'mermaid', name: 'diagram', content: 'graph TD; A-->B;' });
+
+		expect(html.type).toBe('html');
+		expect(html.contentHtml).toBeNull();
+		expect(svg.type).toBe('svg');
+		expect(svg.contentHtml).toBe(svg.content);
+		expect(mermaid.type).toBe('mermaid');
+		expect(mermaid.contentHtml).toBeNull();
+
+		const state = await readState(stub);
+		const m = state.messages.find((mm) => mm.id === 'a1');
+		expect(m?.artifacts).toHaveLength(3);
+	});
+
+	it('listSandboxFiles returns an empty array gracefully when sandbox is unavailable', async () => {
+		const id = await createConversation(env);
+		const stub = stubFor(id);
+		const files = await stub.listSandboxFiles('/workspace');
+		expect(Array.isArray(files)).toBe(true);
+	});
+
+	it('getSandboxPreviewPorts returns an empty array gracefully when sandbox is unavailable', async () => {
+		const id = await createConversation(env);
+		const stub = stubFor(id);
+		const ports = await stub.getSandboxPreviewPorts();
+		expect(Array.isArray(ports)).toBe(true);
+	});
+
 	it('subscribe returns a readable SSE stream that emits sync once a message exists', async () => {
 		const id = await createConversation(env);
 		const stub = stubFor(id);
