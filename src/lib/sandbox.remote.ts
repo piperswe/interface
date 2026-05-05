@@ -14,13 +14,6 @@ function stubFor(id: string) {
 	return getConversationStub(getEnv(), id);
 }
 
-// List files and directories inside the conversation sandbox.
-export const listSandboxFiles = command('unchecked', async (input: { conversationId: string; path?: string }) => {
-	const stub = stubFor(input.conversationId);
-	const files = await stub.listSandboxFiles(input.path ?? '/workspace');
-	return { files };
-});
-
 // List currently-exposed preview ports for the conversation sandbox.
 export const getSandboxPreviewPorts = command('unchecked', async (conversationId: string) => {
 	const stub = stubFor(conversationId);

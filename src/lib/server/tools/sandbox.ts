@@ -74,6 +74,31 @@ async function ensureSshKey(ctx: ToolContext): Promise<void> {
 	sshKeyInjected.add(cacheKey);
 }
 
+// ---------------------------------------------------------------------------
+// R2 /workspace mount (one-time per conversation per isolate)
+// ---------------------------------------------------------------------------
+// When `WORKSPACE_BUCKET` is bound, mount it at /workspace via the sandbox
+// SDK's local-binding sync mode. Each conversation gets its own prefix so
+// files are isolated and survive sandbox cycles.
+const workspaceMounted = new Set<string>();
+
+async function ensureWorkspaceMount(ctx: ToolContext): Promise<void> {
+	if (!ctx.env.WORKSPACE_BUCKET) return;
+	if (workspaceMounted.has(ctx.conversationId)) return;
+	const sandbox = getConversationSandbox(ctx);
+	try {
+		await sandbox.mountBucket('WORKSPACE_BUCKET', '/workspace', {
+			localBucket: true,
+			prefix: `/conversations/${ctx.conversationId}`,
+		});
+	} catch (e) {
+		// Container reuse can leave a previous mount in place. Tolerate that
+		// and surface anything else.
+		if (!(e instanceof Error) || !/already mount/i.test(e.message)) throw e;
+	}
+	workspaceMounted.add(ctx.conversationId);
+}
+
 function formatExecResult(result: Pick<ExecResult, 'exitCode' | 'success' | 'stdout' | 'stderr'>): ToolExecutionResult {
 	const lines: string[] = [`exitCode: ${result.exitCode}`, `success: ${result.success}`];
 	if (result.stdout) {
@@ -130,6 +155,7 @@ export const sandboxExecTool: Tool = {
 			return { content: 'Missing required parameter: command', isError: true };
 		}
 		try {
+			await ensureWorkspaceMount(ctx);
 			await ensureSshKey(ctx);
 			const sandbox = getConversationSandbox(ctx);
 			if (ctx.emitToolOutput) {
@@ -228,6 +254,7 @@ export const sandboxRunCodeTool: Tool = {
 			return { content: `Unsupported language: ${language}`, isError: true };
 		}
 		try {
+			await ensureWorkspaceMount(ctx);
 			await ensureSshKey(ctx);
 			const sandbox = getConversationSandbox(ctx);
 			const result = await sandbox.runCode(args.code, {
@@ -299,6 +326,7 @@ export const sandboxReadFileTool: Tool = {
 			return { content: 'Missing required parameter: path', isError: true };
 		}
 		try {
+			await ensureWorkspaceMount(ctx);
 			const sandbox = getConversationSandbox(ctx);
 			const file = await sandbox.readFile(args.path);
 			return {
@@ -344,6 +372,7 @@ export const sandboxWriteFileTool: Tool = {
 			return { content: 'Missing required parameter: content', isError: true };
 		}
 		try {
+			await ensureWorkspaceMount(ctx);
 			const sandbox = getConversationSandbox(ctx);
 			await sandbox.writeFile(args.path, args.content);
 			return { content: `Wrote ${args.path}` };
@@ -379,6 +408,7 @@ export const sandboxDeleteFileTool: Tool = {
 			return { content: 'Missing required parameter: path', isError: true };
 		}
 		try {
+			await ensureWorkspaceMount(ctx);
 			const sandbox = getConversationSandbox(ctx);
 			await sandbox.deleteFile(args.path);
 			return { content: `Deleted ${args.path}` };
@@ -418,6 +448,7 @@ export const sandboxMkdirTool: Tool = {
 			return { content: 'Missing required parameter: path', isError: true };
 		}
 		try {
+			await ensureWorkspaceMount(ctx);
 			const sandbox = getConversationSandbox(ctx);
 			await sandbox.mkdir(args.path, { recursive: !!args.recursive });
 			return { content: `Created directory ${args.path}` };
@@ -453,6 +484,7 @@ export const sandboxExistsTool: Tool = {
 			return { content: 'Missing required parameter: path', isError: true };
 		}
 		try {
+			await ensureWorkspaceMount(ctx);
 			const sandbox = getConversationSandbox(ctx);
 			const result = await sandbox.exists(args.path);
 			return { content: result.exists ? 'true' : 'false' };
@@ -570,6 +602,7 @@ export const sandboxCreateArtifactTool: Tool = {
 			return { content: 'Missing required parameter: path', isError: true };
 		}
 		try {
+			await ensureWorkspaceMount(ctx);
 			const sandbox = getConversationSandbox(ctx);
 			const file = await sandbox.readFile(args.path);
 			const type = args.type ?? inferArtifactType(args.path);
