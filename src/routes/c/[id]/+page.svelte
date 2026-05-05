@@ -4,6 +4,7 @@
 	import type { ConversationState } from '$lib/types/conversation';
 	import Message from '$lib/components/Message.svelte';
 	import ComposeForm from '$lib/components/ComposeForm.svelte';
+	import SidePanel from '$lib/components/SidePanel.svelte';
 	import { fmtCost } from '$lib/formatters';
 	import { attachConversationStream } from '$lib/conversation-stream';
 	import { createStreamingMarkdownRunner } from '$lib/streaming-markdown';
@@ -23,6 +24,27 @@
 	let stickToBottom = $state(true);
 	let promptDraft = $state(untrack(() => data.systemPromptOverride));
 	let promptOpen = $state(false);
+	let sidePanelOpen = $state(false);
+	let sidePanelTab = $state<'artifacts' | 'files' | 'preview'>('artifacts');
+	let selectedArtifactId = $state<string | null>(null);
+
+	const allArtifacts = $derived(
+		convState.messages.flatMap((m) => m.artifacts ?? []),
+	);
+
+	function openSidePanel(tab: 'artifacts' | 'files' | 'preview' = 'artifacts') {
+		sidePanelTab = tab;
+		sidePanelOpen = true;
+	}
+
+	function closeSidePanel() {
+		sidePanelOpen = false;
+	}
+
+	function selectArtifact(id: string) {
+		selectedArtifactId = id;
+		openSidePanel('artifacts');
+	}
 
 	$effect(() => {
 		// Re-sync the draft when the conversation switches.
@@ -186,6 +208,14 @@
 			onclick={onRegenerate}
 			aria-label="Regenerate title"
 		>↻</button>
+		<button
+			type="button"
+			title="Toggle side panel"
+			class="title-action-button btn btn-sm"
+			onclick={() => sidePanelOpen ? closeSidePanel() : openSidePanel()}
+			aria-label="Toggle side panel"
+			aria-expanded={sidePanelOpen}
+		>☰</button>
 		{#if data.styles.length > 0}
 			<select
 				class="form-select form-select-sm w-auto"
@@ -262,34 +292,49 @@
 			</div>
 		</div>
 	{/if}
-	<div bind:this={scrollEl} class="conversation-scroll flex-fill overflow-auto px-side py-3">
-		<div class="conversation-column mx-auto w-100">
-			{#if convState.messages.length === 0}
-				<div class="empty">No messages yet — send the first one below.</div>
-			{:else}
-				<div class="messages d-flex flex-column gap-4">
-					{#each convState.messages as m, i (m.id)}
-						{#if m.role !== 'system'}
-							{@const prev = convState.messages[i - 1]}
-							{@const timestamp = m.role === 'user' && prev?.role === 'system' ? prev.createdAt : undefined}
-							<Message message={m} {timestamp} />
-						{/if}
-					{/each}
+	<div class="conversation-main d-flex flex-row flex-fill overflow-hidden">
+		<div class="chat-area d-flex flex-column flex-fill min-w-0 overflow-hidden">
+			<div bind:this={scrollEl} class="conversation-scroll flex-fill overflow-auto px-side py-3">
+				<div class="conversation-column mx-auto w-100">
+					{#if convState.messages.length === 0}
+						<div class="empty">No messages yet — send the first one below.</div>
+					{:else}
+						<div class="messages d-flex flex-column gap-4">
+							{#each convState.messages as m, i (m.id)}
+								{#if m.role !== 'system'}
+									{@const prev = convState.messages[i - 1]}
+									{@const timestamp = m.role === 'user' && prev?.role === 'system' ? prev.createdAt : undefined}
+									<Message message={m} {timestamp} onSelectArtifact={selectArtifact} />
+								{/if}
+							{/each}
+						</div>
+					{/if}
 				</div>
-			{/if}
+			</div>
+			<div class="conversation-compose border-top pt-2 pb-2 px-side">
+				<div class="conversation-column mx-auto w-100">
+					<ComposeForm
+						conversationId={data.conversation.id}
+						models={data.models}
+						defaultModel={lastModel}
+						thinkingBudget={data.thinkingBudget}
+						{busy}
+						{contextUsed}
+					/>
+				</div>
+			</div>
 		</div>
-	</div>
-	<div class="conversation-compose border-top pt-2 pb-2 px-side">
-		<div class="conversation-column mx-auto w-100">
-			<ComposeForm
+		{#if sidePanelOpen}
+			<SidePanel
 				conversationId={data.conversation.id}
-				models={data.models}
-				defaultModel={lastModel}
-				thinkingBudget={data.thinkingBudget}
-				{busy}
-				{contextUsed}
+				artifacts={allArtifacts}
+				tab={sidePanelTab}
+				selectedArtifactId={selectedArtifactId}
+				onClose={closeSidePanel}
+				onTabChange={(t) => sidePanelTab = t}
+				onSelectArtifact={selectArtifact}
 			/>
-		</div>
+		{/if}
 	</div>
 </div>
 
@@ -406,6 +451,14 @@
 	.conversation-compose {
 		background: linear-gradient(to top, var(--bg) 70%, transparent);
 		padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0));
+	}
+
+	.conversation-main {
+		min-height: 0;
+	}
+
+	.chat-area {
+		min-width: 0;
 	}
 
 	/* Mobile header overrides */

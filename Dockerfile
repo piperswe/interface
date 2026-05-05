@@ -19,4 +19,16 @@ RUN apt-get update \
     ca-certificates \
 	&& apt-get clean -y
 
+# Ports commonly used by dev servers inside the sandbox (required for
+# local `wrangler dev` preview exposure; ignored in production).
+EXPOSE 3001
+EXPOSE 4000
+EXPOSE 4200
+EXPOSE 5000
+EXPOSE 5173
+EXPOSE 8000
+EXPOSE 8080
+EXPOSE 9000
+EXPOSE 9001
+
 ENTRYPOINT ["/sandbox"]

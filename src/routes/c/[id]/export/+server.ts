@@ -50,10 +50,12 @@ function messageToMarkdown(m: MessageRow): string {
 			? '\n\n' +
 				m.artifacts
 					.map(
-						(a) =>
-							`#### Artifact: ${a.name ?? a.type}${a.language ? ` (${a.language})` : ''} — v${a.version}\n\n` +
-							(a.type === 'code'
-								? '```' + (a.language ?? '') + '\n' + a.content + '\n```'
+					(a) =>
+						`#### Artifact: ${a.name ?? a.type}${a.language ? ` (${a.language})` : ''} — v${a.version}\n\n` +
+						(a.type === 'code'
+							? '```' + (a.language ?? '') + '\n' + a.content + '\n```'
+							: a.type === 'html' || a.type === 'svg'
+								? '```html\n' + a.content + '\n```'
 								: a.content),
 					)
 					.join('\n\n')

@@ -29,10 +29,9 @@ export interface MetaSnapshot {
 	usage: ConversationUsage | null;
 }
 
-// Artifact types start at the minimum viable set per Phase 0.5: code (syntax-
-// highlighted) and markdown. HTML/JS/SVG/Mermaid land in Phase 4 P0.8 with the
-// dedicated *.artifacts.<host> origin for sandboxing.
-export type ArtifactType = 'code' | 'markdown';
+// Artifact types: code (syntax-highlighted), markdown (rendered), and rich
+// media previews (html iframe, svg inline, mermaid client-side).
+export type ArtifactType = 'code' | 'markdown' | 'html' | 'svg' | 'mermaid';
 
 export type Artifact = {
 	id: string;

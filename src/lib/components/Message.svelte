@@ -9,7 +9,7 @@
 	import MetaPanel from './MetaPanel.svelte';
 	import ToolCall from './ToolCall.svelte';
 
-	let { message, timestamp }: { message: MessageRow; timestamp?: number } = $props();
+	let { message, timestamp, onSelectArtifact }: { message: MessageRow; timestamp?: number; onSelectArtifact?: (id: string) => void } = $props();
 
 	const isAssistant = $derived(message.role === 'assistant');
 	const isStreaming = $derived(message.status === 'streaming');
@@ -101,11 +101,11 @@
 	{/if}
 
 	{#if artifacts.length > 0}
-		<div class="artifacts d-flex flex-column gap-2 mt-2">
-			{#each artifacts as a (a.id)}
-				<Artifact artifact={a} />
-			{/each}
-		</div>
+			<div class="artifacts d-flex flex-column gap-2 mt-2">
+				{#each artifacts as a (a.id)}
+					<Artifact artifact={a} onSelect={onSelectArtifact} />
+				{/each}
+			</div>
 	{/if}
 
 	{#if message.status === 'error' && message.error}
