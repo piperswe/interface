@@ -5,9 +5,14 @@
 	toasts.subscribe((v) => (items = v));
 </script>
 
-<div class="toaster" aria-live="polite" aria-atomic="true">
+<div class="toaster">
 	{#each items as t (t.id)}
-		<div class="toast-item toast-{t.type}" role="status">
+		<div
+			class="toast-item toast-{t.type}"
+			role={t.type === 'error' ? 'alert' : 'status'}
+			aria-live={t.type === 'error' ? 'assertive' : 'polite'}
+			aria-atomic="true"
+		>
 			<span class="toast-message">{t.message}</span>
 			<button
 				type="button"

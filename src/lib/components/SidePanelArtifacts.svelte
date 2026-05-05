@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import type { Artifact } from '$lib/types/conversation';
 	import ArtifactViewer from './ArtifactViewer.svelte';
 
@@ -14,13 +13,6 @@
 	} = $props();
 
 	const selectedArtifact = $derived(artifacts.find((a) => a.id === selectedId));
-
-	function handleKeydown(e: KeyboardEvent, id: string) {
-		if (e.key === 'Enter' || e.key === ' ') {
-			e.preventDefault();
-			onSelect(id);
-		}
-	}
 </script>
 
 <div class="artifacts-tab d-flex flex-column h-100">
@@ -28,24 +20,23 @@
 		{#if artifacts.length === 0}
 			<div class="empty p-2 small text-muted">No artifacts in this conversation.</div>
 		{:else}
-			<div class="d-flex flex-column">
+			<ul class="d-flex flex-column list-unstyled m-0 p-0">
 				{#each artifacts as a (a.id)}
-					<button
-						type="button"
-						class="artifact-list-item d-flex align-items-center gap-2 px-2 py-1 text-start border-0"
-						class:active={a.id === selectedId}
-						onclick={() => onSelect(a.id)}
-						onkeydown={(e) => handleKeydown(e, a.id)}
-						role="tab"
-						aria-selected={a.id === selectedId}
-						tabindex="0"
-					>
-						<span class="artifact-list-type text-uppercase small">{a.type}</span>
-						<span class="artifact-list-name text-truncate small">{a.name ?? 'Untitled'}</span>
-						{#if a.version > 1}<span class="artifact-list-version small text-muted">v{a.version}</span>{/if}
-					</button>
+					<li>
+						<button
+							type="button"
+							class="artifact-list-item d-flex align-items-center gap-2 px-2 py-1 text-start border-0 w-100"
+							class:active={a.id === selectedId}
+							onclick={() => onSelect(a.id)}
+							aria-pressed={a.id === selectedId}
+						>
+							<span class="artifact-list-type text-uppercase small">{a.type}</span>
+							<span class="artifact-list-name text-truncate small">{a.name ?? 'Untitled'}</span>
+							{#if a.version > 1}<span class="artifact-list-version small text-muted">v{a.version}</span>{/if}
+						</button>
+					</li>
 				{/each}
-			</div>
+			</ul>
 		{/if}
 	</div>
 	<div class="artifact-viewer flex-fill overflow-auto">

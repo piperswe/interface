@@ -31,7 +31,7 @@
 
 <div class="side-panel d-flex flex-column h-100 bg-body border-start">
 	<div class="side-panel-header d-flex align-items-center border-bottom">
-		<div class="tabs d-flex flex-fill">
+		<div class="tabs d-flex flex-fill" role="tablist" aria-label="Side panel sections">
 			{#each tabs as t (t.key)}
 				<button
 					type="button"
@@ -40,6 +40,8 @@
 					onclick={() => onTabChange(t.key)}
 					role="tab"
 					aria-selected={tab === t.key}
+					aria-controls="side-panel-body"
+					id={`side-panel-tab-${t.key}`}
 				>
 					{t.label}
 				</button>
@@ -47,7 +49,12 @@
 		</div>
 		<button type="button" class="close-btn btn btn-sm btn-ghost" onclick={onClose} aria-label="Close panel">✕</button>
 	</div>
-	<div class="side-panel-body flex-fill overflow-hidden">
+	<div
+		class="side-panel-body flex-fill overflow-hidden"
+		id="side-panel-body"
+		role="tabpanel"
+		aria-labelledby={`side-panel-tab-${tab}`}
+	>
 		{#if tab === 'artifacts'}
 			<SidePanelArtifacts {artifacts} selectedId={selectedArtifactId} onSelect={onSelectArtifact} />
 		{:else if tab === 'files'}

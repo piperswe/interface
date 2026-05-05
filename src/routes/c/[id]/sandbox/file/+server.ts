@@ -8,7 +8,9 @@ const MIME_TYPES: Record<string, string> = {
 	txt: 'text/plain',
 	md: 'text/markdown',
 	js: 'application/javascript',
+	jsx: 'application/javascript',
 	ts: 'application/typescript',
+	tsx: 'application/typescript',
 	json: 'application/json',
 	html: 'text/html',
 	css: 'text/css',
@@ -17,6 +19,7 @@ const MIME_TYPES: Record<string, string> = {
 	jpg: 'image/jpeg',
 	jpeg: 'image/jpeg',
 	gif: 'image/gif',
+	webp: 'image/webp',
 	pdf: 'application/pdf',
 	csv: 'text/csv',
 	xml: 'application/xml',
@@ -24,6 +27,7 @@ const MIME_TYPES: Record<string, string> = {
 	yml: 'application/yaml',
 	py: 'text/x-python',
 	sh: 'application/x-sh',
+	toml: 'application/toml',
 };
 
 export const GET: RequestHandler = async ({ params, url, platform }) => {
@@ -58,7 +62,11 @@ export const GET: RequestHandler = async ({ params, url, platform }) => {
 	};
 	if (isDownload) {
 		const filename = path.split('/').pop() ?? 'file';
-		headers['Content-Disposition'] = `attachment; filename="${filename}"`;
+		// RFC 5987: ASCII fallback (with quotes/backslashes escaped) plus a UTF-8
+		// encoded copy so non-ASCII filenames survive without breaking the header.
+		const asciiFallback = filename.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '\\$&');
+		const utf8 = encodeURIComponent(filename);
+		headers['Content-Disposition'] = `attachment; filename="${asciiFallback}"; filename*=UTF-8''${utf8}`;
 	}
 
 	return new Response(body as BodyInit, { headers });

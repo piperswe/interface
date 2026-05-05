@@ -9,29 +9,40 @@
 
 	let mermaidSvg = $state<string | null>(null);
 	let mermaidError = $state<string | null>(null);
+	let mermaidInitialized = false;
 
 	$effect(() => {
-		if (artifact.type === 'mermaid') {
-			renderMermaid(artifact.content);
-		} else {
+		if (artifact.type !== 'mermaid') {
 			mermaidSvg = null;
 			mermaidError = null;
+			return;
 		}
+		// Snapshot id+content so a slow render can't clobber a newer artifact.
+		const targetId = artifact.id;
+		const content = artifact.content;
+		let cancelled = false;
+		(async () => {
+			try {
+				const mod = await import('mermaid');
+				const mermaid = mod.default ?? mod;
+				if (!mermaidInitialized) {
+					await mermaid.initialize({ startOnLoad: false, theme: 'default' });
+					mermaidInitialized = true;
+				}
+				const { svg } = await mermaid.render(`mermaid-${targetId}`, content);
+				if (cancelled) return;
+				mermaidSvg = svg;
+				mermaidError = null;
+			} catch (e) {
+				if (cancelled) return;
+				mermaidSvg = null;
+				mermaidError = e instanceof Error ? e.message : String(e);
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
 	});
-
-	async function renderMermaid(content: string) {
-		try {
-			const mod = await import('mermaid');
-			const mermaid = mod.default ?? mod;
-			await mermaid.initialize({ startOnLoad: false, theme: 'default' });
-			const { svg } = await mermaid.render(`mermaid-${artifact.id}`, content);
-			mermaidSvg = svg;
-			mermaidError = null;
-		} catch (e) {
-			mermaidSvg = null;
-			mermaidError = e instanceof Error ? e.message : String(e);
-		}
-	}
 </script>
 
 {#if artifact.type === 'html'}

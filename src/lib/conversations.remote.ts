@@ -116,7 +116,11 @@ export const archive = form('unchecked', async (data: { conversationId?: unknown
 	const id = String(data.conversationId ?? '');
 	if (!CONVERSATION_ID_PATTERN.test(id)) error(400, `invalid conversation id: ${id}`);
 	await archiveConversation(getEnv(), id);
-	const location = String(data.redirectTo ?? '/');
+	// Restrict to same-origin paths so a malicious form post can't turn this
+	// into an open redirect. `//host` and `/\host` would otherwise be valid
+	// protocol-relative URLs to the browser.
+	const raw = String(data.redirectTo ?? '/');
+	const location = raw.startsWith('/') && !raw.startsWith('//') && !raw.startsWith('/\\') ? raw : '/';
 	redirect(303, location);
 });
 

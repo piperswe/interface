@@ -5,7 +5,6 @@
 	import Message from '$lib/components/Message.svelte';
 	import ComposeForm from '$lib/components/ComposeForm.svelte';
 	import SidePanel from '$lib/components/SidePanel.svelte';
-	import { fmtCost } from '$lib/formatters';
 	import { attachConversationStream } from '$lib/conversation-stream';
 	import { createStreamingMarkdownRunner } from '$lib/streaming-markdown';
 	import { archive, destroy, regenerateTitle, setConversationStyle, setConversationSystemPrompt } from '$lib/conversations.remote';
@@ -113,9 +112,6 @@
 	const contextUsed = $derived(
 		[...convState.messages].reverse().find((m) => m.role === 'assistant' && m.meta?.usage?.inputTokens)?.meta?.usage?.inputTokens ?? 0,
 	);
-	// Cost tracking removed with OpenRouter-specific generation stats.
-	// Token counts are available via m.meta.usage if needed.
-	const totalCost = $derived(0);
 
 	const mdRunner = createStreamingMarkdownRunner(
 		() => convState,
@@ -230,7 +226,6 @@
 				{/each}
 			</select>
 		{/if}
-		{#if totalCost > 0}<span class="conversation-cost small text-muted font-monospace">Cost: {fmtCost(totalCost)}</span>{/if}
 		<details bind:this={menuEl} class="conversation-menu" use:clickOutside={closeMenu}>
 			<summary class="title-action-button btn btn-sm" aria-label="Conversation actions" title="More actions">⋯</summary>
 			<div class="conversation-menu-panel" role="menu">
@@ -433,10 +428,6 @@
 
 	.conversation-menu-item.danger:hover {
 		background: var(--error-bg);
-	}
-
-	.conversation-cost {
-		font-variant-numeric: tabular-nums;
 	}
 
 	.conversation-scroll {
