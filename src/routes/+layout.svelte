@@ -14,7 +14,12 @@
 	);
 </script>
 
-<AppShell conversations={data.conversations} {activeConversationId}>
+<AppShell
+	conversations={data.conversations}
+	{activeConversationId}
+	tags={data.tags}
+	conversationTags={data.conversationTags}
+>
 	{@render children()}
 </AppShell>
 <Toaster />

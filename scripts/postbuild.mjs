@@ -13,11 +13,15 @@ const WORKER_PATH = '.svelte-kit/cloudflare/_worker.js';
 
 const DO_EXPORT =
 	"\nexport { default as ConversationDurableObject } from '../../src/lib/server/durable_objects/ConversationDurableObject.ts';\n" +
+	"export { default as SchedulerDurableObject } from '../../src/lib/server/durable_objects/SchedulerDurableObject.ts';\n" +
 	"export { Sandbox } from '@cloudflare/sandbox';\n";
 
 const content = readFileSync(WORKER_PATH, 'utf8');
-if (content.includes('ConversationDurableObject')) {
+if (content.includes('SchedulerDurableObject')) {
 	process.exit(0);
 }
-writeFileSync(WORKER_PATH, content + DO_EXPORT);
-console.log('postbuild: appended ConversationDurableObject and Sandbox exports to _worker.js');
+// Drop the legacy single-DO append (if present from a previous build) and
+// rewrite. Idempotent across re-builds.
+const stripped = content.replace(/\nexport \{ default as ConversationDurableObject \}.*\nexport \{ Sandbox \} from '@cloudflare\/sandbox';\n$/s, '');
+writeFileSync(WORKER_PATH, stripped + DO_EXPORT);
+console.log('postbuild: appended Conversation + Scheduler DO and Sandbox exports to _worker.js');

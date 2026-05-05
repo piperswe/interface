@@ -9,6 +9,7 @@
 	import { attachConversationStream } from '$lib/conversation-stream';
 	import { createStreamingMarkdownRunner } from '$lib/streaming-markdown';
 	import { archive, destroy, regenerateTitle, setConversationStyle, setConversationSystemPrompt } from '$lib/conversations.remote';
+	import TagPicker from '$lib/components/TagPicker.svelte';
 	import { confirmToastSubmit, toastSubmit } from '$lib/form-actions';
 	import { clickOutside } from '$lib/click-outside';
 	import { pushToast } from '$lib/toasts';
@@ -148,6 +149,33 @@
 		};
 	});
 
+	// Jump to a specific message when a search-palette URL hash like
+	// `#m-<message-id>` is present. Runs once on initial messages render
+	// and again any time the hash changes (browser back/forward across
+	// search hits within the same conversation).
+	function scrollToHashTarget() {
+		if (typeof window === 'undefined') return;
+		const hash = window.location.hash;
+		if (!hash || !hash.startsWith('#m-')) return;
+		const target = document.getElementById(hash.slice(1));
+		if (!target) return;
+		stickToBottom = false;
+		target.scrollIntoView({ block: 'center', behavior: 'auto' });
+		target.classList.add('message-flash');
+		setTimeout(() => target.classList.remove('message-flash'), 1600);
+	}
+	$effect(() => {
+		void convState.messages.length;
+		void data.conversation.id;
+		// Defer until layout settles after the conversation list renders.
+		requestAnimationFrame(scrollToHashTarget);
+	});
+	onMount(() => {
+		const onHash = () => scrollToHashTarget();
+		window.addEventListener('hashchange', onHash);
+		return () => window.removeEventListener('hashchange', onHash);
+	});
+
 	$effect(() => {
 		void convState.messages;
 		mdRunner.pulse();
@@ -216,6 +244,11 @@
 			aria-label="Toggle side panel"
 			aria-expanded={sidePanelOpen}
 		>☰</button>
+		<TagPicker
+			conversationId={data.conversation.id}
+			availableTags={data.tags ?? []}
+			conversationTagIds={(data.conversationTags ?? []).map((t) => t.id)}
+		/>
 		{#if data.styles.length > 0}
 			<select
 				class="form-select form-select-sm w-auto"
@@ -341,6 +374,15 @@
 <style>
 	.conversation-layout {
 		max-width: none;
+	}
+
+	:global(.message-flash) {
+		animation: message-flash 1.4s ease-out;
+	}
+
+	@keyframes message-flash {
+		0% { background: var(--accent, rgba(255, 213, 79, 0.55)); }
+		100% { background: transparent; }
 	}
 
 	.conversation-header {

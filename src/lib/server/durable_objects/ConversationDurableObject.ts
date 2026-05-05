@@ -29,6 +29,7 @@ import { getSandbox } from '@cloudflare/sandbox';
 import type { Sandbox } from '@cloudflare/sandbox';
 import type { ReasoningConfig } from '../llm/LLM';
 import { renderMarkdown, renderArtifactCode } from '../markdown';
+import { indexMessage as indexSearchMessage, indexTitle as indexSearchTitle } from '../search';
 import { now as nowMs, uuid } from '../clock';
 import type { AddMessageResult, Artifact, ArtifactType, ConversationState, MessageRow, MetaSnapshot } from '$lib/types/conversation';
 import { getResolvedModel, listAllModels } from '../providers/models';
@@ -667,6 +668,17 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		};
 
 		await this.#touchConversation(conversationId, trimmed);
+		// Index the user message for full-text search. waitUntil so D1 latency
+		// doesn't gate the SSE refresh.
+		this.ctx.waitUntil(
+			indexSearchMessage(this.env, {
+				conversationId,
+				messageId: userId,
+				role: 'user',
+				text: trimmed,
+				createdAt: now + 1,
+			}).catch(() => {}),
+		);
 		this.#broadcast('refresh', {});
 
 		this.ctx.waitUntil(this.#generate(conversationId, assistantId, model));
@@ -1485,6 +1497,15 @@ The user's bio, preferences, and context are provided separately in the user tur
 			);
 			this.#inProgress = null;
 			await this.env.DB.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').bind(nowMs(), conversationId).run();
+			this.ctx.waitUntil(
+				indexSearchMessage(this.env, {
+					conversationId,
+					messageId: assistantId,
+					role: 'assistant',
+					text: finalText,
+					createdAt: ip.startedAt || nowMs(),
+				}).catch(() => {}),
+			);
 			this.#broadcast('meta', {
 				messageId: assistantId,
 				snapshot: { startedAt: ip.startedAt, firstTokenAt: ip.firstTokenAt, lastChunk: ip.lastChunk, usage: ip.usage },
@@ -1902,6 +1923,13 @@ The user's bio, preferences, and context are provided separately in the user tur
 			? `UPDATE conversations SET title = CASE WHEN title = 'New conversation' THEN ? ELSE title END WHERE id = ?`
 			: 'UPDATE conversations SET title = ? WHERE id = ?';
 		await this.env.DB.prepare(sql).bind(title, conversationId).run();
+		// Refresh the FTS title row to match what the conversations table now
+		// holds. Read it back so `onlyIfDefault` no-ops keep their original
+		// title indexed correctly.
+		const row = await this.env.DB.prepare('SELECT title FROM conversations WHERE id = ?')
+			.bind(conversationId)
+			.first<{ title: string }>();
+		if (row) await indexSearchTitle(this.env, conversationId, row.title, nowMs());
 	}
 
 	#sseFrame(event: string, data: unknown, id?: number): Uint8Array {

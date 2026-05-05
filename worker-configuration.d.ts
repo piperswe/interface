@@ -7,6 +7,7 @@ declare namespace Cloudflare {
 		ASSETS: Fetcher;
 		OPENROUTER_KEY: string;
 		CONVERSATION_DURABLE_OBJECT: DurableObjectNamespace /* ConversationDurableObject */;
+		SCHEDULER_DURABLE_OBJECT: DurableObjectNamespace /* SchedulerDurableObject */;
 		SANDBOX: DurableObjectNamespace /* Sandbox */;
 	}
 }
