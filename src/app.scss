@@ -159,6 +159,34 @@ a:hover {
 	color: var(--accent);
 }
 
+// Form controls follow the active theme. Bootstrap compiles $input-bg
+// as a static colour, so without these overrides inputs stay white in
+// dark mode.
+.form-control,
+.form-select {
+	background-color: var(--surface);
+	color: var(--fg);
+	border-color: var(--border);
+}
+
+.form-control:focus,
+.form-select:focus {
+	background-color: var(--surface);
+	color: var(--fg);
+	border-color: var(--accent);
+}
+
+.form-control:disabled,
+.form-control[readonly],
+.form-select:disabled {
+	background-color: var(--surface-2);
+	color: var(--muted);
+}
+
+.form-control::placeholder {
+	color: var(--muted-2);
+}
+
 // Utility to clamp sidebar-to-main padding responsively
 .px-side {
 	padding-left: var(--side-gap);
