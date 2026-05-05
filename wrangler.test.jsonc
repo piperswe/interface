@@ -55,6 +55,11 @@
 			"migrations_dir": "migrations",
 		},
 	],
+	"worker_loaders": [
+		{
+			"binding": "RUN_JS_LOADER",
+		},
+	],
 	// Seed an OPENROUTER_KEY so `describeProviderKeys` reports it as
 	// configured. Tests that hit OpenRouter mock the SDK; the value is never
 	// sent over the wire.

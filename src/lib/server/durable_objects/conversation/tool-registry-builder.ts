@@ -12,6 +12,7 @@ import { createGetModelsTool } from '../../tools/get_models';
 import { createSwitchModelTool } from '../../tools/switch_model';
 import { createRememberTool } from '../../tools/remember';
 import { registerSandboxTools } from '../../tools/sandbox';
+import { runJsTool } from '../../tools/run_js';
 import { buildGlobalModelId } from '../../providers/types';
 import type { McpServerRow, McpToolDescriptor } from '../../mcp/types';
 import type { ProviderModel } from '../../providers/types';
@@ -74,6 +75,9 @@ export async function buildBaseToolRegistry(
 	}
 	if (env.SANDBOX) {
 		registerSandboxTools(registry);
+	}
+	if (env.RUN_JS_LOADER) {
+		registry.register(runJsTool);
 	}
 	return registry;
 }

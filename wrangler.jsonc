@@ -11,7 +11,7 @@
 	"name": "interface",
 	"main": ".svelte-kit/cloudflare/_worker.js",
 	"compatibility_date": "2026-04-22",
-	"compatibility_flags": ["nodejs_compat"],
+	"compatibility_flags": ["nodejs_compat", "enable_worker_loader"],
 	"migrations": [
 		{
 			"new_sqlite_classes": ["ConversationDurableObject"],
@@ -56,6 +56,11 @@
 			"database_name": "interface",
 			"database_id": "45f097c8-b921-4034-b580-c1ac47e0b2db",
 			"migrations_dir": "migrations",
+		},
+	],
+	"worker_loaders": [
+		{
+			"binding": "RUN_JS_LOADER",
 		},
 	],
 	"observability": {
