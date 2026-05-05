@@ -287,6 +287,28 @@ describe('applyPart', () => {
 		});
 		expect(next.messages[0].parts?.at(-1)).toEqual({ type: 'info', text: 'compacted' });
 	});
+
+	// Regression: the DO emits a final `citations` part via the standard
+	// `part` SSE event so the client renders a "Sources" block. Earlier
+	// versions broadcast a custom `citations` event that nothing listened
+	// to, so the data was lost.
+	it('appends a citations part with its sources list', () => {
+		const next = applyPart(state({ ...baseMessage }), {
+			messageId: 'm1',
+			part: {
+				type: 'citations',
+				citations: [
+					{ url: 'https://example.com/a', title: 'A', snippet: 'aa' },
+					{ url: 'https://example.com/b', title: 'B' },
+				],
+			},
+		});
+		const tail = next.messages[0].parts?.at(-1);
+		expect(tail?.type).toBe('citations');
+		if (tail?.type === 'citations') {
+			expect(tail.citations.map((c) => c.url)).toEqual(['https://example.com/a', 'https://example.com/b']);
+		}
+	});
 });
 
 describe('attachConversationStream', () => {

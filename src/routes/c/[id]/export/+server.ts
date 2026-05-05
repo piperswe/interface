@@ -36,6 +36,13 @@ function partToMarkdown(p: MessagePart): string {
 			].join('\n');
 		case 'info':
 			return `_${p.text}_`;
+		case 'citations':
+			if (p.citations.length === 0) return '';
+			return [
+				'**Sources:**',
+				'',
+				...p.citations.map((c) => `- [${c.title || c.url}](${c.url})${c.snippet ? `\n  ${c.snippet}` : ''}`),
+			].join('\n');
 	}
 }
 

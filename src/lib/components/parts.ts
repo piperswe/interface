@@ -15,7 +15,8 @@ export type Bundle = {
 export type Standalone = { kind: 'standalone'; part: MessagePart; index: number };
 export type Group = Bundle | Standalone;
 
-const isOutput = (part: MessagePart) => part.type === 'text' || part.type === 'info';
+const isOutput = (part: MessagePart) =>
+	part.type === 'text' || part.type === 'info' || part.type === 'citations';
 
 export function buildResultsMap(parts: MessagePart[]): Map<string, ToolResultPart> {
 	const m = new Map<string, ToolResultPart>();

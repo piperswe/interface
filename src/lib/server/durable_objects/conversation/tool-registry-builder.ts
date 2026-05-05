@@ -91,11 +91,14 @@ export async function buildToolRegistry(
 	const registry = await buildBaseToolRegistry(env, mcpCache, context.mcpServers);
 	const globalIds = context.allModels.map((m) => buildGlobalModelId(m.providerId, m.id));
 	if (globalIds.length > 0) {
+		// `switch_model`'s description tells the model to call `get_models`
+		// first, so the two ship together. `get_models` is also used by the
+		// `agent` tool flow when sub-agents are enabled.
 		registry.register(createSwitchModelTool({ availableModelGlobalIds: globalIds }));
+		registry.register(createGetModelsTool({ currentModel: model, availableModels: context.allModels }));
 	}
 	const enabledSubAgents = context.subAgents.filter((sa) => sa.enabled);
 	if (enabledSubAgents.length > 0) {
-		registry.register(createGetModelsTool({ currentModel: model, availableModels: context.allModels }));
 		const agentTool = createAgentTool(
 			{
 				buildInnerToolRegistry: () => buildBaseToolRegistry(env, mcpCache, context.mcpServers),

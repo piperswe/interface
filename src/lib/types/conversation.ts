@@ -99,7 +99,13 @@ export type ToolResultPart = {
 	endedAt?: number;
 };
 export type InfoPart = { type: 'info'; text: string };
-export type MessagePart = TextPart | ThinkingPart | ToolUsePart | ToolResultPart | InfoPart;
+// Surface citations (e.g. from `web_search`) as a dedicated part so the UI
+// can render a "Sources" block at the spot they were emitted. Mirrors
+// `ToolCitation` in `src/lib/server/tools/registry.ts`; declared here so
+// client code can import it without crossing the server-only boundary.
+export type Citation = { url: string; title: string; snippet?: string };
+export type CitationsPart = { type: 'citations'; citations: Citation[] };
+export type MessagePart = TextPart | ThinkingPart | ToolUsePart | ToolResultPart | InfoPart | CitationsPart;
 
 export type MessageRow = {
 	id: string;
