@@ -4,7 +4,7 @@ import { parseJson } from './parts';
 export function readMessages(sql: SqlStorage): MessageRow[] {
 	const rows = sql
 		.exec(
-			`SELECT id, role, content, content_html, model, status, error, created_at, started_at, first_token_at, last_chunk_json, usage_json, thinking, thinking_html, parts
+			`SELECT id, role, content, model, status, error, created_at, started_at, first_token_at, last_chunk_json, usage_json, thinking, parts
 			 FROM messages
 			 WHERE deleted_at IS NULL
 			 ORDER BY created_at ASC`,
@@ -13,7 +13,6 @@ export function readMessages(sql: SqlStorage): MessageRow[] {
 		id: string;
 		role: string;
 		content: string;
-		content_html: string | null;
 		model: string | null;
 		status: string;
 		error: string | null;
@@ -23,19 +22,16 @@ export function readMessages(sql: SqlStorage): MessageRow[] {
 		last_chunk_json: string | null;
 		usage_json: string | null;
 		thinking: string | null;
-		thinking_html: string | null;
 		parts: string | null;
 	}>;
 	const artifactsByMessage = readArtifactsByMessage(sql);
 	return rows.map((r) => {
-		const parts = parseJson<MessagePart[]>(r.parts) ?? [];
+		const parts = stripHtml(parseJson<MessagePart[]>(r.parts) ?? []);
 		return {
 			id: r.id,
 			role: r.role as 'user' | 'assistant',
 			content: r.content,
-			contentHtml: r.content_html,
 			thinking: r.thinking,
-			thinkingHtml: r.thinking_html,
 			model: r.model,
 			status: r.status as 'complete' | 'streaming' | 'error',
 			error: r.error,
@@ -47,10 +43,29 @@ export function readMessages(sql: SqlStorage): MessageRow[] {
 	});
 }
 
+// Legacy rows persisted server-rendered HTML inside parts. Strip it on read so
+// the wire format never carries pre-rendered markup; the client re-renders.
+function stripHtml(parts: MessagePart[]): MessagePart[] {
+	return parts.map((p) => {
+		if (p.type === 'text' || p.type === 'thinking') {
+			if ('textHtml' in p) {
+				const { textHtml: _ignored, ...rest } = p as { textHtml?: string } & MessagePart;
+				return rest as MessagePart;
+			}
+			return p;
+		}
+		if (p.type === 'tool_use' && 'inputHtml' in p) {
+			const { inputHtml: _ignored, ...rest } = p as { inputHtml?: string } & MessagePart;
+			return rest as MessagePart;
+		}
+		return p;
+	});
+}
+
 export function readArtifactsByMessage(sql: SqlStorage): Map<string, Artifact[]> {
 	const rows = sql
 		.exec(
-			`SELECT id, message_id, type, name, language, version, content, content_html, created_at FROM artifacts ORDER BY created_at ASC`,
+			`SELECT id, message_id, type, name, language, version, content, created_at FROM artifacts ORDER BY created_at ASC`,
 		)
 		.toArray() as unknown as Array<{
 		id: string;
@@ -60,7 +75,6 @@ export function readArtifactsByMessage(sql: SqlStorage): Map<string, Artifact[]>
 		language: string | null;
 		version: number;
 		content: string;
-		content_html: string | null;
 		created_at: number;
 	}>;
 	const map = new Map<string, Artifact[]>();
@@ -74,7 +88,6 @@ export function readArtifactsByMessage(sql: SqlStorage): Map<string, Artifact[]>
 			language: r.language,
 			version: r.version,
 			content: r.content,
-			contentHtml: r.content_html,
 			createdAt: r.created_at,
 		});
 		map.set(r.message_id, list);

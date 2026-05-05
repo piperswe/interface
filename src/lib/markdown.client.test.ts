@@ -12,13 +12,16 @@ describe('renderMarkdownClient', () => {
 		expect(html).toContain('<p>A paragraph.</p>');
 	});
 
-	it('renders fenced code blocks as plain pre/code (Shiki happens server-side after refresh)', async () => {
+	it('highlights fenced code blocks with shiki', async () => {
 		const html = await renderMarkdownClient('```ts\nconst x = 1;\n```');
-		expect(html).toContain('<pre>');
-		expect(html).toContain('<code');
-		expect(html).toContain('const x = 1;');
-		// No Shiki classes — that's the deliberate trade-off for bundle size.
-		expect(html).not.toContain('shiki');
+		expect(html).toContain('shiki');
+		expect(html).toContain('github-dark');
+		expect(html).toContain('const');
+	});
+
+	it('falls back to plain rendering for unknown languages', async () => {
+		const html = await renderMarkdownClient('```nonsense\nfoo bar\n```');
+		expect(html).toContain('foo bar');
 	});
 
 	// Raw HTML passes through so that extensions (KaTeX) can emit markup.

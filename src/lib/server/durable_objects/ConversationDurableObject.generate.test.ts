@@ -57,7 +57,7 @@ describe('ConversationDurableObject — #generate (FakeLLM)', () => {
 		for (const id of useIds) expect(resultIds.has(id)).toBe(true);
 	});
 
-	it('persists content_html alongside content for completed assistant messages', async () => {
+	it('persists raw content for completed assistant messages without server-rendered HTML', async () => {
 		const id = await createConversation(env);
 		const stub = stubFor(id);
 		await setOverride(stub, [textTurn('# heading\n\nbody').events]);
@@ -67,11 +67,12 @@ describe('ConversationDurableObject — #generate (FakeLLM)', () => {
 
 		await runInDurableObject(stub, async (_instance, ctx) => {
 			const rows = ctx.storage.sql
-				.exec("SELECT content_html FROM messages WHERE role = 'assistant'")
-				.toArray() as unknown as Array<{ content_html: string | null }>;
+				.exec("SELECT content, content_html FROM messages WHERE role = 'assistant'")
+				.toArray() as unknown as Array<{ content: string; content_html: string | null }>;
 			expect(rows).toHaveLength(1);
-			expect(rows[0].content_html).toContain('<h1');
-			expect(rows[0].content_html).toContain('body');
+			expect(rows[0].content).toContain('# heading');
+			// Markdown is rendered client-side; the server stores raw text only.
+			expect(rows[0].content_html).toBeNull();
 		});
 	});
 

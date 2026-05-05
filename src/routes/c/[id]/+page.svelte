@@ -6,7 +6,7 @@
 	import ComposeForm from '$lib/components/ComposeForm.svelte';
 	import SidePanel from '$lib/components/SidePanel.svelte';
 	import { attachConversationStream } from '$lib/conversation-stream';
-	import { createStreamingMarkdownRunner } from '$lib/streaming-markdown';
+	import { createMarkdownRunner } from '$lib/markdown-runner';
 	import { archive, destroy, regenerateTitle, setConversationStyle, setConversationSystemPrompt } from '$lib/conversations.remote';
 	import TagPicker from '$lib/components/TagPicker.svelte';
 	import { confirmToastSubmit, toastSubmit } from '$lib/form-actions';
@@ -177,7 +177,7 @@
 		[...convState.messages].reverse().find((m) => m.role === 'assistant' && m.meta?.usage?.inputTokens)?.meta?.usage?.inputTokens ?? 0,
 	);
 
-	const mdRunner = createStreamingMarkdownRunner(
+	const mdRunner = createMarkdownRunner(
 		() => convState,
 		(next) => {
 			convState = next;

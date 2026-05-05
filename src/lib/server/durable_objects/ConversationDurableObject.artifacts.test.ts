@@ -58,11 +58,11 @@ describe('ConversationDurableObject — artifacts & sandbox', () => {
 		const mermaid = await stub.addArtifact({ messageId: 'a1', type: 'mermaid', name: 'diagram', content: 'graph TD; A-->B;' });
 
 		expect(html.type).toBe('html');
-		expect(html.contentHtml).toBeNull();
+		expect(html.contentHtml).toBeUndefined();
 		expect(svg.type).toBe('svg');
-		expect(svg.contentHtml).toBe(svg.content);
+		expect(svg.contentHtml).toBeUndefined();
 		expect(mermaid.type).toBe('mermaid');
-		expect(mermaid.contentHtml).toBeNull();
+		expect(mermaid.contentHtml).toBeUndefined();
 
 		const state = await readState(stub);
 		const m = state.messages.find((mm) => mm.id === 'a1');
