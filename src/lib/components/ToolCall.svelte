@@ -32,6 +32,10 @@
 			: null,
 	);
 
+	const runJsInput = $derived(
+		call.name === 'run_js' ? (call.input as { code?: string; timeout?: number }) : null,
+	);
+
 	const webSearchInput = $derived(
 		call.name === 'web_search' ? (call.input as { query?: string; count?: number }) : null,
 	);
@@ -73,6 +77,51 @@
 		call.name === 'sandbox_exec' && result && isDone ? parseExecResult(result.content) : null,
 	);
 
+	// Parse the structured run_js result
+	type RunJsLog = { level: 'log' | 'warn' | 'error'; msg: string };
+	type RunJsParsed = { logs: RunJsLog[]; result: string | null; error: string | null };
+	function parseRunJsResult(content: string): RunJsParsed {
+		const logs: RunJsLog[] = [];
+		const resultLines: string[] = [];
+		const errorLines: string[] = [];
+		let section: 'none' | 'console' | 'result' | 'error' = 'none';
+		for (const line of content.split('\n')) {
+			if (line === '--- console ---') {
+				section = 'console';
+			} else if (line === '--- result ---') {
+				section = 'result';
+			} else if (line === '--- error ---') {
+				section = 'error';
+			} else if (section === 'console') {
+				if (line === '') continue;
+				const m = line.match(/^\[(warn|error)\] (.*)$/);
+				if (m) {
+					logs.push({ level: m[1] as 'warn' | 'error', msg: m[2] });
+				} else {
+					logs.push({ level: 'log', msg: line });
+				}
+			} else if (section === 'result') {
+				resultLines.push(line);
+			} else if (section === 'error') {
+				errorLines.push(line);
+			}
+		}
+		// Trim leading/trailing blank lines
+		while (resultLines.length && resultLines[0] === '') resultLines.shift();
+		while (resultLines.length && resultLines[resultLines.length - 1] === '') resultLines.pop();
+		while (errorLines.length && errorLines[0] === '') errorLines.shift();
+		while (errorLines.length && errorLines[errorLines.length - 1] === '') errorLines.pop();
+		return {
+			logs,
+			result: resultLines.length ? resultLines.join('\n') : null,
+			error: errorLines.length ? errorLines.join('\n') : null,
+		};
+	}
+
+	const runJsParsed = $derived(
+		call.name === 'run_js' && result && isDone ? parseRunJsResult(result.content) : null,
+	);
+
 	// Parse web search results from formatted text
 	type SearchResult = { index: number; title: string; url: string; snippet: string };
 	function parseSearchResults(content: string): SearchResult[] {
@@ -90,19 +139,27 @@
 		call.name === 'web_search' && result && isDone ? parseSearchResults(result.content) : [],
 	);
 
+	function firstLine(s: string, max = 80): string {
+		const line = s.split('\n').find((l) => l.trim().length > 0) ?? '';
+		const trimmed = line.trim();
+		return trimmed.length > max ? trimmed.slice(0, max - 1) + '…' : trimmed;
+	}
+
 	// Summary headline: the key "what is this doing" per tool
 	const headline = $derived(
 		execInput?.command
 			? execInput.command.length > 80
 				? execInput.command.slice(0, 78) + '…'
 				: execInput.command
-			: runCodeInput?.code
-				? (runCodeInput.language ?? 'python')
-				: webSearchInput?.query
-					? webSearchInput.query
-					: fileOpInput?.path
-						? fileOpInput.path
-						: null,
+			: runJsInput?.code
+				? firstLine(runJsInput.code)
+				: runCodeInput?.code
+					? (runCodeInput.language ?? 'python')
+					: webSearchInput?.query
+						? webSearchInput.query
+						: fileOpInput?.path
+							? fileOpInput.path
+							: null,
 	);
 
 	const toolLabel = $derived(
@@ -110,19 +167,21 @@
 			? 'exec'
 			: call.name === 'sandbox_run_code'
 				? 'code'
-				: call.name === 'web_search'
-					? 'search'
-					: call.name === 'sandbox_read_file'
-						? 'read'
-						: call.name === 'sandbox_write_file'
-							? 'write'
-							: call.name === 'sandbox_delete_file'
-								? 'delete'
-								: call.name === 'sandbox_mkdir'
-									? 'mkdir'
-									: call.name === 'sandbox_exists'
-										? 'exists'
-										: call.name,
+				: call.name === 'run_js'
+					? 'js'
+					: call.name === 'web_search'
+						? 'search'
+						: call.name === 'sandbox_read_file'
+							? 'read'
+							: call.name === 'sandbox_write_file'
+								? 'write'
+								: call.name === 'sandbox_delete_file'
+									? 'delete'
+									: call.name === 'sandbox_mkdir'
+										? 'mkdir'
+										: call.name === 'sandbox_exists'
+											? 'exists'
+											: call.name,
 	);
 
 	const startedAt = $derived(result?.startedAt ?? call.startedAt ?? null);
@@ -226,6 +285,55 @@
 				{/if}
 			{:else}
 				<div class="pending-output">waiting for output…</div>
+			{/if}
+
+		<!-- ── run_js ── -->
+		{:else if call.name === 'run_js' && runJsInput}
+			<div class="code-section">
+				<div class="output-label">javascript</div>
+				<pre class="code-block"><code>{runJsInput.code ?? ''}</code></pre>
+				{#if runJsInput.timeout}
+					<div class="meta-row">
+						<span class="meta-key">timeout</span>
+						<span class="meta-val">{runJsInput.timeout}ms</span>
+					</div>
+				{/if}
+			</div>
+
+			{#if result}
+				{#if isStreaming}
+					<div class="terminal-output streaming">
+						<pre><code>{result.content || ' '}</code></pre>
+					</div>
+				{:else if runJsParsed}
+					{#if runJsParsed.logs.length > 0}
+						<div class="output-section">
+							<div class="output-label">console</div>
+							<div class="terminal-output">
+								<pre><code>{#each runJsParsed.logs as l, i (i)}<span class="log-line log-{l.level}">{l.level === 'log' ? '' : `[${l.level}] `}{l.msg}</span>{'\n'}{/each}</code></pre>
+							</div>
+						</div>
+					{/if}
+					{#if runJsParsed.result != null}
+						<div class="output-section">
+							<div class="output-label">result</div>
+							<div class="terminal-output"><pre><code>{runJsParsed.result}</code></pre></div>
+						</div>
+					{/if}
+					{#if runJsParsed.error != null}
+						<div class="output-section">
+							<div class="output-label stderr">error</div>
+							<div class="terminal-output error"><pre><code>{runJsParsed.error}</code></pre></div>
+						</div>
+					{/if}
+					{#if runJsParsed.logs.length === 0 && runJsParsed.result == null && runJsParsed.error == null}
+						<div class="empty-output">no output</div>
+					{/if}
+				{:else}
+					<div class="terminal-output{isError ? ' error' : ''}"><pre><code>{result.content}</code></pre></div>
+				{/if}
+			{:else}
+				<div class="pending-output">running…</div>
 			{/if}
 
 		<!-- ── sandbox_run_code ── -->
@@ -563,6 +671,18 @@
 
 	.output-label.stderr {
 		color: color-mix(in srgb, var(--error-fg) 70%, var(--muted-2));
+	}
+
+	.log-line {
+		display: inline;
+	}
+
+	.log-line.log-warn {
+		color: var(--bs-warning, #b58900);
+	}
+
+	.log-line.log-error {
+		color: var(--error-fg);
 	}
 
 	.pending-output {
