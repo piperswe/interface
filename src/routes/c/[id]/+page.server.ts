@@ -23,7 +23,28 @@ async function renderPartHtml(part: MessagePart): Promise<MessagePart> {
 		if (typeof part.textHtml === 'string' && part.textHtml.length > 0) return part;
 		return { ...part, textHtml: await renderMarkdown(part.text) };
 	}
+	if (part.type === 'tool_use') {
+		if (typeof part.inputHtml === 'string' && part.inputHtml.length > 0) return part;
+		const code = toolCallCode(part.name, part.input);
+		if (code) {
+			return { ...part, inputHtml: await renderArtifactCode(code.code, code.language) };
+		}
+	}
 	return part;
+}
+
+function toolCallCode(
+	name: string,
+	input: unknown,
+): { code: string; language: string } | null {
+	const obj = (input ?? {}) as { code?: unknown; language?: unknown };
+	if (typeof obj.code !== 'string' || obj.code.length === 0) return null;
+	if (name === 'run_js') return { code: obj.code, language: 'javascript' };
+	if (name === 'sandbox_run_code') {
+		const lang = typeof obj.language === 'string' ? obj.language : 'python';
+		return { code: obj.code, language: lang };
+	}
+	return null;
 }
 
 async function withRenderedMarkdown(state: ConversationState): Promise<ConversationState> {

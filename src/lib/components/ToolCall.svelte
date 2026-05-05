@@ -291,7 +291,11 @@
 		{:else if call.name === 'run_js' && runJsInput}
 			<div class="code-section">
 				<div class="output-label">javascript</div>
-				<pre class="code-block"><code>{runJsInput.code ?? ''}</code></pre>
+				{#if call.inputHtml}
+					<div class="code-block shiki-block">{@html call.inputHtml}</div>
+				{:else}
+					<pre class="code-block"><code>{runJsInput.code ?? ''}</code></pre>
+				{/if}
 				{#if runJsInput.timeout}
 					<div class="meta-row">
 						<span class="meta-key">timeout</span>
@@ -340,7 +344,11 @@
 		{:else if call.name === 'sandbox_run_code' && runCodeInput}
 			<div class="code-section">
 				<div class="output-label">{runCodeInput.language ?? 'python'}</div>
-				<pre class="code-block"><code>{runCodeInput.code ?? ''}</code></pre>
+				{#if call.inputHtml}
+					<div class="code-block shiki-block">{@html call.inputHtml}</div>
+				{:else}
+					<pre class="code-block"><code>{runCodeInput.code ?? ''}</code></pre>
+				{/if}
 			</div>
 			{#if result}
 				<div class="output-section">
@@ -727,6 +735,27 @@
 		padding: 0;
 		font-size: inherit;
 		color: inherit;
+	}
+
+	/* When the code-block wraps Shiki-rendered HTML, the inner <pre.shiki>
+	   carries its own background and padding — flatten the outer wrapper. */
+	.shiki-block {
+		padding: 0;
+		background: transparent;
+	}
+
+	.shiki-block :global(pre.shiki) {
+		margin: 0;
+		padding: 0.45rem 0.6rem;
+		font-size: 0.82em;
+		border-radius: var(--bs-border-radius-sm);
+		overflow-x: auto;
+	}
+
+	.shiki-block :global(pre.shiki code) {
+		background: none;
+		padding: 0;
+		font-size: inherit;
 	}
 
 	/* ── Web search ── */

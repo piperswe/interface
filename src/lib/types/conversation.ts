@@ -59,6 +59,7 @@ export type ToolCallRecord = {
 	id: string;
 	name: string;
 	input: JsonValue;
+	inputHtml?: string;
 	thoughtSignature?: string;
 	startedAt?: number;
 };
@@ -84,6 +85,7 @@ export type ToolUsePart = {
 	id: string;
 	name: string;
 	input: JsonValue;
+	inputHtml?: string;
 	thoughtSignature?: string;
 	startedAt?: number;
 };
