@@ -84,6 +84,8 @@ RUN apt-get update \
  && apt-get clean -y \
  && rm -rf /var/lib/apt/lists/*
 
+RUN mkdir -p /workspace
+
 WORKDIR /container-server
 
 # Match the official image's interpreter pool sizing so all three pools are
