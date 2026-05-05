@@ -24,6 +24,8 @@
 		addMcpFromPreset,
 		disconnectMcpServer,
 	} from '$lib/settings.remote';
+	import { addTag, removeTag, renameTagForm } from '$lib/tags.remote';
+	import { addSchedule, removeSchedule, toggleSchedule, runScheduleNow } from '$lib/schedules.remote';
 	import {
 		confirmOptimisticSubmit,
 		confirmToastSubmit,
@@ -301,7 +303,7 @@
 	<section class="mb-4">
 		<h2 class="h5">Worker secrets</h2>
 		<ul class="list-group">
-			{#each data.secretKeys as s}
+			{#each data.secretKeys as s (s.name)}
 				<li class="list-group-item d-flex justify-content-between align-items-center">
 					<code>{s.name}</code>
 					<span class="badge {s.configured ? 'text-bg-success' : 'text-bg-secondary'}">
@@ -316,7 +318,10 @@
 	<section class="mb-4">
 		<h2 class="h5">Providers & Models</h2>
 
-		{#each visibleProviders as p}
+		{#each visibleProviders as p (p.id)}
+			{@const providerModels = data.models
+				.filter((m) => m.providerId === p.id && !pendingModels.has(`${m.providerId}/${m.id}`))
+				.sort((a, b) => a.sortOrder - b.sortOrder)}
 			<div class="card mb-3">
 				<div class="card-header d-flex justify-content-between align-items-center">
 					<div>
@@ -363,8 +368,7 @@
 
 					<h6 class="mt-3">Models</h6>
 					<ul class="list-group list-group-flush">
-					{#each data.models.filter((m) => m.providerId === p.id && !pendingModels.has(`${m.providerId}/${m.id}`)).sort((a, b) => a.sortOrder - b.sortOrder) as m, i (m.id)}
-						{@const providerModels = data.models.filter((x) => x.providerId === p.id && !pendingModels.has(`${x.providerId}/${x.id}`)).sort((a, b) => a.sortOrder - b.sortOrder)}
+					{#each providerModels as m, i (m.id)}
 						<li class="list-group-item d-flex justify-content-between align-items-center">
 							<div>
 								<code>{m.id}</code>
@@ -491,7 +495,7 @@
 				<div class="mb-2">
 					<select class="form-select form-select-sm" bind:value={selectedPreset}>
 						<option value="">Choose a preset...</option>
-						{#each data.presets as preset}
+						{#each data.presets as preset (preset.id)}
 							<option value={preset.id}>{preset.label}</option>
 						{/each}
 					</select>
@@ -517,7 +521,7 @@
 						<button type="button" class="btn btn-sm btn-outline-secondary mb-2" onclick={onFetchPresetModels}>Fetch models</button>
 						{#if fetchedPresetModels.length > 0}
 							<div class="mb-2" style="max-height: 200px; overflow-y: auto;">
-								{#each fetchedPresetModels as m}
+								{#each fetchedPresetModels as m (m.id)}
 									<label class="d-flex align-items-center gap-2 p-1">
 										<input type="checkbox" checked={selectedPresetModels.has(m.id)} onchange={() => togglePresetModel(m.id)} />
 										<span class="small">{m.name}</span>
@@ -552,7 +556,7 @@
 			<input type="hidden" name="key" value="title_model" />
 			<select name="value" class="form-select form-select-sm w-auto">
 				<option value="">Auto (first available)</option>
-				{#each data.models.sort((a, b) => a.providerId.localeCompare(b.providerId) || a.sortOrder - b.sortOrder) as m}
+				{#each [...data.models].sort((a, b) => a.providerId.localeCompare(b.providerId) || a.sortOrder - b.sortOrder) as m (`${m.providerId}/${m.id}`)}
 					<option value={`${m.providerId}/${m.id}`} selected={data.titleModel === `${m.providerId}/${m.id}`}>
 						{m.providerId}/{m.name || m.id}
 					</option>
@@ -569,9 +573,8 @@
 			<p class="text-muted">No MCP servers configured.</p>
 		{:else}
 			<ul class="list-group">
-				{#each visibleMcpServers as s}
+				{#each visibleMcpServers as s (s.id)}
 					{@const oauthConnected = !!s.oauth?.accessToken}
-					{@const oauthRequired = !!s.oauth || (s.oauth === null && !s.authJson && !s.enabled)}
 					<li class="list-group-item d-flex justify-content-between align-items-center">
 						<div>
 							<strong>{s.name}</strong>
@@ -646,7 +649,7 @@
 			<p class="text-muted">No sub-agents configured.</p>
 		{:else}
 			<ul class="list-group">
-				{#each visibleSubAgents as sa}
+				{#each visibleSubAgents as sa (sa.id)}
 					{@const enabled = optimisticSubAgentEnabled.has(sa.id) ? optimisticSubAgentEnabled.get(sa.id)! : sa.enabled}
 					<li class="list-group-item d-flex justify-content-between align-items-center">
 						<div class="d-flex align-items-center gap-2">
@@ -801,6 +804,125 @@
 			<input type="hidden" name="key" value="user_bio" />
 			<textarea name="value" class="form-control" rows="4">{data.userBio}</textarea>
 			<button type="submit" class="btn btn-sm btn-primary mt-2">Save</button>
+		</form>
+	</section>
+
+	<!-- Tags -->
+	<section class="mb-4">
+		<h2 class="h5">Tags</h2>
+		<p class="small text-muted mb-2">Group conversations by tag. Apply tags from the conversation header (the tag icon).</p>
+		{#if data.tags.length === 0}
+			<p class="text-muted">No tags yet.</p>
+		{:else}
+			<ul class="list-group">
+				{#each data.tags as t (t.id)}
+					<li class="list-group-item d-flex align-items-center justify-content-between gap-2">
+						<form {...renameTagForm.for(t.id).enhance(toastSubmit('Tag updated'))} class="d-flex gap-2 align-items-center flex-fill">
+							<input type="hidden" name="id" value={t.id} />
+							<input type="text" name="name" value={t.name} class="form-control form-control-sm" maxlength="64" />
+							<select name="color" class="form-select form-select-sm w-auto">
+								<option value="" selected={!t.color}>none</option>
+								{#each ['gray','red','orange','amber','green','teal','blue','indigo','purple','pink'] as c}
+									<option value={c} selected={t.color === c}>{c}</option>
+								{/each}
+							</select>
+							<button type="submit" class="btn btn-sm btn-outline-secondary">Save</button>
+						</form>
+						<form {...removeTag.for(t.id).enhance(confirmToastSubmit(`Delete tag "${t.name}"? Conversations keep their content.`, 'Tag deleted'))} class="m-0">
+							<input type="hidden" name="id" value={t.id} />
+							<button type="submit" class="btn btn-sm btn-link text-danger p-0">Delete</button>
+						</form>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+		<form {...addTag.enhance(toastSubmit('Tag added'))} class="mt-2 d-flex gap-2">
+			<input type="text" name="name" placeholder="Tag name" class="form-control form-control-sm" maxlength="64" required />
+			<select name="color" class="form-select form-select-sm w-auto">
+				<option value="">no color</option>
+				{#each ['gray','red','orange','amber','green','teal','blue','indigo','purple','pink'] as c}
+					<option value={c}>{c}</option>
+				{/each}
+			</select>
+			<button type="submit" class="btn btn-sm btn-primary">Add tag</button>
+		</form>
+	</section>
+
+	<!-- Scheduled prompts -->
+	<section class="mb-4">
+		<h2 class="h5">Scheduled prompts</h2>
+		<p class="small text-muted mb-2">Recurring prompts that fire on a Durable Object alarm and post their answer into a target conversation. Times are in UTC.</p>
+		{#if data.schedules.length === 0}
+			<p class="text-muted">No schedules yet.</p>
+		{:else}
+			<ul class="list-group">
+				{#each data.schedules as s (s.id)}
+					<li class="list-group-item d-flex flex-column gap-1">
+						<div class="d-flex align-items-center justify-content-between gap-2">
+							<div>
+								<strong>{s.name}</strong>
+								<span class="small text-muted ms-2">
+									{s.recurrence}
+									{#if s.recurrence === 'daily' && s.timeOfDay != null}
+										· {String(Math.floor(s.timeOfDay / 60)).padStart(2, '0')}:{String(s.timeOfDay % 60).padStart(2, '0')} UTC
+									{:else if s.recurrence === 'weekly' && s.timeOfDay != null}
+										· {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][s.dayOfWeek ?? 0]} {String(Math.floor(s.timeOfDay / 60)).padStart(2, '0')}:{String(s.timeOfDay % 60).padStart(2, '0')} UTC
+									{/if}
+									{#if s.lastRunAt}· last run {new Date(s.lastRunAt).toLocaleString()}{/if}
+									· next {new Date(s.nextRunAt).toLocaleString()}
+								</span>
+							</div>
+							<div class="d-flex gap-2">
+								<form {...toggleSchedule.for(s.id).enhance(justSubmit)} class="m-0">
+									<input type="hidden" name="id" value={s.id} />
+									<input type="hidden" name="enabled" value={String(!s.enabled)} />
+									<button type="submit" class="btn btn-sm btn-outline-secondary">{s.enabled ? 'Disable' : 'Enable'}</button>
+								</form>
+								<form {...runScheduleNow.for(s.id).enhance(toastSubmit('Schedule queued'))} class="m-0">
+									<input type="hidden" name="id" value={s.id} />
+									<button type="submit" class="btn btn-sm btn-outline-primary">Run now</button>
+								</form>
+								<form {...removeSchedule.for(s.id).enhance(confirmToastSubmit(`Delete schedule "${s.name}"?`, 'Schedule deleted'))} class="m-0">
+									<input type="hidden" name="id" value={s.id} />
+									<button type="submit" class="btn btn-sm btn-link text-danger p-0">Delete</button>
+								</form>
+							</div>
+						</div>
+						<div class="small text-muted">{s.prompt}</div>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+		<form {...addSchedule.enhance(toastSubmit('Schedule added'))} class="mt-2 d-flex flex-column gap-2 border rounded p-3">
+			<div class="d-flex gap-2 flex-wrap">
+				<input type="text" name="name" placeholder="Name (e.g. Morning briefing)" class="form-control form-control-sm" maxlength="64" required />
+				<select name="recurrence" class="form-select form-select-sm w-auto" required>
+					<option value="hourly">hourly</option>
+					<option value="daily" selected>daily</option>
+					<option value="weekly">weekly</option>
+				</select>
+				<input type="time" name="time_of_day" class="form-control form-control-sm w-auto" value="08:00" />
+				<select name="day_of_week" class="form-select form-select-sm w-auto" title="Weekly day of week">
+					<option value="0">Sun</option>
+					<option value="1" selected>Mon</option>
+					<option value="2">Tue</option>
+					<option value="3">Wed</option>
+					<option value="4">Thu</option>
+					<option value="5">Fri</option>
+					<option value="6">Sat</option>
+				</select>
+			</div>
+			<textarea name="prompt" placeholder="Prompt text (e.g. Give me a morning weather briefing for San Francisco.)" class="form-control form-control-sm" rows="2" required></textarea>
+			<div class="d-flex gap-2 align-items-center">
+				<label class="small text-muted" for="schedule-target-conversation">Target conversation:</label>
+				<select id="schedule-target-conversation" name="target_conversation_id" class="form-select form-select-sm flex-fill">
+					<option value="">(create a new one each time)</option>
+					{#each data.conversations as c (c.id)}
+						<option value={c.id}>{c.title}</option>
+					{/each}
+				</select>
+				<button type="submit" class="btn btn-sm btn-primary">Add schedule</button>
+			</div>
 		</form>
 	</section>
 

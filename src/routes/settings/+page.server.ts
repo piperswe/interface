@@ -13,6 +13,9 @@ import { listProviders } from '$lib/server/providers/store';
 import { listAllModels } from '$lib/server/providers/models';
 import { listMemories } from '$lib/server/memories';
 import { listStyles } from '$lib/server/styles';
+import { listTags } from '$lib/server/tags';
+import { listSchedules } from '$lib/server/schedules';
+import { listConversations } from '$lib/server/conversations';
 import { PROVIDER_PRESETS } from '$lib/server/providers/presets';
 import { MCP_SERVER_PRESETS } from '$lib/server/mcp/presets';
 import type { PageServerLoad } from './$types';
@@ -33,6 +36,9 @@ export const load: PageServerLoad = async ({ platform }) => {
 		titleModel,
 		memories,
 		styles,
+		tags,
+		schedules,
+		conversations,
 	] = await Promise.all([
 		listMcpServers(env),
 		listSubAgents(env),
@@ -46,6 +52,9 @@ export const load: PageServerLoad = async ({ platform }) => {
 		getSetting(env, 'title_model'),
 		listMemories(env),
 		listStyles(env),
+		listTags(env),
+		listSchedules(env),
+		listConversations(env),
 	]);
 	return {
 		secretKeys: describeSecretKeys(env),
@@ -63,5 +72,8 @@ export const load: PageServerLoad = async ({ platform }) => {
 		titleModel: titleModel ?? '',
 		memories,
 		styles,
+		tags,
+		schedules,
+		conversations,
 	};
 };

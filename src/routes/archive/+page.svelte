@@ -5,7 +5,13 @@
 	import { pushToast } from '$lib/toasts';
 
 	let { data }: { data: PageData } = $props();
-	const now = Date.now();
+	let now = $state(Date.now());
+	$effect(() => {
+		const id = setInterval(() => {
+			now = Date.now();
+		}, 60_000);
+		return () => clearInterval(id);
+	});
 
 	let pending = $state(new Set<string>());
 	$effect(() => {

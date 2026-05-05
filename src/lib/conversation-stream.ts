@@ -231,11 +231,13 @@ export function attachConversationStream(
 	es.addEventListener('model_switch', onModelSwitch);
 	es.addEventListener('refresh', onRefresh);
 
-	// If the connection fails (non-2xx, network drop, etc.) the browser will
-	// auto-reconnect, but the UI may have drifted. Force a reload so the
-	// server state is authoritative rather than letting the user sit on a
-	// stale or broken view.
-	es.addEventListener('error', onReload);
+	// EventSource fires `error` on transient drops *and* on terminal failures.
+	// Only reload when the connection is genuinely closed (readyState=CLOSED);
+	// the browser handles transient reconnects on its own and any sync gap is
+	// healed by the next `sync` event.
+	es.addEventListener('error', () => {
+		if (es.readyState === EventSource.CLOSED) onReload();
+	});
 
 	return () => es.close();
 }

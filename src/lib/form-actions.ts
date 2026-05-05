@@ -10,13 +10,21 @@ import { pushToast } from './toasts';
 type Submit = () => Promise<boolean> & { updates: (...updates: RemoteQueryUpdate[]) => Promise<boolean> };
 
 export const justSubmit = async ({ submit }: { submit: Submit }) => {
-	await submit();
+	try {
+		await submit();
+	} catch (e) {
+		pushToast(e instanceof Error ? e.message : String(e), 'error');
+	}
 };
 
 export function confirmSubmit(message: string) {
 	return async ({ submit }: { submit: Submit }) => {
 		if (!confirm(message)) return;
-		await submit();
+		try {
+			await submit();
+		} catch (e) {
+			pushToast(e instanceof Error ? e.message : String(e), 'error');
+		}
 	};
 }
 

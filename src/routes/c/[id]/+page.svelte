@@ -5,10 +5,10 @@
 	import Message from '$lib/components/Message.svelte';
 	import ComposeForm from '$lib/components/ComposeForm.svelte';
 	import SidePanel from '$lib/components/SidePanel.svelte';
-	import { fmtCost } from '$lib/formatters';
 	import { attachConversationStream } from '$lib/conversation-stream';
 	import { createStreamingMarkdownRunner } from '$lib/streaming-markdown';
 	import { archive, destroy, regenerateTitle, setConversationStyle, setConversationSystemPrompt } from '$lib/conversations.remote';
+	import TagPicker from '$lib/components/TagPicker.svelte';
 	import { confirmToastSubmit, toastSubmit } from '$lib/form-actions';
 	import { clickOutside } from '$lib/click-outside';
 	import { pushToast } from '$lib/toasts';
@@ -176,9 +176,6 @@
 	const contextUsed = $derived(
 		[...convState.messages].reverse().find((m) => m.role === 'assistant' && m.meta?.usage?.inputTokens)?.meta?.usage?.inputTokens ?? 0,
 	);
-	// Cost tracking removed with OpenRouter-specific generation stats.
-	// Token counts are available via m.meta.usage if needed.
-	const totalCost = $derived(0);
 
 	const mdRunner = createStreamingMarkdownRunner(
 		() => convState,
@@ -209,6 +206,33 @@
 		return () => {
 			mdRunner.dispose();
 		};
+	});
+
+	// Jump to a specific message when a search-palette URL hash like
+	// `#m-<message-id>` is present. Runs once on initial messages render
+	// and again any time the hash changes (browser back/forward across
+	// search hits within the same conversation).
+	function scrollToHashTarget() {
+		if (typeof window === 'undefined') return;
+		const hash = window.location.hash;
+		if (!hash || !hash.startsWith('#m-')) return;
+		const target = document.getElementById(hash.slice(1));
+		if (!target) return;
+		stickToBottom = false;
+		target.scrollIntoView({ block: 'center', behavior: 'auto' });
+		target.classList.add('message-flash');
+		setTimeout(() => target.classList.remove('message-flash'), 1600);
+	}
+	$effect(() => {
+		void convState.messages.length;
+		void data.conversation.id;
+		// Defer until layout settles after the conversation list renders.
+		requestAnimationFrame(scrollToHashTarget);
+	});
+	onMount(() => {
+		const onHash = () => scrollToHashTarget();
+		window.addEventListener('hashchange', onHash);
+		return () => window.removeEventListener('hashchange', onHash);
 	});
 
 	$effect(() => {
@@ -279,6 +303,11 @@
 			aria-label="Toggle side panel"
 			aria-expanded={sidePanelOpen}
 		>☰</button>
+		<TagPicker
+			conversationId={data.conversation.id}
+			availableTags={data.tags ?? []}
+			conversationTagIds={(data.conversationTags ?? []).map((t) => t.id)}
+		/>
 		{#if data.styles.length > 0}
 			<select
 				class="form-select form-select-sm w-auto"
@@ -293,7 +322,6 @@
 				{/each}
 			</select>
 		{/if}
-		{#if totalCost > 0}<span class="conversation-cost small text-muted font-monospace">Cost: {fmtCost(totalCost)}</span>{/if}
 		<details bind:this={menuEl} class="conversation-menu" use:clickOutside={closeMenu}>
 			<summary class="title-action-button btn btn-sm" aria-label="Conversation actions" title="More actions">⋯</summary>
 			<div class="conversation-menu-panel" role="menu">
@@ -408,6 +436,15 @@
 		max-width: none;
 	}
 
+	:global(.message-flash) {
+		animation: message-flash 1.4s ease-out;
+	}
+
+	@keyframes message-flash {
+		0% { background: var(--accent, rgba(255, 213, 79, 0.55)); }
+		100% { background: transparent; }
+	}
+
 	.conversation-header {
 		min-height: var(--tap-target);
 	}
@@ -498,10 +535,6 @@
 
 	.conversation-menu-item.danger:hover {
 		background: var(--error-bg);
-	}
-
-	.conversation-cost {
-		font-variant-numeric: tabular-nums;
 	}
 
 	.conversation-scroll {

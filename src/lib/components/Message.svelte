@@ -70,7 +70,7 @@
 		{new Date(timestamp).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}
 	</time>
 {/if}
-<div class="message d-flex flex-column gap-1" data-message-id={message.id} data-role={message.role} data-status={message.status}>
+<div id={`m-${message.id}`} class="message d-flex flex-column gap-1" data-message-id={message.id} data-role={message.role} data-status={message.status}>
 	<div class="role">
 		{message.role}{message.model ? ` · ${message.model}` : ''}
 		{#if isStreaming}<span class="streaming-indicator" aria-label="streaming">●</span>{/if}

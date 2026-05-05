@@ -1,5 +1,6 @@
 <script lang="ts" module>
 	import type { Conversation } from '$lib/types/conversation';
+	import type { Tag } from '$lib/server/tags';
 	import { BAND_ORDER, groupByBand } from './sidebar';
 	export { groupByBand, BAND_ORDER };
 </script>
@@ -12,16 +13,29 @@
 	import { page } from '$app/state';
 	import { createNewConversation, archive } from '$lib/conversations.remote';
 	import { pushToast } from '$lib/toasts';
+	import SearchPalette from './SearchPalette.svelte';
 
 	let {
 		conversations,
 		activeConversationId = null,
+		tags = [],
+		conversationTags = {},
 		children,
 	}: {
 		conversations: Conversation[];
 		activeConversationId?: string | null;
+		tags?: Tag[];
+		conversationTags?: Record<string, number[]>;
 		children: Snippet;
 	} = $props();
+
+	let activeTagFilter = $state<number | null>(null);
+	const filteredConversations = $derived(
+		activeTagFilter == null
+			? conversations
+			: conversations.filter((c) => (conversationTags[c.id] ?? []).includes(activeTagFilter!)),
+	);
+	const tagById = $derived(new Map(tags.map((t) => [t.id, t])));
 
 	// Reactive `now` so relative timestamps in the sidebar refresh while the
 	// page sits idle. 60s cadence matches `fmtRelative`'s minute resolution.
@@ -53,12 +67,16 @@
 		}
 	});
 	const visibleConversations = $derived(
-		[...optimisticallyCreated, ...conversations].filter((c) => !optimisticallyArchived.has(c.id)),
+		[...optimisticallyCreated, ...filteredConversations].filter(
+			(c) => !optimisticallyArchived.has(c.id),
+		),
 	);
 	const grouped = $derived(groupByBand(visibleConversations, now));
 
 	let appShellEl: HTMLDivElement | null = $state(null);
 	let isResizing = $state(false);
+	let searchOpen = $state(false);
+	const isMacLike = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 
 	function closeDrawer() {
 		const toggle = document.getElementById('sidebar-toggle') as HTMLInputElement | null;
@@ -147,11 +165,45 @@
 			</div>
 		</div>
 		<div class="sidebar-search">
-			<input type="search" class="form-control form-control-sm" placeholder="Search conversations…" disabled aria-label="Search" />
+			<button
+				type="button"
+				class="sidebar-search-trigger form-control form-control-sm d-flex align-items-center gap-2"
+				onclick={() => (searchOpen = true)}
+				aria-label="Open search"
+				title={isMacLike ? '⌘K to search' : 'Ctrl+K to search'}
+			>
+				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+					<circle cx="11" cy="11" r="8" />
+					<line x1="21" y1="21" x2="16.65" y2="16.65" />
+				</svg>
+				<span class="flex-fill text-start text-muted">Search…</span>
+				<kbd class="sidebar-search-kbd">{isMacLike ? '⌘K' : 'Ctrl+K'}</kbd>
+			</button>
 		</div>
+		{#if tags.length > 0}
+			<div class="sidebar-tags d-flex flex-wrap gap-1">
+				<button
+					type="button"
+					class="sidebar-tag-chip"
+					class:active={activeTagFilter == null}
+					onclick={() => (activeTagFilter = null)}
+				>All</button>
+				{#each tags as t (t.id)}
+					<button
+						type="button"
+						class="sidebar-tag-chip"
+						class:active={activeTagFilter === t.id}
+						data-color={t.color ?? 'gray'}
+						onclick={() => (activeTagFilter = activeTagFilter === t.id ? null : t.id)}
+					>{t.name}</button>
+				{/each}
+			</div>
+		{/if}
 		<nav class="sidebar-nav flex-fill overflow-auto">
 			{#if conversations.length === 0}
 				<div class="sidebar-empty p-2 text-muted small">No conversations yet.</div>
+			{:else if filteredConversations.length === 0}
+				<div class="sidebar-empty p-2 text-muted small">No conversations match this tag.</div>
 			{:else}
 				{#each BAND_ORDER as band (band)}
 					{@const items = grouped.get(band) ?? []}
@@ -169,7 +221,15 @@
 											onclick={closeDrawer}
 										>
 											<span class="sidebar-item-title fw-medium text-truncate">{c.title}</span>
-											<span class="sidebar-item-meta">{fmtRelative(c.updated_at, now)}</span>
+											<span class="sidebar-item-meta d-flex align-items-center gap-1 flex-wrap">
+												<span>{fmtRelative(c.updated_at, now)}</span>
+												{#each (conversationTags[c.id] ?? []) as tagId (tagId)}
+													{@const t = tagById.get(tagId)}
+													{#if t}
+														<span class="sidebar-item-tag" data-color={t.color ?? 'gray'}>{t.name}</span>
+													{/if}
+												{/each}
+											</span>
 										</a>
 												<form
 													class="sidebar-archive-form"
@@ -223,6 +283,7 @@
 			onmousedown={onResizerDown}
 		></button>
 	</aside>
+	<SearchPalette bind:open={searchOpen} />
 	<main class="app-main position-relative d-flex flex-column h-100 overflow-hidden min-vw-0">
 		<div class="app-main-header">
 			<label for="sidebar-toggle" class="sidebar-toggle-button" aria-label="Toggle sidebar">☰</label>
@@ -258,6 +319,67 @@
 		width: var(--sidebar-width);
 		min-height: 100vh;
 		min-height: 100dvh;
+	}
+
+	.sidebar-tags {
+		padding: 0 0.25rem;
+	}
+
+	.sidebar-tag-chip {
+		font-size: 0.7rem;
+		padding: 0.1rem 0.5rem;
+		border-radius: 999px;
+		border: 1px solid var(--bs-border-color);
+		background: var(--bs-body-bg);
+		color: var(--fg);
+		cursor: pointer;
+		line-height: 1.4;
+	}
+
+	.sidebar-tag-chip.active {
+		background: var(--user-bg, var(--bs-tertiary-bg));
+		border-color: var(--accent, var(--bs-primary, #0d6efd));
+	}
+
+	.sidebar-item-tag {
+		display: inline-block;
+		font-size: 0.65rem;
+		line-height: 1.2;
+		padding: 0.05rem 0.4rem;
+		border-radius: 999px;
+		background: var(--bs-tertiary-bg);
+		color: var(--fg);
+		border: 1px solid var(--bs-border-color);
+	}
+
+	.sidebar-tag-chip[data-color='red'], .sidebar-item-tag[data-color='red'] { background: rgba(220, 53, 69, 0.15); border-color: rgba(220, 53, 69, 0.4); }
+	.sidebar-tag-chip[data-color='orange'], .sidebar-item-tag[data-color='orange'] { background: rgba(253, 126, 20, 0.15); border-color: rgba(253, 126, 20, 0.4); }
+	.sidebar-tag-chip[data-color='amber'], .sidebar-item-tag[data-color='amber'] { background: rgba(255, 193, 7, 0.18); border-color: rgba(255, 193, 7, 0.45); }
+	.sidebar-tag-chip[data-color='green'], .sidebar-item-tag[data-color='green'] { background: rgba(25, 135, 84, 0.15); border-color: rgba(25, 135, 84, 0.4); }
+	.sidebar-tag-chip[data-color='teal'], .sidebar-item-tag[data-color='teal'] { background: rgba(32, 201, 151, 0.15); border-color: rgba(32, 201, 151, 0.4); }
+	.sidebar-tag-chip[data-color='blue'], .sidebar-item-tag[data-color='blue'] { background: rgba(13, 110, 253, 0.15); border-color: rgba(13, 110, 253, 0.4); }
+	.sidebar-tag-chip[data-color='indigo'], .sidebar-item-tag[data-color='indigo'] { background: rgba(102, 16, 242, 0.15); border-color: rgba(102, 16, 242, 0.4); }
+	.sidebar-tag-chip[data-color='purple'], .sidebar-item-tag[data-color='purple'] { background: rgba(111, 66, 193, 0.15); border-color: rgba(111, 66, 193, 0.4); }
+	.sidebar-tag-chip[data-color='pink'], .sidebar-item-tag[data-color='pink'] { background: rgba(214, 51, 132, 0.15); border-color: rgba(214, 51, 132, 0.4); }
+
+	.sidebar-search-trigger {
+		background: var(--bs-body-bg);
+		cursor: pointer;
+		text-align: left;
+		color: var(--muted-2);
+	}
+
+	.sidebar-search-trigger:hover {
+		background: var(--bs-tertiary-bg);
+	}
+
+	.sidebar-search-kbd {
+		font-size: 0.65rem;
+		padding: 0.05rem 0.3rem;
+		border: 1px solid var(--bs-border-color);
+		border-radius: 4px;
+		color: var(--muted-2);
+		background: var(--bs-tertiary-bg);
 	}
 
 	.sidebar-group {
