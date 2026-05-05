@@ -172,6 +172,8 @@
 		<nav class="sidebar-nav flex-fill overflow-auto">
 			{#if conversations.length === 0}
 				<div class="sidebar-empty p-2 text-muted small">No conversations yet.</div>
+			{:else if filteredConversations.length === 0}
+				<div class="sidebar-empty p-2 text-muted small">No conversations match this tag.</div>
 			{:else}
 				{#each BAND_ORDER as band (band)}
 					{@const items = grouped.get(band) ?? []}
