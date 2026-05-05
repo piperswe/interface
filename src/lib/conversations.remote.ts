@@ -22,12 +22,21 @@ function stubFor(id: string) {
 
 // Command: start a new conversation. Returns the new id so the caller can
 // `goto(`/c/${id}`)` for an in-place SPA navigation. Bound to "New chat"
-// buttons throughout the app.
-export const createNewConversation = command(async () => {
-	const env = getEnv();
-	const id = await createConversation(env);
-	return { id };
-});
+// buttons throughout the app. Accepts an optional client-pre-allocated id so
+// the UI can navigate optimistically while the row is created in the
+// background.
+export const createNewConversation = command(
+	'unchecked',
+	async (input: { id?: string } | void) => {
+		const env = getEnv();
+		const requested = input && typeof input.id === 'string' ? input.id : null;
+		if (requested != null && !CONVERSATION_ID_PATTERN.test(requested)) {
+			error(400, `invalid conversation id: ${requested}`);
+		}
+		const id = await createConversation(env, requested ?? undefined);
+		return { id };
+	},
+);
 
 // Form: send a user message into a conversation. Per-conversation instance via
 // `.for(conversationId)` — that namespaces the form so result/pending state

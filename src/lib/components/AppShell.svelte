@@ -12,7 +12,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { createNewConversation, archive } from '$lib/conversations.remote';
-	import { justSubmit } from '$lib/form-actions';
+	import { pushToast } from '$lib/toasts';
 	import SearchPalette from './SearchPalette.svelte';
 
 	let {
@@ -46,9 +46,33 @@
 		}, 60_000);
 		return () => clearInterval(id);
 	});
-	const grouped = $derived(groupByBand(filteredConversations, now));
+	let optimisticallyArchived = $state(new Set<string>());
+	let optimisticallyCreated = $state<Conversation[]>([]);
+	$effect(() => {
+		// Drop ids from the optimistic set once the server-side list reflects the
+		// archive (the conversation no longer appears in `conversations`). Avoids
+		// the set growing unbounded across many archive operations.
+		const visible = new Set(conversations.map((c) => c.id));
+		const stale = [...optimisticallyArchived].filter((id) => !visible.has(id));
+		if (stale.length > 0) {
+			const next = new Set(optimisticallyArchived);
+			for (const id of stale) next.delete(id);
+			optimisticallyArchived = next;
+		}
+		// Drop optimistic conversations once the real row appears in `data`.
+		const realIds = new Set(conversations.map((c) => c.id));
+		const stillPending = optimisticallyCreated.filter((c) => !realIds.has(c.id));
+		if (stillPending.length !== optimisticallyCreated.length) {
+			optimisticallyCreated = stillPending;
+		}
+	});
+	const visibleConversations = $derived(
+		[...optimisticallyCreated, ...filteredConversations].filter(
+			(c) => !optimisticallyArchived.has(c.id),
+		),
+	);
+	const grouped = $derived(groupByBand(visibleConversations, now));
 
-	let creatingChat = $state(false);
 	let appShellEl: HTMLDivElement | null = $state(null);
 	let isResizing = $state(false);
 	let searchOpen = $state(false);
@@ -60,15 +84,21 @@
 	}
 
 	async function startNewChat() {
-		if (creatingChat) return;
-		creatingChat = true;
-		try {
-			closeDrawer();
-			const { id } = await createNewConversation();
-			await goto(`/c/${id}`, { invalidateAll: true });
-		} finally {
-			creatingChat = false;
-		}
+		closeDrawer();
+		const id = crypto.randomUUID();
+		const ts = Date.now();
+		optimisticallyCreated = [
+			{ id, title: 'New conversation', created_at: ts, updated_at: ts },
+			...optimisticallyCreated,
+		];
+		// Fire-and-forget: the server creates the row asynchronously. The page
+		// loader at /c/[id] also materialises the row if it lands first, so the
+		// user can begin typing immediately.
+		createNewConversation({ id }).catch((err) => {
+			optimisticallyCreated = optimisticallyCreated.filter((c) => c.id !== id);
+			console.error('Failed to create conversation', err);
+		});
+		await goto(`/c/${id}`, { invalidateAll: true });
 	}
 
 	function setSidebarWidth(width: number) {
@@ -131,7 +161,7 @@
 		<div class="sidebar-header d-flex align-items-center justify-content-between gap-2">
 			<a href="/" class="sidebar-brand text-decoration-none text-body fw-semibold" onclick={closeDrawer}>Interface</a>
 			<div class="sidebar-new-chat">
-				<button type="button" class="btn btn-sm btn-outline-secondary" aria-label="New chat" title="New chat" onclick={startNewChat} disabled={creatingChat}>New chat</button>
+				<button type="button" class="btn btn-sm btn-outline-secondary" aria-label="New chat" title="New chat" onclick={startNewChat}>New chat</button>
 			</div>
 		</div>
 		<div class="sidebar-search">
@@ -203,7 +233,17 @@
 										</a>
 												<form
 													class="sidebar-archive-form"
-													{...archive.for(`sidebar-${c.id}`).enhance(justSubmit)}
+													{...archive.for(`sidebar-${c.id}`).enhance(async ({ submit }) => {
+														optimisticallyArchived = new Set([...optimisticallyArchived, c.id]);
+														try {
+															await submit();
+														} catch (err) {
+															const next = new Set(optimisticallyArchived);
+															next.delete(c.id);
+															optimisticallyArchived = next;
+															pushToast(err instanceof Error ? err.message : 'Failed to archive', 'error');
+														}
+													})}
 												>
 											<input type="hidden" name="conversationId" value={c.id} />
 											<input

@@ -52,3 +52,43 @@ export function confirmToastSubmit(confirmMessage: string, successMessage: strin
 		}
 	};
 }
+
+/**
+ * Optimistic submit helper. Calls `apply` immediately to mutate local UI state,
+ * then submits; if the submit rejects, calls `revert` and shows an error toast.
+ * On success an optional toast can be shown.
+ */
+export function optimisticSubmit(opts: {
+	apply: () => void;
+	revert: () => void;
+	successMessage?: string;
+}) {
+	return async ({ submit }: { submit: Submit }) => {
+		opts.apply();
+		try {
+			await submit();
+			if (opts.successMessage) pushToast(opts.successMessage, 'success');
+		} catch (e) {
+			opts.revert();
+			pushToast(e instanceof Error ? e.message : String(e), 'error');
+		}
+	};
+}
+
+/** Confirm, then run an optimistic submit. */
+export function confirmOptimisticSubmit(
+	confirmMessage: string,
+	opts: { apply: () => void; revert: () => void; successMessage?: string },
+) {
+	return async ({ submit }: { submit: Submit }) => {
+		if (!confirm(confirmMessage)) return;
+		opts.apply();
+		try {
+			await submit();
+			if (opts.successMessage) pushToast(opts.successMessage, 'success');
+		} catch (e) {
+			opts.revert();
+			pushToast(e instanceof Error ? e.message : String(e), 'error');
+		}
+	};
+}

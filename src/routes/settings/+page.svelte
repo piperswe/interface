@@ -26,13 +26,150 @@
 	} from '$lib/settings.remote';
 	import { addTag, removeTag, renameTagForm } from '$lib/tags.remote';
 	import { addSchedule, removeSchedule, toggleSchedule, runScheduleNow } from '$lib/schedules.remote';
-	import { confirmToastSubmit, justSubmit, toastSubmit } from '$lib/form-actions';
+	import {
+		confirmOptimisticSubmit,
+		confirmToastSubmit,
+		justSubmit,
+		optimisticSubmit,
+		toastSubmit,
+	} from '$lib/form-actions';
 	import { page } from '$app/state';
 	import { untrack } from 'svelte';
 	import type { ProviderType, ReasoningType } from '$lib/server/providers/types';
 
 	let { data }: { data: PageData } = $props();
-	const theme = $derived(page.data.theme as 'system' | 'light' | 'dark');
+	const serverTheme = $derived(page.data.theme as 'system' | 'light' | 'dark');
+	let optimisticTheme = $state<'system' | 'light' | 'dark' | null>(null);
+	const theme = $derived(optimisticTheme ?? serverTheme);
+	$effect(() => {
+		void serverTheme;
+		optimisticTheme = null;
+	});
+
+	// Optimistic-delete tracking: items in these sets are filtered out of the
+	// rendered lists immediately on submit. The reactive cleanup effect below
+	// drops ids once the server-side `data` arrays no longer contain them.
+	let pendingProviders = $state(new Set<string>());
+	let pendingModels = $state(new Set<string>()); // `${providerId}/${modelId}`
+	let pendingMcp = $state(new Set<number>());
+	let pendingSubAgents = $state(new Set<number>());
+	let pendingStyles = $state(new Set<number>());
+	let pendingMemories = $state(new Set<number>());
+	let optimisticSubAgentEnabled = $state(new Map<number, boolean>());
+
+	function reconcile<T>(set: Set<T>, present: Set<T>, update: (next: Set<T>) => void) {
+		const stale = [...set].filter((id) => !present.has(id));
+		if (stale.length === 0) return;
+		const next = new Set(set);
+		for (const id of stale) next.delete(id);
+		update(next);
+	}
+
+	$effect(() => {
+		reconcile(pendingProviders, new Set(data.providers.map((p) => p.id)), (s) => (pendingProviders = s));
+	});
+	$effect(() => {
+		reconcile(
+			pendingModels,
+			new Set(data.models.map((m) => `${m.providerId}/${m.id}`)),
+			(s) => (pendingModels = s),
+		);
+	});
+	$effect(() => {
+		reconcile(pendingMcp, new Set(data.mcpServers.map((s) => s.id)), (s) => (pendingMcp = s));
+	});
+	$effect(() => {
+		reconcile(pendingSubAgents, new Set(data.subAgents.map((s) => s.id)), (s) => (pendingSubAgents = s));
+	});
+	$effect(() => {
+		reconcile(pendingStyles, new Set(data.styles.map((s) => s.id)), (s) => (pendingStyles = s));
+	});
+	$effect(() => {
+		reconcile(pendingMemories, new Set(data.memories.map((m) => m.id)), (s) => (pendingMemories = s));
+	});
+	$effect(() => {
+		// Drop optimistic toggles once the server reports the same value.
+		const stale: number[] = [];
+		for (const sa of data.subAgents) {
+			if (optimisticSubAgentEnabled.has(sa.id) && optimisticSubAgentEnabled.get(sa.id) === sa.enabled) {
+				stale.push(sa.id);
+			}
+		}
+		if (stale.length > 0) {
+			const next = new Map(optimisticSubAgentEnabled);
+			for (const id of stale) next.delete(id);
+			optimisticSubAgentEnabled = next;
+		}
+	});
+
+	function pendingProviderAdd(id: string) {
+		pendingProviders = new Set([...pendingProviders, id]);
+	}
+	function pendingProviderRemove(id: string) {
+		const next = new Set(pendingProviders);
+		next.delete(id);
+		pendingProviders = next;
+	}
+	function pendingModelAdd(key: string) {
+		pendingModels = new Set([...pendingModels, key]);
+	}
+	function pendingModelRemove(key: string) {
+		const next = new Set(pendingModels);
+		next.delete(key);
+		pendingModels = next;
+	}
+	function pendingMcpAdd(id: number) {
+		pendingMcp = new Set([...pendingMcp, id]);
+	}
+	function pendingMcpRemove(id: number) {
+		const next = new Set(pendingMcp);
+		next.delete(id);
+		pendingMcp = next;
+	}
+	function pendingSubAgentAdd(id: number) {
+		pendingSubAgents = new Set([...pendingSubAgents, id]);
+	}
+	function pendingSubAgentRemove(id: number) {
+		const next = new Set(pendingSubAgents);
+		next.delete(id);
+		pendingSubAgents = next;
+	}
+	function pendingStyleAdd(id: number) {
+		pendingStyles = new Set([...pendingStyles, id]);
+	}
+	function pendingStyleRemove(id: number) {
+		const next = new Set(pendingStyles);
+		next.delete(id);
+		pendingStyles = next;
+	}
+	function pendingMemoryAdd(id: number) {
+		pendingMemories = new Set([...pendingMemories, id]);
+	}
+	function pendingMemoryRemove(id: number) {
+		const next = new Set(pendingMemories);
+		next.delete(id);
+		pendingMemories = next;
+	}
+	function optimisticSubAgentSet(id: number, enabled: boolean) {
+		optimisticSubAgentEnabled = new Map(optimisticSubAgentEnabled).set(id, enabled);
+	}
+	function optimisticSubAgentClear(id: number) {
+		const next = new Map(optimisticSubAgentEnabled);
+		next.delete(id);
+		optimisticSubAgentEnabled = next;
+	}
+
+	const visibleProviders = $derived(data.providers.filter((p) => !pendingProviders.has(p.id)));
+	const visibleMcpServers = $derived(data.mcpServers.filter((s) => !pendingMcp.has(s.id)));
+	const visibleSubAgents = $derived(data.subAgents.filter((s) => !pendingSubAgents.has(s.id)));
+	const visibleStyles = $derived(data.styles.filter((s) => !pendingStyles.has(s.id)));
+	const visibleMemories = $derived(data.memories.filter((m) => !pendingMemories.has(m.id)));
+
+	function applyTheme(value: string) {
+		if (typeof document !== 'undefined') {
+			document.documentElement.setAttribute('data-theme', value);
+		}
+	}
 
 	const themeForm = saveSetting.for('theme');
 	const systemPromptForm = saveSetting.for('system_prompt');
@@ -133,7 +270,25 @@
 	<!-- Theme -->
 	<section class="mb-4">
 		<h2 class="h5">Theme</h2>
-		<form {...themeForm.enhance(toastSubmit('Theme saved'))} class="d-flex gap-2 align-items-center">
+		<form
+			{...themeForm.enhance(async ({ form, submit }) => {
+				const select = form.querySelector('select[name="value"]') as HTMLSelectElement | null;
+				const value = select?.value ?? 'system';
+				const next: 'system' | 'light' | 'dark' =
+					value === 'light' || value === 'dark' ? value : 'system';
+				const prev = optimisticTheme ?? serverTheme;
+				optimisticTheme = next;
+				applyTheme(next);
+				try {
+					await submit();
+				} catch (err) {
+					optimisticTheme = prev;
+					applyTheme(prev);
+					throw err;
+				}
+			})}
+			class="d-flex gap-2 align-items-center"
+		>
 			<input type="hidden" name="key" value="theme" />
 			<select name="value" class="form-select form-select-sm w-auto" value={theme}>
 				<option value="system">System</option>
@@ -163,9 +318,9 @@
 	<section class="mb-4">
 		<h2 class="h5">Providers & Models</h2>
 
-		{#each data.providers as p (p.id)}
+		{#each visibleProviders as p (p.id)}
 			{@const providerModels = data.models
-				.filter((m) => m.providerId === p.id)
+				.filter((m) => m.providerId === p.id && !pendingModels.has(`${m.providerId}/${m.id}`))
 				.sort((a, b) => a.sortOrder - b.sortOrder)}
 			<div class="card mb-3">
 				<div class="card-header d-flex justify-content-between align-items-center">
@@ -175,7 +330,15 @@
 					</div>
 					<div class="d-flex gap-2">
 						<button type="button" class="btn btn-sm btn-outline-secondary" onclick={() => (editProviderId = p.id)}>Edit</button>
-						<form {...deleteProviderAction.for(p.id).enhance(confirmToastSubmit(`Delete provider "${p.id}"?`, `Provider ${p.id} deleted`))}>
+						<form
+							{...deleteProviderAction.for(p.id).enhance(
+								confirmOptimisticSubmit(`Delete provider "${p.id}"?`, {
+									apply: () => pendingProviderAdd(p.id),
+									revert: () => pendingProviderRemove(p.id),
+									successMessage: `Provider ${p.id} deleted`,
+								}),
+							)}
+						>
 							<input type="hidden" name="id" value={p.id} />
 							<button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
 						</form>
@@ -237,7 +400,15 @@
 										<button type="submit" class="btn btn-sm btn-link p-0" title="Set as default">&#9733;</button>
 									</form>
 								{/if}
-								<form {...deleteProviderModel.for(`${p.id}-${m.id}`).enhance(confirmToastSubmit('Delete this model?', 'Model deleted'))}>
+								<form
+									{...deleteProviderModel.for(`${p.id}-${m.id}`).enhance(
+										confirmOptimisticSubmit('Delete this model?', {
+											apply: () => pendingModelAdd(`${p.id}/${m.id}`),
+											revert: () => pendingModelRemove(`${p.id}/${m.id}`),
+											successMessage: 'Model deleted',
+										}),
+									)}
+								>
 									<input type="hidden" name="provider_id" value={p.id} />
 									<input type="hidden" name="model_id" value={m.id} />
 									<button type="submit" class="btn btn-sm btn-link text-danger">Remove</button>
@@ -398,11 +569,11 @@
 	<!-- MCP Servers -->
 	<section class="mb-4">
 		<h2 class="h5">MCP Servers</h2>
-		{#if data.mcpServers.length === 0}
+		{#if visibleMcpServers.length === 0}
 			<p class="text-muted">No MCP servers configured.</p>
 		{:else}
 			<ul class="list-group">
-				{#each data.mcpServers as s (s.id)}
+				{#each visibleMcpServers as s (s.id)}
 					{@const oauthConnected = !!s.oauth?.accessToken}
 					<li class="list-group-item d-flex justify-content-between align-items-center">
 						<div>
@@ -423,7 +594,16 @@
 									<button type="submit" class="btn btn-sm btn-link">Disconnect</button>
 								</form>
 							{/if}
-							<form {...removeMcpServer.for(s.id).enhance(confirmToastSubmit(`Delete server "${s.name}"?`, 'MCP server deleted'))} class="m-0">
+							<form
+								{...removeMcpServer.for(s.id).enhance(
+									confirmOptimisticSubmit(`Delete server "${s.name}"?`, {
+										apply: () => pendingMcpAdd(s.id),
+										revert: () => pendingMcpRemove(s.id),
+										successMessage: 'MCP server deleted',
+									}),
+								)}
+								class="m-0"
+							>
 								<input type="hidden" name="id" value={s.id} />
 								<button type="submit" class="btn btn-sm btn-link text-danger">Delete</button>
 							</form>
@@ -465,21 +645,38 @@
 	<!-- Sub-agents -->
 	<section class="mb-4">
 		<h2 class="h5">Sub-agents</h2>
-		{#if data.subAgents.length === 0}
+		{#if visibleSubAgents.length === 0}
 			<p class="text-muted">No sub-agents configured.</p>
 		{:else}
 			<ul class="list-group">
-				{#each data.subAgents as sa (sa.id)}
+				{#each visibleSubAgents as sa (sa.id)}
+					{@const enabled = optimisticSubAgentEnabled.has(sa.id) ? optimisticSubAgentEnabled.get(sa.id)! : sa.enabled}
 					<li class="list-group-item d-flex justify-content-between align-items-center">
 						<div class="d-flex align-items-center gap-2">
-							<form {...toggleSubAgent.for(sa.id).enhance(justSubmit)} class="m-0">
+							<form
+								{...toggleSubAgent.for(sa.id).enhance(
+									optimisticSubmit({
+										apply: () => optimisticSubAgentSet(sa.id, !enabled),
+										revert: () => optimisticSubAgentClear(sa.id),
+									}),
+								)}
+								class="m-0"
+							>
 								<input type="hidden" name="id" value={sa.id} />
-								<input type="hidden" name="enabled" value={String(!sa.enabled)} />
-								<button type="submit" class="btn btn-sm btn-link p-0">{sa.enabled ? 'On' : 'Off'}</button>
+								<input type="hidden" name="enabled" value={String(!enabled)} />
+								<button type="submit" class="btn btn-sm btn-link p-0">{enabled ? 'On' : 'Off'}</button>
 							</form>
 							<strong>{sa.name}</strong>
 						</div>
-							<form {...removeSubAgent.for(sa.id).enhance(confirmToastSubmit(`Delete sub-agent "${sa.name}"?`, 'Sub-agent deleted'))}>
+						<form
+							{...removeSubAgent.for(sa.id).enhance(
+								confirmOptimisticSubmit(`Delete sub-agent "${sa.name}"?`, {
+									apply: () => pendingSubAgentAdd(sa.id),
+									revert: () => pendingSubAgentRemove(sa.id),
+									successMessage: 'Sub-agent deleted',
+								}),
+							)}
+						>
 							<input type="hidden" name="id" value={sa.id} />
 							<button type="submit" class="btn btn-sm btn-link text-danger">Delete</button>
 						</form>
@@ -499,11 +696,11 @@
 	<section class="mb-4">
 		<h2 class="h5">Styles</h2>
 		<p class="small text-muted mb-2">Saved system-prompt presets that can be applied per conversation from the chat header.</p>
-		{#if data.styles.length === 0}
+		{#if visibleStyles.length === 0}
 			<p class="text-muted">No styles configured.</p>
 		{:else}
 			<ul class="list-group">
-				{#each data.styles as s (s.id)}
+				{#each visibleStyles as s (s.id)}
 					<li class="list-group-item">
 						{#if editStyleId === s.id}
 							<form {...saveStyle.for(`edit-${s.id}`).enhance(toastSubmit('Style saved'))} class="d-flex flex-column gap-2">
@@ -523,7 +720,16 @@
 								</div>
 								<div class="d-flex gap-2">
 									<button type="button" class="btn btn-sm btn-link p-0" onclick={() => startEditStyle(s)}>Edit</button>
-									<form {...removeStyle.for(s.id).enhance(confirmToastSubmit(`Delete style "${s.name}"?`, 'Style deleted'))} class="m-0">
+									<form
+										{...removeStyle.for(s.id).enhance(
+											confirmOptimisticSubmit(`Delete style "${s.name}"?`, {
+												apply: () => pendingStyleAdd(s.id),
+												revert: () => pendingStyleRemove(s.id),
+												successMessage: 'Style deleted',
+											}),
+										)}
+										class="m-0"
+									>
 										<input type="hidden" name="id" value={s.id} />
 										<button type="submit" class="btn btn-sm btn-link text-danger p-0">Delete</button>
 									</form>
@@ -545,11 +751,11 @@
 	<section class="mb-4">
 		<h2 class="h5">Memories</h2>
 		<p class="small text-muted mb-2">Persistent facts injected into every conversation's system prompt. The model can also save memories itself via the <code>remember</code> tool.</p>
-		{#if data.memories.length === 0}
+		{#if visibleMemories.length === 0}
 			<p class="text-muted">No memories saved.</p>
 		{:else}
 			<ul class="list-group">
-				{#each data.memories as m (m.id)}
+				{#each visibleMemories as m (m.id)}
 					<li class="list-group-item d-flex justify-content-between align-items-start gap-2">
 						<div>
 							<div>{m.content}</div>
@@ -558,7 +764,16 @@
 								{#if m.source}<span> · {m.source}</span>{/if}
 							</div>
 						</div>
-						<form {...removeMemory.for(m.id).enhance(confirmToastSubmit('Delete this memory?', 'Memory deleted'))} class="m-0">
+						<form
+							{...removeMemory.for(m.id).enhance(
+								confirmOptimisticSubmit('Delete this memory?', {
+									apply: () => pendingMemoryAdd(m.id),
+									revert: () => pendingMemoryRemove(m.id),
+									successMessage: 'Memory deleted',
+								}),
+							)}
+							class="m-0"
+						>
 							<input type="hidden" name="id" value={m.id} />
 							<button type="submit" class="btn btn-sm btn-link text-danger p-0">Delete</button>
 						</form>

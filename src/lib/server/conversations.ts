@@ -21,10 +21,14 @@ export async function listArchivedConversations(env: Env): Promise<Conversation[
 	return result.results ?? [];
 }
 
-export async function createConversation(env: Env): Promise<string> {
-	const id = uuid();
+// Insert a `conversations` row. Accepts an optional id so the client can
+// pre-allocate one for optimistic navigation; `INSERT OR IGNORE` makes the
+// call idempotent across the optimistic-creation race (the loader may also
+// materialise the same id if the user lands on `/c/<id>` before the
+// background create resolves).
+export async function createConversation(env: Env, id: string = uuid()): Promise<string> {
 	const ts = now();
-	await env.DB.prepare(`INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, 'New conversation', ?, ?)`)
+	await env.DB.prepare(`INSERT OR IGNORE INTO conversations (id, title, created_at, updated_at) VALUES (?, 'New conversation', ?, ?)`)
 		.bind(id, ts, ts)
 		.run();
 	await indexTitle(env, id, 'New conversation', ts);

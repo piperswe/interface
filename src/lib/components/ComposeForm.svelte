@@ -19,6 +19,8 @@
 		thinkingBudget,
 		busy,
 		contextUsed = 0,
+		onOptimisticSubmit,
+		onOptimisticRevert,
 	}: {
 		conversationId: string;
 		models: ProviderModel[];
@@ -26,11 +28,25 @@
 		thinkingBudget: number | null;
 		busy: boolean;
 		contextUsed?: number;
+		onOptimisticSubmit?: (content: string, model: string) => void;
+		onOptimisticRevert?: () => void;
 	} = $props();
 
 	let formEl: HTMLFormElement | null = $state(null);
+	let textareaEl: HTMLTextAreaElement | null = $state(null);
 	let optionsEl: HTMLDetailsElement | null = $state(null);
 	let selectedModel = $state(untrack(() => defaultModel));
+
+	// Focus the textarea whenever the conversation changes — covers the
+	// optimistic-create flow where we navigate into a fresh `/c/<id>` and want
+	// the user to be able to start typing immediately, plus the regular case
+	// of switching between conversations via the sidebar.
+	$effect(() => {
+		void conversationId;
+		const el = textareaEl;
+		if (!el || busy) return;
+		queueMicrotask(() => el.focus());
+	});
 
 	// Sync selectedModel when defaultModel changes externally (e.g. model_switch tool).
 	$effect(() => {
@@ -133,14 +149,30 @@
 <form
 	bind:this={formEl}
 	{...sendMessage.for(conversationId).enhance(async ({ form, submit }) => {
-		await submit();
 		const textarea = form.querySelector<HTMLTextAreaElement>('textarea[name="content"]');
-		if (textarea) textarea.value = '';
+		const rawContent = textarea?.value ?? '';
+		const trimmed = rawContent.trim();
+		const optimistic = trimmed.length > 0 && onOptimisticSubmit != null;
+		if (optimistic) {
+			onOptimisticSubmit!(trimmed, selectedModel);
+			if (textarea) textarea.value = '';
+		}
+		try {
+			await submit();
+			if (!optimistic && textarea) textarea.value = '';
+		} catch (err) {
+			if (optimistic) {
+				onOptimisticRevert?.();
+				if (textarea) textarea.value = rawContent;
+			}
+			throw err;
+		}
 	})}
 	class="compose d-flex flex-column gap-2 bg-body border rounded-4 p-2 ps-3"
 >
 	<input type="hidden" name="conversationId" value={conversationId} />
 	<textarea
+		bind:this={textareaEl}
 		name="content"
 		placeholder="Send a message…"
 		required
