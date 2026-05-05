@@ -3,7 +3,8 @@ import type { Conversation } from '$lib/types/conversation';
 
 export type { Conversation };
 
-const SELECT_COLS = 'id, title, created_at, updated_at, thinking_budget, archived_at';
+const SELECT_COLS =
+	'id, title, created_at, updated_at, thinking_budget, archived_at, style_id, system_prompt';
 
 export async function listConversations(env: Env): Promise<Conversation[]> {
 	const result = await env.DB.prepare(

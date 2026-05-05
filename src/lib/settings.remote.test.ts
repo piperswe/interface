@@ -11,8 +11,17 @@ type AnyArgs = (...args: unknown[]) => Promise<unknown>;
 const saveSetting = remote.saveSetting as unknown as AnyArgs;
 const addMcpServer = remote.addMcpServer as unknown as AnyArgs;
 const removeMcpServer = remote.removeMcpServer as unknown as AnyArgs;
+const addMemory = remote.addMemory as unknown as AnyArgs;
+const removeMemory = remote.removeMemory as unknown as AnyArgs;
+const addStyle = remote.addStyle as unknown as AnyArgs;
+const saveStyle = remote.saveStyle as unknown as AnyArgs;
+const removeStyle = remote.removeStyle as unknown as AnyArgs;
+const addMcpFromPreset = remote.addMcpFromPreset as unknown as AnyArgs;
+const disconnectMcpServer = remote.disconnectMcpServer as unknown as AnyArgs;
 import { getSetting } from './server/settings';
-import { listMcpServers } from './server/mcp_servers';
+import { listMcpServers, setMcpServerOauthClient, setMcpServerOauthTokens } from './server/mcp_servers';
+import { listMemories } from './server/memories';
+import { listStyles, getStyle } from './server/styles';
 
 beforeEach(() => {
 	setMockRequestEvent({ platform: { env } });
@@ -22,6 +31,8 @@ afterEach(async () => {
 	clearMockRequestEvent();
 	await env.DB.prepare('DELETE FROM settings').run();
 	await env.DB.prepare('DELETE FROM mcp_servers').run();
+	await env.DB.prepare('DELETE FROM memories').run();
+	await env.DB.prepare('DELETE FROM styles').run();
 });
 
 async function expectRedirect(promise: Promise<unknown>, locationStartsWith: string) {
@@ -185,5 +196,156 @@ describe('removeMcpServer', () => {
 
 	it('rejects zero ids', async () => {
 		await expectError(removeMcpServer({ id: '0' }) as Promise<unknown>, 400);
+	});
+});
+
+describe('addMemory / removeMemory', () => {
+	it('inserts a memory and lists it back', async () => {
+		await expectRedirect(addMemory({ content: 'I like terse responses.' }) as Promise<unknown>, '/settings');
+		const rows = await listMemories(env);
+		expect(rows).toHaveLength(1);
+		expect(rows[0]).toMatchObject({ content: 'I like terse responses.', type: 'manual', source: 'user' });
+	});
+
+	it('rejects empty content', async () => {
+		await expectError(addMemory({ content: '   ' }) as Promise<unknown>, 400, /required/);
+	});
+
+	it('removes by id', async () => {
+		await addMemory({ content: 'gone' }).catch((e) => {
+			if (!isRedirect(e)) throw e;
+		});
+		const [m] = await listMemories(env);
+		await expectRedirect(removeMemory({ id: String(m.id) }) as Promise<unknown>, '/settings');
+		expect(await listMemories(env)).toEqual([]);
+	});
+
+	it('rejects bad ids on remove', async () => {
+		await expectError(removeMemory({ id: '0' }) as Promise<unknown>, 400);
+		await expectError(removeMemory({ id: 'abc' }) as Promise<unknown>, 400);
+	});
+});
+
+describe('addStyle / saveStyle / removeStyle', () => {
+	it('inserts and lists a style', async () => {
+		await expectRedirect(
+			addStyle({ name: 'Concise', system_prompt: 'Be brief.' }) as Promise<unknown>,
+			'/settings',
+		);
+		const rows = await listStyles(env);
+		expect(rows).toMatchObject([{ name: 'Concise', systemPrompt: 'Be brief.' }]);
+	});
+
+	it('rejects empty name or prompt', async () => {
+		await expectError(
+			addStyle({ name: '   ', system_prompt: 'p' }) as Promise<unknown>,
+			400,
+			/Name/,
+		);
+		await expectError(
+			addStyle({ name: 'x', system_prompt: '   ' }) as Promise<unknown>,
+			400,
+			/System prompt/,
+		);
+	});
+
+	it('saveStyle updates name + prompt', async () => {
+		await addStyle({ name: 'A', system_prompt: 'p' }).catch((e) => {
+			if (!isRedirect(e)) throw e;
+		});
+		const [s] = await listStyles(env);
+		await expectRedirect(
+			saveStyle({ id: String(s.id), name: 'B', system_prompt: 'q' }) as Promise<unknown>,
+			'/settings',
+		);
+		const after = await getStyle(env, s.id);
+		expect(after).toMatchObject({ name: 'B', systemPrompt: 'q' });
+	});
+
+	it('saveStyle rejects bad input', async () => {
+		await expectError(saveStyle({ id: '0', name: 'x', system_prompt: 'y' }) as Promise<unknown>, 400);
+		// Force an existing row, then submit empty name
+		await addStyle({ name: 'A', system_prompt: 'p' }).catch((e) => {
+			if (!isRedirect(e)) throw e;
+		});
+		const [s] = await listStyles(env);
+		await expectError(
+			saveStyle({ id: String(s.id), name: '', system_prompt: 'y' }) as Promise<unknown>,
+			400,
+			/Name/,
+		);
+	});
+
+	it('removeStyle clears the row and any conversation references', async () => {
+		await addStyle({ name: 'A', system_prompt: 'p' }).catch((e) => {
+			if (!isRedirect(e)) throw e;
+		});
+		const [s] = await listStyles(env);
+		await env.DB.prepare(
+			"INSERT INTO conversations (id, title, created_at, updated_at, style_id) VALUES (?, 'c', 1, 1, ?)",
+		)
+			.bind('test-style-conv', s.id)
+			.run();
+		await expectRedirect(removeStyle({ id: String(s.id) }) as Promise<unknown>, '/settings');
+		const row = await env.DB.prepare('SELECT style_id FROM conversations WHERE id = ?')
+			.bind('test-style-conv')
+			.first<{ style_id: number | null }>();
+		expect(row?.style_id).toBeNull();
+		await env.DB.prepare('DELETE FROM conversations WHERE id = ?').bind('test-style-conv').run();
+	});
+});
+
+describe('addMcpFromPreset', () => {
+	it('creates a no-auth preset (Context7) and redirects to settings', async () => {
+		await expectRedirect(addMcpFromPreset({ preset_id: 'context7' }) as Promise<unknown>, '/settings');
+		const [row] = await listMcpServers(env);
+		expect(row.name).toBe('Context7 (docs)');
+		expect(row.url).toMatch(/^https:\/\//);
+		expect(row.enabled).toBe(true);
+	});
+
+	it('creates an OAuth preset disabled and redirects into the connect flow', async () => {
+		await expectRedirect(addMcpFromPreset({ preset_id: 'github' }) as Promise<unknown>, '/settings/mcp/');
+		const [row] = await listMcpServers(env);
+		expect(row.name).toBe('GitHub');
+		expect(row.enabled).toBe(false);
+	});
+
+	it('rejects unknown preset ids', async () => {
+		await expectError(addMcpFromPreset({ preset_id: 'nope' }) as Promise<unknown>, 400, /Unknown MCP preset/);
+	});
+});
+
+describe('disconnectMcpServer', () => {
+	it('clears OAuth tokens and disables the row', async () => {
+		// Seed a server with OAuth client + access token.
+		await addMcpServer({ name: 'gh', transport: 'http', url: 'https://api.github.example/mcp' }).catch(
+			(e) => {
+				if (!isRedirect(e)) throw e;
+			},
+		);
+		const [row] = await listMcpServers(env);
+		await setMcpServerOauthClient(env, row.id, {
+			authorizationServer: 'https://as.example',
+			authorizationEndpoint: 'https://as.example/authorize',
+			tokenEndpoint: 'https://as.example/token',
+			registrationEndpoint: null,
+			clientId: 'cid',
+			clientSecret: null,
+			scopes: null,
+		});
+		await setMcpServerOauthTokens(env, row.id, {
+			accessToken: 'AT',
+			refreshToken: 'RT',
+			expiresAt: Date.now() + 60_000,
+		});
+
+		await expectRedirect(disconnectMcpServer({ id: String(row.id) }) as Promise<unknown>, '/settings');
+		const refreshed = (await listMcpServers(env)).find((s) => s.id === row.id);
+		expect(refreshed?.enabled).toBe(false);
+		expect(refreshed?.oauth?.accessToken).toBeNull();
+		expect(refreshed?.oauth?.refreshToken).toBeNull();
+		// Client metadata is preserved so the user can reconnect without re-discovering.
+		expect(refreshed?.oauth?.clientId).toBe('cid');
 	});
 });

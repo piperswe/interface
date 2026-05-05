@@ -1,6 +1,14 @@
 import { env } from 'cloudflare:test';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createMcpServer, deleteMcpServer, getMcpServer, listMcpServers, setMcpServerEnabled } from './mcp_servers';
+import {
+	createMcpServer,
+	deleteMcpServer,
+	getMcpServer,
+	listMcpServers,
+	setMcpServerEnabled,
+	setMcpServerOauthClient,
+	setMcpServerOauthTokens,
+} from './mcp_servers';
 
 afterEach(async () => {
 	await env.DB.prepare('DELETE FROM mcp_servers').run();
@@ -79,5 +87,67 @@ describe('mcp_servers', () => {
 		expect((await listMcpServers(env, 1))[0].enabled).toBe(true);
 		await setMcpServerEnabled(env, id, false, 1);
 		expect((await listMcpServers(env, 1))[0].enabled).toBe(false);
+	});
+
+	describe('OAuth column round-trips', () => {
+		it('rows have a null oauth field by default', async () => {
+			const id = await createMcpServer(env, { name: 'a', transport: 'http', url: 'https://a.example' });
+			const row = await getMcpServer(env, id);
+			expect(row?.oauth).toBeNull();
+		});
+
+		it('setMcpServerOauthClient persists discovered endpoints + client', async () => {
+			const id = await createMcpServer(env, { name: 'a', transport: 'http', url: 'https://a.example' });
+			await setMcpServerOauthClient(env, id, {
+				authorizationServer: 'https://as.example',
+				authorizationEndpoint: 'https://as.example/authorize',
+				tokenEndpoint: 'https://as.example/token',
+				registrationEndpoint: 'https://as.example/register',
+				clientId: 'cid',
+				clientSecret: 'csec',
+				scopes: 'read write',
+			});
+			const row = await getMcpServer(env, id);
+			expect(row?.oauth).toMatchObject({
+				authorizationServer: 'https://as.example',
+				authorizationEndpoint: 'https://as.example/authorize',
+				tokenEndpoint: 'https://as.example/token',
+				registrationEndpoint: 'https://as.example/register',
+				clientId: 'cid',
+				clientSecret: 'csec',
+				scopes: 'read write',
+				accessToken: null,
+				refreshToken: null,
+				expiresAt: null,
+			});
+		});
+
+		it('setMcpServerOauthTokens persists tokens and re-enables the row', async () => {
+			const id = await createMcpServer(env, { name: 'a', transport: 'http', url: 'https://a.example' });
+			await setMcpServerEnabled(env, id, false);
+			await setMcpServerOauthTokens(env, id, {
+				accessToken: 'AT',
+				refreshToken: 'RT',
+				expiresAt: 1_777_000_000_000,
+			});
+			const row = await getMcpServer(env, id);
+			expect(row?.oauth?.accessToken).toBe('AT');
+			expect(row?.oauth?.refreshToken).toBe('RT');
+			expect(row?.oauth?.expiresAt).toBe(1_777_000_000_000);
+			expect(row?.enabled).toBe(true);
+		});
+
+		it('handles null refresh_token + null expires_at', async () => {
+			const id = await createMcpServer(env, { name: 'a', transport: 'http', url: 'https://a.example' });
+			await setMcpServerOauthTokens(env, id, {
+				accessToken: 'AT',
+				refreshToken: null,
+				expiresAt: null,
+			});
+			const row = await getMcpServer(env, id);
+			expect(row?.oauth?.accessToken).toBe('AT');
+			expect(row?.oauth?.refreshToken).toBeNull();
+			expect(row?.oauth?.expiresAt).toBeNull();
+		});
 	});
 });

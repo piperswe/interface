@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { McpHttpClient } from './client';
+import { McpAuthError, McpHttpClient } from './client';
 
 afterEach(() => {
 	vi.restoreAllMocks();
@@ -119,5 +119,75 @@ describe('McpHttpClient', () => {
 		);
 		const client = new McpHttpClient({ url: 'https://mcp.test/jsonrpc' });
 		await expect(client.listTools()).rejects.toThrow(/SSE stream ended/);
+	});
+
+	describe('OAuth bearer token integration', () => {
+		it('attaches the Bearer header when getAccessToken returns a string', async () => {
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+				jsonResponse({ jsonrpc: '2.0', id: 1, result: { tools: [] } }),
+			);
+			const client = new McpHttpClient({
+				url: 'https://mcp.test/jsonrpc',
+				getAccessToken: async () => 'AT',
+			});
+			await client.listTools();
+			const init = fetchSpy.mock.calls[0][1] as RequestInit;
+			expect((init.headers as Record<string, string>)['Authorization']).toBe('Bearer AT');
+		});
+
+		it('skips the Bearer header when getAccessToken returns null', async () => {
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+				jsonResponse({ jsonrpc: '2.0', id: 1, result: { tools: [] } }),
+			);
+			const client = new McpHttpClient({
+				url: 'https://mcp.test/jsonrpc',
+				getAccessToken: async () => null,
+			});
+			await client.listTools();
+			const init = fetchSpy.mock.calls[0][1] as RequestInit;
+			expect((init.headers as Record<string, string>)['Authorization']).toBeUndefined();
+		});
+
+		it('retries once on 401 with force:true and succeeds on the second attempt', async () => {
+			const tokens = ['stale', 'fresh'];
+			const calls: string[] = [];
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
+				const auth = (init?.headers as Record<string, string> | undefined)?.['Authorization'];
+				calls.push(auth ?? '');
+				if (auth === 'Bearer stale') return new Response('unauth', { status: 401 });
+				return jsonResponse({ jsonrpc: '2.0', id: 1, result: { tools: [{ name: 'ok' }] } });
+			});
+			const tokenCalls: Array<{ force?: boolean }> = [];
+			const client = new McpHttpClient({
+				url: 'https://mcp.test/jsonrpc',
+				getAccessToken: async (opts = {}) => {
+					tokenCalls.push(opts);
+					return opts.force ? tokens[1] : tokens[0];
+				},
+			});
+			const tools = await client.listTools();
+			expect(tools).toEqual([{ name: 'ok' }]);
+			expect(calls).toEqual(['Bearer stale', 'Bearer fresh']);
+			expect(tokenCalls).toEqual([{ force: false }, { force: true }]);
+			expect(fetchSpy).toHaveBeenCalledTimes(2);
+		});
+
+		it('throws McpAuthError if the second 401 retry also fails', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('unauth', { status: 401 }));
+			const client = new McpHttpClient({
+				url: 'https://mcp.test/jsonrpc',
+				getAccessToken: async () => 'AT',
+			});
+			await expect(client.listTools()).rejects.toBeInstanceOf(McpAuthError);
+		});
+
+		it('does not attempt a 401 retry without a token getter', async () => {
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+				new Response('unauth', { status: 401 }),
+			);
+			const client = new McpHttpClient({ url: 'https://mcp.test/jsonrpc' });
+			await expect(client.listTools()).rejects.toBeInstanceOf(McpAuthError);
+			expect(fetchSpy).toHaveBeenCalledTimes(1);
+		});
 	});
 });

@@ -109,7 +109,7 @@ describe('applyToolCall', () => {
 	it('appends a tool_use part', () => {
 		const s = state({ ...baseMessage });
 		const next = applyToolCall(s, { messageId: 'm1', id: 't1', name: 'web_search', input: { q: 'x' } });
-		expect(next.messages[0].parts).toEqual([{ type: 'tool_use', id: 't1', name: 'web_search', input: { q: 'x' } }]);
+		expect(next.messages[0].parts).toEqual([{ type: 'tool_use', id: 't1', name: 'web_search', input: { q: 'x' }, startedAt: undefined }]);
 	});
 	it('is idempotent for duplicate ids', () => {
 		const s = state({
@@ -118,6 +118,11 @@ describe('applyToolCall', () => {
 		});
 		const next = applyToolCall(s, { messageId: 'm1', id: 't1', name: 'x', input: {} });
 		expect(next.messages[0].parts).toHaveLength(1);
+	});
+	it('preserves startedAt when present', () => {
+		const s = state({ ...baseMessage });
+		const next = applyToolCall(s, { messageId: 'm1', id: 't1', name: 'x', input: {}, startedAt: 12345 });
+		expect(next.messages[0].parts?.[0]).toMatchObject({ type: 'tool_use', startedAt: 12345 });
 	});
 });
 
@@ -134,6 +139,37 @@ describe('applyToolResult', () => {
 		});
 		const next = applyToolResult(s, { messageId: 'm1', toolUseId: 't1', content: 'new', isError: true });
 		expect(next.messages[0].parts).toEqual([{ type: 'tool_result', toolUseId: 't1', content: 'new', isError: true }]);
+	});
+	it('preserves startedAt and endedAt timing fields', () => {
+		const s = state({ ...baseMessage });
+		const next = applyToolResult(s, {
+			messageId: 'm1',
+			toolUseId: 't1',
+			content: 'done',
+			isError: false,
+			startedAt: 1000,
+			endedAt: 1500,
+		});
+		expect(next.messages[0].parts?.at(-1)).toEqual({
+			type: 'tool_result',
+			toolUseId: 't1',
+			content: 'done',
+			isError: false,
+			startedAt: 1000,
+			endedAt: 1500,
+		});
+	});
+	it('keeps streaming flag when set on the event', () => {
+		const s = state({ ...baseMessage });
+		const next = applyToolResult(s, {
+			messageId: 'm1',
+			toolUseId: 't1',
+			content: '',
+			isError: false,
+			streaming: true,
+			startedAt: 100,
+		});
+		expect(next.messages[0].parts?.at(-1)).toMatchObject({ streaming: true, startedAt: 100 });
 	});
 });
 

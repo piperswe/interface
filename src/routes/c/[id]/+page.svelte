@@ -7,9 +7,10 @@
 	import { fmtCost } from '$lib/formatters';
 	import { attachConversationStream } from '$lib/conversation-stream';
 	import { createStreamingMarkdownRunner } from '$lib/streaming-markdown';
-	import { archive, destroy, regenerateTitle } from '$lib/conversations.remote';
+	import { archive, destroy, regenerateTitle, setConversationStyle, setConversationSystemPrompt } from '$lib/conversations.remote';
 	import { confirmToastSubmit, toastSubmit } from '$lib/form-actions';
 	import { clickOutside } from '$lib/click-outside';
+	import { pushToast } from '$lib/toasts';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -20,9 +21,42 @@
 	let scrollEl: HTMLDivElement | null = $state(null);
 	let menuEl: HTMLDetailsElement | null = $state(null);
 	let stickToBottom = $state(true);
+	let promptDraft = $state(untrack(() => data.systemPromptOverride));
+	let promptOpen = $state(false);
+
+	$effect(() => {
+		// Re-sync the draft when the conversation switches.
+		void data.conversation.id;
+		promptDraft = untrack(() => data.systemPromptOverride);
+	});
 
 	function closeMenu() {
 		if (menuEl?.open) menuEl.open = false;
+	}
+
+	async function onStyleChange(e: Event) {
+		const target = e.target as HTMLSelectElement;
+		const v = target.value;
+		const styleId = v ? Number.parseInt(v, 10) : null;
+		try {
+			await setConversationStyle({ conversationId: data.conversation.id, styleId });
+			pushToast(styleId ? 'Style applied' : 'Style cleared');
+		} catch (err) {
+			pushToast(err instanceof Error ? err.message : 'Failed to update style', 'error');
+		}
+	}
+
+	async function onSavePrompt() {
+		const trimmed = promptDraft.trim();
+		try {
+			await setConversationSystemPrompt({
+				conversationId: data.conversation.id,
+				prompt: trimmed ? trimmed : null,
+			});
+			pushToast(trimmed ? 'Conversation prompt saved' : 'Conversation prompt cleared');
+		} catch (err) {
+			pushToast(err instanceof Error ? err.message : 'Failed to save prompt', 'error');
+		}
 	}
 
 	$effect(() => {
@@ -152,10 +186,48 @@
 			onclick={onRegenerate}
 			aria-label="Regenerate title"
 		>↻</button>
+		{#if data.styles.length > 0}
+			<select
+				class="form-select form-select-sm w-auto"
+				value={data.styleId == null ? '' : String(data.styleId)}
+				onchange={onStyleChange}
+				title="Style"
+				aria-label="Style"
+			>
+				<option value="">No style</option>
+				{#each data.styles as s (s.id)}
+					<option value={String(s.id)}>{s.name}</option>
+				{/each}
+			</select>
+		{/if}
 		{#if totalCost > 0}<span class="conversation-cost small text-muted font-monospace">Cost: {fmtCost(totalCost)}</span>{/if}
 		<details bind:this={menuEl} class="conversation-menu" use:clickOutside={closeMenu}>
 			<summary class="title-action-button btn btn-sm" aria-label="Conversation actions" title="More actions">⋯</summary>
 			<div class="conversation-menu-panel" role="menu">
+				<button
+					type="button"
+					class="conversation-menu-item"
+					role="menuitem"
+					onclick={() => { promptOpen = !promptOpen; closeMenu(); }}
+				>
+					{data.systemPromptOverride ? 'Edit system prompt' : 'Override system prompt'}
+				</button>
+				<a
+					class="conversation-menu-item"
+					role="menuitem"
+					href={`/c/${data.conversation.id}/export?format=md`}
+					onclick={() => closeMenu()}
+				>
+					Export as Markdown
+				</a>
+				<a
+					class="conversation-menu-item"
+					role="menuitem"
+					href={`/c/${data.conversation.id}/export?format=json`}
+					onclick={() => closeMenu()}
+				>
+					Export as JSON
+				</a>
 				<form {...archive.for(data.conversation.id).enhance(toastSubmit('Conversation archived'))}>
 					<input type="hidden" name="conversationId" value={data.conversation.id} />
 					<button type="submit" class="conversation-menu-item" role="menuitem">Archive</button>
@@ -171,6 +243,25 @@
 			</div>
 		</details>
 	</div>
+	{#if promptOpen}
+		<div class="conversation-prompt-panel border-bottom px-side py-2">
+			<label for="conv-system-prompt" class="form-label small text-muted mb-1">
+				System prompt for this conversation
+				<span class="text-muted">— overrides the global setting; leave empty to fall back.</span>
+			</label>
+			<textarea
+				id="conv-system-prompt"
+				class="form-control form-control-sm"
+				rows="4"
+				bind:value={promptDraft}
+				placeholder="(Falls back to the global system prompt)"
+			></textarea>
+			<div class="d-flex gap-2 mt-2">
+				<button type="button" class="btn btn-sm btn-primary" onclick={onSavePrompt}>Save</button>
+				<button type="button" class="btn btn-sm btn-outline-secondary" onclick={() => { promptOpen = false; promptDraft = data.systemPromptOverride; }}>Close</button>
+			</div>
+		</div>
+	{/if}
 	<div bind:this={scrollEl} class="conversation-scroll flex-fill overflow-auto px-side py-3">
 		<div class="conversation-column mx-auto w-100">
 			{#if convState.messages.length === 0}

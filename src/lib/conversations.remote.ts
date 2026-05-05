@@ -70,6 +70,29 @@ export const setThinkingBudget = command(
 	},
 );
 
+// Command: override the global system prompt for this conversation only.
+// `null` (or empty string) clears the override and falls back to the global
+// setting / default.
+export const setConversationSystemPrompt = command(
+	'unchecked',
+	async (input: { conversationId: string; prompt: string | null }) => {
+		const stub = stubFor(input.conversationId);
+		await stub.setSystemPrompt(input.conversationId, input.prompt);
+		return { ok: true as const };
+	},
+);
+
+// Command: pick a saved Style for this conversation. `null` clears the
+// selection.
+export const setConversationStyle = command(
+	'unchecked',
+	async (input: { conversationId: string; styleId: number | null }) => {
+		const stub = stubFor(input.conversationId);
+		await stub.setStyle(input.conversationId, input.styleId);
+		return { ok: true as const };
+	},
+);
+
 // Command: abort the current in-flight generation in this conversation.
 // Persists whatever partial content exists as a complete message.
 export const abortGeneration = command('unchecked', async (conversationId: string) => {
