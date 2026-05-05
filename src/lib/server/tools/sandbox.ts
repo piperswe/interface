@@ -133,12 +133,17 @@ export const sandboxExecTool: Tool = {
 			await ensureSshKey(ctx);
 			const sandbox = getConversationSandbox(ctx);
 			if (ctx.emitToolOutput) {
+				// NOTE: ctx.signal is intentionally not forwarded into the
+				// RPC options. AbortSignal serialization over Durable Object
+				// RPC requires the experimental `enable_abortsignal_rpc`
+				// compatibility flag; passing it without the flag throws
+				// "AbortSignal serialization is not enabled". The signal is
+				// still honored when iterating the SSE stream below.
 				const stream = await sandbox.execStream(args.command, {
 					...(args.cwd ? { cwd: args.cwd } : {}),
 					...(args.env ? { env: args.env } : {}),
 					...(args.stdin ? { stdin: args.stdin } : {}),
 					...(args.timeout ? { timeout: args.timeout } : {}),
-					...(ctx.signal ? { signal: ctx.signal } : {}),
 				});
 				let stdout = '';
 				let stderr = '';
