@@ -33,8 +33,20 @@
 	} = $props();
 
 	let formEl: HTMLFormElement | null = $state(null);
+	let textareaEl: HTMLTextAreaElement | null = $state(null);
 	let optionsEl: HTMLDetailsElement | null = $state(null);
 	let selectedModel = $state(untrack(() => defaultModel));
+
+	// Focus the textarea whenever the conversation changes — covers the
+	// optimistic-create flow where we navigate into a fresh `/c/<id>` and want
+	// the user to be able to start typing immediately, plus the regular case
+	// of switching between conversations via the sidebar.
+	$effect(() => {
+		void conversationId;
+		const el = textareaEl;
+		if (!el || busy) return;
+		queueMicrotask(() => el.focus());
+	});
 
 	// Sync selectedModel when defaultModel changes externally (e.g. model_switch tool).
 	$effect(() => {
@@ -160,6 +172,7 @@
 >
 	<input type="hidden" name="conversationId" value={conversationId} />
 	<textarea
+		bind:this={textareaEl}
 		name="content"
 		placeholder="Send a message…"
 		required
