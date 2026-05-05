@@ -5,9 +5,9 @@
 	"type": "module",
 	"scripts": {
 		"dev": "vite dev",
-		"build": "vite build && node scripts/postbuild.mjs",
+		"build": "node --loader ./node-loader.mjs node_modules/.bin/vite build && node scripts/postbuild.mjs",
 		"preview": "wrangler dev",
-		"deploy": "vite build && wrangler deploy",
+		"deploy": "node --loader ./node-loader.mjs node_modules/.bin/vite build && wrangler deploy",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json && node scripts/check-remote-form-usage.mjs",
 		"typecheck": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json && node scripts/check-remote-form-usage.mjs",
 		"test": "svelte-kit sync && vitest run",
