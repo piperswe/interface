@@ -724,7 +724,7 @@ export function createSandboxLoadImageTool(deps: SandboxLoadImageDeps): Tool {
 		definition: {
 			name: 'sandbox_load_image',
 			description:
-				"Load an image from the conversation's /workspace into the model's context as a vision-readable image. Supported formats: PNG, JPEG, GIF, WEBP. The current model must accept image input — for non-vision models, this tool returns text guidance pointing you at sandbox_read_file or sandbox_exec instead. Cap: 5MB; resize larger images via sandbox_exec (e.g. ImageMagick) before loading.",
+				"Load an image from the conversation's /workspace into the model's context as a vision-readable image. Supported formats: PNG, JPEG, GIF, WEBP. The current model must accept image input — for non-vision models, this tool returns text guidance pointing you at sandbox_read_file or sandbox_exec instead. Images larger than 5 MB are automatically resized when the image processing service is configured; otherwise use sandbox_exec (e.g. ImageMagick) to resize before loading.",
 			inputSchema: loadImageInputSchema,
 		},
 		async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
@@ -776,12 +776,15 @@ export function createSandboxLoadImageTool(deps: SandboxLoadImageDeps): Tool {
 				};
 			}
 			const size = obj.size;
-			if (size > MAX_IMAGE_BYTES) {
-				const mb = (size / (1024 * 1024)).toFixed(1);
-				return {
-					content: `Image too large to load (${mb} MB > 5 MB). Use sandbox_exec to resize the image (e.g. \`convert ${path} -resize 1024x1024\\> ${path.replace(/(\.[^.]+)$/, '.small$1')}\`) and load the resized copy.`,
-					isError: true,
-				};
+			const tooBig = size > MAX_IMAGE_BYTES;
+			const mb = (size / (1024 * 1024)).toFixed(1);
+			const tooBigError = {
+				content: `Image too large to load (${mb} MB > 5 MB). Use sandbox_exec to resize the image (e.g. \`convert ${path} -resize 1024x1024\\> ${path.replace(/(\.[^.]+)$/, '.small$1')}\`) and load the resized copy.`,
+				isError: true as const,
+			};
+
+			if (tooBig && !ctx.env.IMAGES) {
+				return tooBigError;
 			}
 
 			if (!supportsImageInput) {
@@ -825,6 +828,9 @@ export function createSandboxLoadImageTool(deps: SandboxLoadImageDeps): Tool {
 						],
 					};
 				} catch {
+					if (tooBig) {
+						return tooBigError;
+					}
 					// Fall through to the unresized path below.
 				}
 			}
