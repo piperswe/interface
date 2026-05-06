@@ -1,7 +1,7 @@
 import type { Artifact, ArtifactType, MessageRow, MessagePart, MetaSnapshot } from '$lib/types/conversation';
-import { parseJson } from './parts';
+import { partsFromJson, type BlobEnv } from './blob-store';
 
-export function readMessages(sql: SqlStorage): MessageRow[] {
+export async function readMessages(sql: SqlStorage, env: BlobEnv): Promise<MessageRow[]> {
 	const rows = sql
 		.exec(
 			`SELECT id, role, content, model, status, error, created_at, started_at, first_token_at, last_chunk_json, usage_json, thinking, parts
@@ -25,22 +25,24 @@ export function readMessages(sql: SqlStorage): MessageRow[] {
 		parts: string | null;
 	}>;
 	const artifactsByMessage = readArtifactsByMessage(sql);
-	return rows.map((r) => {
-		const parts = stripHtml(parseJson<MessagePart[]>(r.parts) ?? []);
-		return {
-			id: r.id,
-			role: r.role as 'user' | 'assistant',
-			content: r.content,
-			thinking: r.thinking,
-			model: r.model,
-			status: r.status as 'complete' | 'streaming' | 'error',
-			error: r.error,
-			createdAt: r.created_at,
-			meta: deriveMeta(r.started_at, r.first_token_at, r.last_chunk_json, r.usage_json),
-			artifacts: artifactsByMessage.get(r.id) ?? [],
-			parts,
-		};
-	});
+	return Promise.all(
+		rows.map(async (r) => {
+			const parts = stripHtml((await partsFromJson(r.parts, env)) ?? []);
+			return {
+				id: r.id,
+				role: r.role as 'user' | 'assistant',
+				content: r.content,
+				thinking: r.thinking,
+				model: r.model,
+				status: r.status as 'complete' | 'streaming' | 'error',
+				error: r.error,
+				createdAt: r.created_at,
+				meta: deriveMeta(r.started_at, r.first_token_at, r.last_chunk_json, r.usage_json),
+				artifacts: artifactsByMessage.get(r.id) ?? [],
+				parts,
+			};
+		}),
+	);
 }
 
 // Legacy rows persisted server-rendered HTML inside parts. Strip it on read so

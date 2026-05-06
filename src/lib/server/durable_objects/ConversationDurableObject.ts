@@ -20,7 +20,8 @@ import type { MessagePart, ToolCallRecord as RecordedToolCall } from '$lib/types
 
 import { runMigrations } from './conversation/migrations';
 import { parseJson, normalizeParts, trimTrailingPartialOutput, partsToMessages, dedupeCitationsByUrl } from './conversation/parts';
-import { buildHistory, buildHistoryWithRowIds } from './conversation/history';
+import { buildHistory, buildHistoryWithRowIds, hydrateRowParts } from './conversation/history';
+import { partsFromJson, partsToJson } from './conversation/blob-store';
 import { resolveReasoningConfig } from './conversation/reasoning';
 import { composeSystemPrompt } from './conversation/system-prompt';
 import { SubscriberSet } from './conversation/subscribers';
@@ -82,6 +83,16 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	#conversationId: string | null = null;
 	// Per-DO ConversationContext cache. Cleared on TTL expiry.
 	#contextCache: { fetchedAt: number; context: ConversationContext } | null = null;
+	// Hashes of large image blobs already pushed to R2 during this DO
+	// activation. Lets the debounced flush skip redundant `head`/`put` calls
+	// for images that haven't changed since the last persist.
+	#uploadedBlobHashes: Set<string> = new Set();
+	// Single-flight gate for the debounced flush. Concurrent flushes can race
+	// because `partsToJson` is async (R2 upload) but the surrounding writes
+	// (per-tool persist, abort, end-of-turn) issue synchronous `sql.exec`
+	// calls; without this, a late flush could clobber the canonical final
+	// row with a stale snapshot.
+	#flushPromise: Promise<void> | null = null;
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -136,30 +147,61 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		if (this.#flushTimer || !this.#inProgress) return;
 		this.#flushTimer = setTimeout(() => {
 			this.#flushTimer = null;
-			this.#flushNow();
+			void this.#flushNow();
 		}, 500);
 	}
 
-	#flushNow(): void {
+	async #flushNow(): Promise<void> {
 		if (this.#flushTimer) {
 			clearTimeout(this.#flushTimer);
 			this.#flushTimer = null;
 		}
-		const ip = this.#inProgress;
-		if (!ip) return;
-		this.#sql.exec(
-			'UPDATE messages SET content = ?, thinking = ?, parts = ? WHERE id = ?',
-			ip.content,
-			ip.thinking || null,
-			ip.parts.length > 0 ? JSON.stringify(ip.parts) : null,
-			ip.messageId,
-		);
+		// Chain after any in-flight flush so two flushes can't write the row
+		// with an inverted ordering. The previous one's await-on-R2 might
+		// finish second otherwise.
+		const previous = this.#flushPromise ?? Promise.resolve();
+		this.#flushPromise = previous.then(async () => {
+			const ip = this.#inProgress;
+			if (!ip) return;
+			// Snapshot the live parts before the await so a mutation during
+			// R2 upload (text_delta firing while we're persisting) doesn't
+			// land mid-iteration.
+			const snapshot = ip.parts.slice();
+			const partsJson = await partsToJson(snapshot, this.env, this.#uploadedBlobHashes);
+			if (!this.#inProgress || this.#inProgress.messageId !== ip.messageId) return;
+			this.#sql.exec(
+				'UPDATE messages SET content = ?, thinking = ?, parts = ? WHERE id = ?',
+				ip.content,
+				ip.thinking || null,
+				partsJson,
+				ip.messageId,
+			);
+		});
+		try {
+			await this.#flushPromise;
+		} catch {
+			// Swallow — caller (the timer) has no recourse and a failed
+			// debounced write isn't fatal: the next per-tool persist or the
+			// end-of-turn write will overwrite the row.
+		} finally {
+			this.#flushPromise = null;
+		}
 	}
 
-	#cancelFlush(): void {
+	async #cancelFlush(): Promise<void> {
 		if (this.#flushTimer) {
 			clearTimeout(this.#flushTimer);
 			this.#flushTimer = null;
+		}
+		// A flush that already started before the cancel still has its
+		// async work (R2 upload + SQL exec) pending. Wait for it so the
+		// caller's subsequent canonical write isn't clobbered.
+		if (this.#flushPromise) {
+			try {
+				await this.#flushPromise;
+			} catch {
+				/* see #flushNow */
+			}
 		}
 	}
 
@@ -214,13 +256,13 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		const row = this.#sql.exec('SELECT parts FROM messages WHERE id = ?', messageId).toArray() as unknown as Array<{
 			parts: string | null;
 		}>;
-		const persistedParts = parseJson<MessagePart[]>(row[0]?.parts ?? null) ?? [];
+		const persistedParts = (await partsFromJson(row[0]?.parts ?? null, this.env)) ?? [];
 		const trimmed = trimTrailingPartialOutput(persistedParts);
 		normalizeParts(trimmed, 'Generation interrupted by Durable Object restart; retrying.');
 
 		this.#sql.exec(
 			"UPDATE messages SET content = '', thinking = NULL, parts = ?, started_at = ? WHERE id = ?",
-			trimmed.length > 0 ? JSON.stringify(trimmed) : null,
+			await partsToJson(trimmed, this.env, this.#uploadedBlobHashes),
 			nowMs(),
 			messageId,
 		);
@@ -251,8 +293,8 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		}
 	}
 
-	getState(): ConversationState {
-		const messages = readMessages(this.#sql);
+	async getState(): Promise<ConversationState> {
+		const messages = await readMessages(this.#sql, this.env);
 		if (this.#inProgress) {
 			const ip = this.#inProgress;
 			const merged = messages.map((m) =>
@@ -385,7 +427,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		// Cancel any pending debounced flush — we're about to write the
 		// canonical final state for this row, and a stale flush landing
 		// after it would resurrect status='streaming'.
-		this.#cancelFlush();
+		await this.#cancelFlush();
 		// Cancel the underlying provider stream + any in-flight tool. The
 		// adapters and tools forward `signal` into their `fetch` calls, so the
 		// connection drops without waiting on the next chunk.
@@ -398,11 +440,12 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		// its matching result. Synthesize an error result so future turns don't
 		// reject the history with an unmatched tool_use.
 		normalizeParts(ip.parts, 'Aborted by user before this tool completed.');
+		const partsJson = await partsToJson(ip.parts, this.env, this.#uploadedBlobHashes);
 		this.#sql.exec(
 			`UPDATE messages SET content = ?, status = 'complete', thinking = ?, parts = ?, started_at = ?, first_token_at = ?, last_chunk_json = ?, usage_json = ?, provider = ? WHERE id = ?`,
 			ip.content,
 			ip.thinking || null,
-			ip.parts.length > 0 ? JSON.stringify(ip.parts) : null,
+			partsJson,
 			ip.startedAt || null,
 			ip.firstTokenAt || null,
 			ip.lastChunk ? JSON.stringify(ip.lastChunk) : null,
@@ -424,9 +467,10 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		const model = lastModelRow[0]?.model;
 		if (!model) return { compacted: false, droppedCount: 0 };
 
-		const history = this.#sql
+		const historyRaw = this.#sql
 			.exec(`SELECT id, role, content, parts FROM messages WHERE ${COMPLETE_PREDICATE} ORDER BY created_at ASC`)
 			.toArray() as unknown as Array<{ id: string; role: string; content: string; parts: string | null }>;
+		const history = await hydrateRowParts(historyRaw, this.env);
 
 		const { messages, rowIdAtIndex: rowIdAtLLMIndex } = buildHistoryWithRowIds(history);
 
@@ -458,7 +502,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			summaryId,
 			compaction.summary,
 			model,
-			JSON.stringify([infoPart]),
+			await partsToJson([infoPart], this.env, this.#uploadedBlobHashes),
 			now + 1,
 		);
 
@@ -475,7 +519,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	async destroy(): Promise<void> {
 		const conversationId = this.#conversationId;
 		this.#inProgress = null;
-		this.#cancelFlush();
+		await this.#cancelFlush();
 		this.#conversationId = null;
 		this.#subscribers.closeAll();
 		await this.ctx.storage.deleteAll();
@@ -503,7 +547,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 				// connection, and send the current snapshot so the client can
 				// resume without a full page reload.
 				controller.enqueue(self.#subscribers.encode('retry: 3000\n\n'));
-				self.#sendSync(storedSub);
+				void self.#sendSync(storedSub);
 			},
 			cancel() {
 				if (storedSub) self.#subscribers.delete(storedSub);
@@ -518,8 +562,8 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		return stream;
 	}
 
-	#sendSync(sub: { controller: ReadableStreamDefaultController<Uint8Array>; nextId: number }): void {
-		const messages = readMessages(this.#sql);
+	async #sendSync(sub: { controller: ReadableStreamDefaultController<Uint8Array>; nextId: number }): Promise<void> {
+		const messages = await readMessages(this.#sql, this.env);
 		const last = messages[messages.length - 1];
 		if (!last) return;
 		const isInProgress = this.#inProgress?.messageId === last.id;
@@ -633,9 +677,10 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		try {
 			let currentModel = model;
 			let llm = await this.#routeLLM(model);
-			const history = this.#sql
+			const historyRaw = this.#sql
 				.exec(`SELECT role, content, parts FROM messages WHERE id != ? AND ${COMPLETE_PREDICATE} ORDER BY created_at ASC`, assistantId)
 				.toArray() as unknown as Array<{ role: string; content: string; parts: string | null }>;
+			const history = await hydrateRowParts(historyRaw, this.env);
 			let messages: Message[] = buildHistory(history);
 
 			// Resume case: if `parts` was hydrated from a persisted row that
@@ -679,7 +724,11 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 					text: `Context compacted: summarized ${compaction.droppedCount} earlier messages to stay within the model's limit.`,
 				};
 				parts.push(infoPart);
-				this.#sql.exec('UPDATE messages SET parts = ? WHERE id = ?', JSON.stringify(parts), assistantId);
+				this.#sql.exec(
+					'UPDATE messages SET parts = ? WHERE id = ?',
+					await partsToJson(parts, this.env, this.#uploadedBlobHashes),
+					assistantId,
+				);
 				this.#subscribers.broadcast('part', { messageId: assistantId, part: infoPart });
 				messages = compaction.messages;
 			}
@@ -865,12 +914,12 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 					// or DO eviction leaves a row that's still consistent. We
 					// also need content/thinking flushed here so any debounced
 					// delta flush isn't beaten to the row.
-					this.#cancelFlush();
+					await this.#cancelFlush();
 					this.#sql.exec(
 						'UPDATE messages SET content = ?, thinking = ?, parts = ? WHERE id = ?',
 						this.#inProgress!.content,
 						this.#inProgress!.thinking || null,
-						JSON.stringify(parts),
+						await partsToJson(parts, this.env, this.#uploadedBlobHashes),
 						assistantId,
 					);
 					if (result.citations) accumulatedCitations.push(...result.citations);
@@ -913,7 +962,12 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 					ip.providerID = llm.providerID;
 					const infoPart: MessagePart = { type: 'info', text: `Switched to model: ${currentModel}` };
 					parts.push(infoPart);
-					this.#sql.exec('UPDATE messages SET model = ?, parts = ? WHERE id = ?', currentModel, JSON.stringify(parts), assistantId);
+					this.#sql.exec(
+						'UPDATE messages SET model = ?, parts = ? WHERE id = ?',
+						currentModel,
+						await partsToJson(parts, this.env, this.#uploadedBlobHashes),
+						assistantId,
+					);
 					this.#subscribers.broadcast('part', { messageId: assistantId, part: infoPart });
 					this.#subscribers.broadcast('model_switch', { messageId: assistantId, model: currentModel });
 				}
@@ -936,12 +990,12 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 
 			if (!this.#inProgress || this.#inProgress.messageId !== assistantId) {
 				// Aborted by user — don't overwrite the row already persisted by abortGeneration.
-				this.#cancelFlush();
+				await this.#cancelFlush();
 				return;
 			}
 			// Cancel any pending debounced flush so a stale write doesn't land
 			// after the canonical final UPDATE below resets status to complete.
-			this.#cancelFlush();
+			await this.#cancelFlush();
 			// Surface accumulated citations as a dedicated part so the UI gets
 			// a "Sources" block. Dedupe by URL — a turn that runs `web_search`
 			// twice for the same query shouldn't list each result twice.
@@ -953,6 +1007,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			}
 			const finalText = this.#inProgress.content;
 			const finalThinking = this.#inProgress.thinking;
+			const finalPartsJson = await partsToJson(parts, this.env, this.#uploadedBlobHashes);
 			this.#sql.exec(
 				`UPDATE messages SET content = ?, status = 'complete', first_token_at = ?, last_chunk_json = ?, usage_json = ?, provider = ?, thinking = ?, parts = ? WHERE id = ?`,
 				finalText,
@@ -961,7 +1016,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 				ip.usage ? JSON.stringify(ip.usage) : null,
 				llm.providerID,
 				finalThinking || null,
-				parts.length > 0 ? JSON.stringify(parts) : null,
+				finalPartsJson,
 				assistantId,
 			);
 			this.#inProgress = null;
@@ -986,10 +1041,10 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		} catch (e) {
 			if (!this.#inProgress || this.#inProgress.messageId !== assistantId) {
 				// Already aborted and cleaned up by abortGeneration.
-				this.#cancelFlush();
+				await this.#cancelFlush();
 				return;
 			}
-			this.#cancelFlush();
+			await this.#cancelFlush();
 			const msg = formatError(e);
 			const partial = this.#inProgress.content;
 			this.#sql.exec(
