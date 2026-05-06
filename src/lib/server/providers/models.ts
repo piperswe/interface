@@ -7,17 +7,24 @@ import { getProvider } from './store';
 
 const SINGLE_USER_ID = 1;
 
-function rowToModel(r: {
+type ModelRow = {
 	id: string;
 	provider_id: string;
 	name: string;
 	description: string | null;
 	max_context_length: number;
 	reasoning_type: string | null;
+	input_cost_per_million_tokens: number | null;
+	output_cost_per_million_tokens: number | null;
 	sort_order: number;
 	created_at: number;
 	updated_at: number;
-}): ProviderModel {
+};
+
+const MODEL_COLUMNS =
+	'id, provider_id, name, description, max_context_length, reasoning_type, input_cost_per_million_tokens, output_cost_per_million_tokens, sort_order, created_at, updated_at';
+
+function rowToModel(r: ModelRow): ProviderModel {
 	return {
 		id: r.id,
 		providerId: r.provider_id,
@@ -25,6 +32,8 @@ function rowToModel(r: {
 		description: r.description,
 		maxContextLength: r.max_context_length,
 		reasoningType: (r.reasoning_type as ReasoningType | null) ?? null,
+		inputCostPerMillionTokens: r.input_cost_per_million_tokens,
+		outputCostPerMillionTokens: r.output_cost_per_million_tokens,
 		sortOrder: r.sort_order,
 		createdAt: r.created_at,
 		updatedAt: r.updated_at,
@@ -37,41 +46,21 @@ export async function listModelsForProvider(
 	userId: number = SINGLE_USER_ID,
 ): Promise<ProviderModel[]> {
 	const result = await env.DB.prepare(
-		`SELECT id, provider_id, name, description, max_context_length, reasoning_type, sort_order, created_at, updated_at
+		`SELECT ${MODEL_COLUMNS}
 		 FROM provider_models WHERE user_id = ? AND provider_id = ? ORDER BY sort_order ASC, name ASC`,
 	)
 		.bind(userId, providerId)
-		.all<{
-			id: string;
-			provider_id: string;
-			name: string;
-			description: string | null;
-			max_context_length: number;
-			reasoning_type: string | null;
-			sort_order: number;
-			created_at: number;
-			updated_at: number;
-		}>();
+		.all<ModelRow>();
 	return (result.results ?? []).map(rowToModel);
 }
 
 export async function listAllModels(env: Env, userId: number = SINGLE_USER_ID): Promise<ProviderModel[]> {
 	const result = await env.DB.prepare(
-		`SELECT id, provider_id, name, description, max_context_length, reasoning_type, sort_order, created_at, updated_at
+		`SELECT ${MODEL_COLUMNS}
 		 FROM provider_models WHERE user_id = ? ORDER BY provider_id ASC, sort_order ASC, name ASC`,
 	)
 		.bind(userId)
-		.all<{
-			id: string;
-			provider_id: string;
-			name: string;
-			description: string | null;
-			max_context_length: number;
-			reasoning_type: string | null;
-			sort_order: number;
-			created_at: number;
-			updated_at: number;
-		}>();
+		.all<ModelRow>();
 	return (result.results ?? []).map(rowToModel);
 }
 
@@ -82,21 +71,11 @@ export async function getModel(
 	userId: number = SINGLE_USER_ID,
 ): Promise<ProviderModel | null> {
 	const row = await env.DB.prepare(
-		`SELECT id, provider_id, name, description, max_context_length, reasoning_type, sort_order, created_at, updated_at
+		`SELECT ${MODEL_COLUMNS}
 		 FROM provider_models WHERE user_id = ? AND provider_id = ? AND id = ?`,
 	)
 		.bind(userId, providerId, modelId)
-		.first<{
-			id: string;
-			provider_id: string;
-			name: string;
-			description: string | null;
-			max_context_length: number;
-			reasoning_type: string | null;
-			sort_order: number;
-			created_at: number;
-			updated_at: number;
-		}>();
+		.first<ModelRow>();
 	return row ? rowToModel(row) : null;
 }
 
@@ -120,6 +99,8 @@ export type CreateModelInput = {
 	description?: string | null;
 	maxContextLength?: number;
 	reasoningType?: ReasoningType | null;
+	inputCostPerMillionTokens?: number | null;
+	outputCostPerMillionTokens?: number | null;
 	sortOrder?: number;
 };
 
@@ -131,8 +112,8 @@ export async function createModel(
 ): Promise<void> {
 	const now = nowMs();
 	await env.DB.prepare(
-		`INSERT INTO provider_models (id, provider_id, name, description, max_context_length, reasoning_type, sort_order, created_at, updated_at, user_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO provider_models (id, provider_id, name, description, max_context_length, reasoning_type, input_cost_per_million_tokens, output_cost_per_million_tokens, sort_order, created_at, updated_at, user_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	)
 		.bind(
 			input.id,
@@ -141,6 +122,8 @@ export async function createModel(
 			input.description ?? null,
 			input.maxContextLength ?? 128_000,
 			input.reasoningType ?? null,
+			input.inputCostPerMillionTokens ?? null,
+			input.outputCostPerMillionTokens ?? null,
 			input.sortOrder ?? 0,
 			now,
 			now,
@@ -177,6 +160,14 @@ export async function updateModel(
 	if ('reasoningType' in input) {
 		fields.push('reasoning_type = ?');
 		values.push(input.reasoningType ?? null);
+	}
+	if ('inputCostPerMillionTokens' in input) {
+		fields.push('input_cost_per_million_tokens = ?');
+		values.push(input.inputCostPerMillionTokens ?? null);
+	}
+	if ('outputCostPerMillionTokens' in input) {
+		fields.push('output_cost_per_million_tokens = ?');
+		values.push(input.outputCostPerMillionTokens ?? null);
 	}
 	if ('sortOrder' in input) {
 		fields.push('sort_order = ?');

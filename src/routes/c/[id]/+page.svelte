@@ -395,7 +395,22 @@
 								{#if m.role !== 'system'}
 									{@const prev = convState.messages[i - 1]}
 									{@const timestamp = m.role === 'user' && prev?.role === 'system' ? prev.createdAt : undefined}
-									<Message message={m} {timestamp} onSelectArtifact={selectArtifact} />
+									{@const pricingModel = m.model
+										? data.models.find((mm) => `${mm.providerId}/${mm.id}` === m.model)
+										: null}
+									{@const modelPricing = pricingModel
+										? {
+												inputCostPerMillionTokens: pricingModel.inputCostPerMillionTokens,
+												outputCostPerMillionTokens: pricingModel.outputCostPerMillionTokens,
+											}
+										: null}
+									<Message
+										message={m}
+										{timestamp}
+										onSelectArtifact={selectArtifact}
+										{modelPricing}
+										kagiCostPer1000Searches={data.kagiCostPer1000Searches}
+									/>
 								{/if}
 							{/each}
 						</div>

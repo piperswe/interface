@@ -19,6 +19,9 @@ export type ConversationUsage = {
 	cacheReadInputTokens?: number;
 	cacheCreationInputTokens?: number;
 	thinkingTokens?: number;
+	// USD cost reported by the provider, when available. Falls back to a
+	// per-model price computation at display time.
+	cost?: number;
 };
 
 export interface MetaSnapshot {

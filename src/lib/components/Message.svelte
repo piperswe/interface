@@ -10,7 +10,22 @@
 	import MessagePart from './MessagePart.svelte';
 	import WorkBundle from './WorkBundle.svelte';
 
-	let { message, timestamp, onSelectArtifact }: { message: MessageRow; timestamp?: number; onSelectArtifact?: (id: string) => void } = $props();
+	let {
+		message,
+		timestamp,
+		onSelectArtifact,
+		modelPricing = null,
+		kagiCostPer1000Searches = 25,
+	}: {
+		message: MessageRow;
+		timestamp?: number;
+		onSelectArtifact?: (id: string) => void;
+		modelPricing?: {
+			inputCostPerMillionTokens: number | null;
+			outputCostPerMillionTokens: number | null;
+		} | null;
+		kagiCostPer1000Searches?: number;
+	} = $props();
 
 	const isAssistant = $derived(message.role === 'assistant');
 	const isStreaming = $derived(message.status === 'streaming');
@@ -71,7 +86,12 @@
 		<div class="message-spinner d-flex align-items-center gap-2 small text-muted" aria-label="Generating response…"><span class="spinner"></span></div>
 	{/if}
 	{#if isAssistant && !isStreaming}
-		<MetaPanel snapshot={message.meta} />
+		<MetaPanel
+			snapshot={message.meta}
+			{modelPricing}
+			parts={message.parts ?? null}
+			{kagiCostPer1000Searches}
+		/>
 	{/if}
 </div>
 

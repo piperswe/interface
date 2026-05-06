@@ -117,6 +117,11 @@ export class OpenAILLM implements LLM {
 					const u = chunk.usage as ChatCompletionChunk['usage'] & {
 						prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number } | null;
 						completion_tokens_details?: { reasoning_tokens?: number } | null;
+						// OpenRouter (and some other gateways) report total USD cost for
+						// the request under `usage.cost` when the client opts into it
+						// via the `usage.include` extra body param. We pass it through
+						// untouched so the meta panel can show real spend.
+						cost?: number | null;
 					};
 					yield {
 						type: 'usage',
@@ -134,6 +139,9 @@ export class OpenAILLM implements LLM {
 								: {}),
 							...(u.completion_tokens_details?.reasoning_tokens != null
 								? { thinkingTokens: u.completion_tokens_details.reasoning_tokens }
+								: {}),
+							...(typeof u.cost === 'number' && Number.isFinite(u.cost)
+								? { cost: u.cost }
 								: {}),
 						},
 					};

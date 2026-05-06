@@ -59,6 +59,23 @@ export async function getContextCompactionSummaryTokens(env: Env, userId: number
 	return Math.max(256, n);
 }
 
+// ---- Cost configuration helpers --------------------------------------------------------
+
+// USD per 1000 Kagi web searches. Default mirrors Kagi's published API pricing
+// (https://help.kagi.com/kagi/api/search.html — $25 per 1000 search queries).
+export const DEFAULT_KAGI_COST_PER_1000_SEARCHES = 25;
+
+export async function getKagiCostPer1000Searches(
+	env: Env,
+	userId: number = SINGLE_USER_ID,
+): Promise<number> {
+	const raw = await getSetting(env, 'kagi_cost_per_1000_searches', userId);
+	if (raw == null) return DEFAULT_KAGI_COST_PER_1000_SEARCHES;
+	const n = Number.parseFloat(raw);
+	if (!Number.isFinite(n) || n < 0) return DEFAULT_KAGI_COST_PER_1000_SEARCHES;
+	return n;
+}
+
 // ---- System prompt / user bio helpers -------------------------------------------------
 
 export async function getSystemPrompt(env: Env, userId: number = SINGLE_USER_ID): Promise<string | null> {

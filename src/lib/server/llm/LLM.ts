@@ -57,6 +57,9 @@ export type Usage = {
 	cacheCreationInputTokens?: number;
 	thinkingTokens?: number;
 	totalTokens?: number;
+	// USD cost reported by the provider (e.g. OpenRouter's `usage.cost`).
+	// When absent, callers fall back to per-model cost-per-million config.
+	cost?: number;
 };
 
 export type ChatRequest = {

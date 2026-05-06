@@ -4,6 +4,7 @@ import {
 	describeSecretKeys,
 	getContextCompactionSummaryTokens,
 	getContextCompactionThreshold,
+	getKagiCostPer1000Searches,
 	getSystemPrompt,
 	getUserBio,
 	getSetting,
@@ -39,6 +40,7 @@ export const load: PageServerLoad = async ({ platform }) => {
 		tags,
 		schedules,
 		conversations,
+		kagiCostPer1000Searches,
 	] = await Promise.all([
 		listMcpServers(env),
 		listSubAgents(env),
@@ -55,6 +57,7 @@ export const load: PageServerLoad = async ({ platform }) => {
 		listTags(env),
 		listSchedules(env),
 		listConversations(env),
+		getKagiCostPer1000Searches(env),
 	]);
 	return {
 		secretKeys: describeSecretKeys(env),
@@ -75,5 +78,6 @@ export const load: PageServerLoad = async ({ platform }) => {
 		tags,
 		schedules,
 		conversations,
+		kagiCostPer1000Searches,
 	};
 };

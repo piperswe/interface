@@ -83,6 +83,16 @@ export const deleteProviderAction = form(
 	},
 );
 
+function parseOptionalCost(raw: unknown, label: string): number | null {
+	const trimmed = String(raw ?? '').trim();
+	if (!trimmed) return null;
+	const n = Number.parseFloat(trimmed);
+	if (!Number.isFinite(n) || n < 0) {
+		error(400, `${label} must be a non-negative number`);
+	}
+	return n;
+}
+
 export const saveProviderModel = form(
 	'unchecked',
 	async (data: {
@@ -92,6 +102,8 @@ export const saveProviderModel = form(
 		description?: unknown;
 		max_context_length?: unknown;
 		reasoning_type?: unknown;
+		input_cost_per_million_tokens?: unknown;
+		output_cost_per_million_tokens?: unknown;
 	}) => {
 		const providerId = String(data.provider_id ?? '').trim();
 		const modelId = String(data.model_id ?? '').trim();
@@ -99,6 +111,14 @@ export const saveProviderModel = form(
 		const description = String(data.description ?? '').trim() || null;
 		const maxContextLengthRaw = String(data.max_context_length ?? '').trim();
 		const reasoningType = validateReasoningType(data.reasoning_type);
+		const inputCostPerMillionTokens = parseOptionalCost(
+			data.input_cost_per_million_tokens,
+			'Input cost per million tokens',
+		);
+		const outputCostPerMillionTokens = parseOptionalCost(
+			data.output_cost_per_million_tokens,
+			'Output cost per million tokens',
+		);
 
 		if (!providerId) error(400, 'Provider ID required');
 		if (!modelId) error(400, 'Model ID required');
@@ -118,6 +138,8 @@ export const saveProviderModel = form(
 				description,
 				maxContextLength,
 				reasoningType,
+				inputCostPerMillionTokens,
+				outputCostPerMillionTokens,
 			});
 		} else {
 			await createModel(env, providerId, {
@@ -126,6 +148,8 @@ export const saveProviderModel = form(
 				description,
 				maxContextLength,
 				reasoningType,
+				inputCostPerMillionTokens,
+				outputCostPerMillionTokens,
 			});
 		}
 
