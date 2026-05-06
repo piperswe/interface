@@ -224,12 +224,16 @@ describe('OpenAILLM', () => {
 		expect(capture.params!.reasoning_effort).toBe('high');
 	});
 
-	it('omits reasoning_effort when effort is none', async () => {
+	it('sends reasoning_effort:none when effort is none', async () => {
+		// Regression: we used to omit reasoning_effort entirely for 'none', but
+		// some models (e.g. Kimi K2.6 via Cloudflare AI Gateway) default to
+		// reasoning ON when the param is absent. Sending 'none' explicitly
+		// is the correct way to disable reasoning on these models.
 		const capture: { params?: { reasoning_effort?: string } } = {};
 		const c = fakeClient([chunk({}, { finish_reason: 'stop' })], capture);
 		const llm = new OpenAILLM(c, 'gpt-5.5', 'openai-via-aig');
 		await collect(llm.chat({ messages: [], reasoning: { type: 'effort', effort: 'none' } }));
-		expect(capture.params!.reasoning_effort).toBeUndefined();
+		expect(capture.params!.reasoning_effort).toBe('none');
 	});
 
 	it('emits stub tool message + synthetic user with image_url for array tool_result content', async () => {

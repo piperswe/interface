@@ -53,9 +53,11 @@ export class AnthropicLLM implements LLM {
 			// `thinking` is the legacy native-Anthropic shape and takes precedence
 			// when both are set (callers should pick one); `reasoning.max_tokens`
 			// is the unified shape used by the OpenRouter path.
-			if (request.thinking && request.thinking.type === 'enabled') {
+			if (request.thinking?.type === 'enabled') {
 				params.thinking = { type: 'enabled', budget_tokens: request.thinking.budgetTokens };
-			} else if (request.reasoning && request.reasoning.type === 'max_tokens') {
+			} else if (request.thinking?.type === 'disabled') {
+				params.thinking = { type: 'disabled' };
+			} else if (request.reasoning?.type === 'max_tokens') {
 				params.thinking = { type: 'enabled', budget_tokens: request.reasoning.maxTokens };
 			}
 			if (request.temperature !== undefined) params.temperature = request.temperature;
