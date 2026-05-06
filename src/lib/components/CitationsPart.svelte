@@ -5,7 +5,7 @@
 </script>
 
 {#if part.citations.length > 0}
-	<details class="citations-part rounded border" open>
+	<details class="citations-part rounded border">
 		<summary class="citations-summary px-2 py-1 small">
 			<span class="citations-label">Sources</span>
 			<span class="citations-count text-muted">({part.citations.length})</span>
