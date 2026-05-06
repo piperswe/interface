@@ -51,8 +51,7 @@ function makeCtx(
 	const baseEnv = {
 		...env,
 		SANDBOX: makeStubNamespace(mock) as unknown as DurableObjectNamespace,
-		WORKSPACE_BUCKET:
-			'WORKSPACE_BUCKET' in overrides ? overrides.WORKSPACE_BUCKET : env.WORKSPACE_BUCKET,
+		WORKSPACE_BUCKET: 'WORKSPACE_BUCKET' in overrides ? overrides.WORKSPACE_BUCKET : env.WORKSPACE_BUCKET,
 	} as unknown as Record<string, unknown>;
 	for (const [k, v] of Object.entries(overrides)) {
 		if (k === 'WORKSPACE_BUCKET') continue;
@@ -149,14 +148,9 @@ describe('ensureWorkspaceMount', () => {
 
 	it('falls back to localBucket when only some credentials are set', async () => {
 		const mountBucket = vi.fn().mockResolvedValue(undefined);
-		const ctx = makeCtx(
-			{ mountBucket },
-			{ R2_ACCESS_KEY_ID: 'AKIA-TEST' /* no secret, no endpoint */ },
-		);
+		const ctx = makeCtx({ mountBucket }, { R2_ACCESS_KEY_ID: 'AKIA-TEST' /* no secret, no endpoint */ });
 		await ensureWorkspaceMount(ctx);
-		expect(mountBucket.mock.calls[0][2]).toEqual(
-			expect.objectContaining({ localBucket: true }),
-		);
+		expect(mountBucket.mock.calls[0][2]).toEqual(expect.objectContaining({ localBucket: true }));
 	});
 
 	it('tolerates "Mount path already in use" errors from a hot DO', async () => {
@@ -164,17 +158,19 @@ describe('ensureWorkspaceMount', () => {
 			.fn()
 			.mockRejectedValueOnce(new Error('Mount path already in use: /workspace'))
 			.mockRejectedValueOnce(new Error('already mounted at /workspace'))
+			.mockRejectedValueOnce(
+				new Error("s3fs: MOUNTPOINT directory /workspace is not empty. if you are sure this is safe, can use the 'nonempty' mount option."),
+			)
 			.mockResolvedValueOnce(undefined);
 		const ctx = makeCtx({ mountBucket });
+		await expect(ensureWorkspaceMount(ctx)).resolves.toBeUndefined();
 		await expect(ensureWorkspaceMount(ctx)).resolves.toBeUndefined();
 		await expect(ensureWorkspaceMount(ctx)).resolves.toBeUndefined();
 		await expect(ensureWorkspaceMount(ctx)).resolves.toBeUndefined();
 	});
 
 	it('surfaces unrelated mount errors', async () => {
-		const mountBucket = vi
-			.fn()
-			.mockRejectedValueOnce(new Error('R2 binding "WORKSPACE_BUCKET" not found'));
+		const mountBucket = vi.fn().mockRejectedValueOnce(new Error('R2 binding "WORKSPACE_BUCKET" not found'));
 		const ctx = makeCtx({ mountBucket });
 		await expect(ensureWorkspaceMount(ctx)).rejects.toThrow(/not found/);
 	});

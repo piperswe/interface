@@ -133,7 +133,7 @@ export async function ensureWorkspaceMount(ctx: ToolContext): Promise<void> {
 			});
 		}
 	} catch (e) {
-		if (!(e instanceof Error) || !/already (mount|in use)/i.test(e.message)) throw e;
+		if (!(e instanceof Error) || !/(already (mount|in use))|not empty/i.test(e.message)) throw e;
 	}
 }
 
@@ -807,9 +807,7 @@ export function createSandboxLoadImageTool(deps: SandboxLoadImageDeps): Tool {
 						},
 					});
 					const resizedResponse = (
-						await ctx.env.IMAGES.input(stream)
-							.transform({ width: 1568, height: 1568, fit: 'scale-down' })
-							.output({ format: 'image/jpeg' })
+						await ctx.env.IMAGES.input(stream).transform({ width: 1568, height: 1568, fit: 'scale-down' }).output({ format: 'image/jpeg' })
 					).response();
 					const resizedBytes = new Uint8Array(await resizedResponse.arrayBuffer());
 					const resizedBase64 = bytesToBase64(resizedBytes);
