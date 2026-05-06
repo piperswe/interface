@@ -97,6 +97,7 @@ export function createMarkdownRunner(
 			scheduleRender(
 				messageContentKey(m.id),
 				text,
+				m.contentHtml,
 				() => renderMarkdownClient(text),
 				(html) => applyMessagePatch(m.id, (msg) => ({ ...msg, contentHtml: html })),
 			);
@@ -106,6 +107,7 @@ export function createMarkdownRunner(
 			scheduleRender(
 				messageThinkingKey(m.id),
 				text,
+				m.thinkingHtml,
 				() => renderMarkdownClient(text),
 				(html) => applyMessagePatch(m.id, (msg) => ({ ...msg, thinkingHtml: html })),
 			);
@@ -123,6 +125,7 @@ export function createMarkdownRunner(
 			scheduleRender(
 				partKey(messageId, index, 'text'),
 				text,
+				part.textHtml,
 				() => renderMarkdownClient(text),
 				(html) => {
 					applyPartPatch(messageId, index, text, kind, (target) => ({
@@ -137,6 +140,7 @@ export function createMarkdownRunner(
 			scheduleRender(
 				partKey(messageId, index, 'input'),
 				`${code.language}:${code.code}`,
+				part.inputHtml,
 				() => renderArtifactCodeClient(code.code, code.language),
 				(html) => {
 					applyPartPatch(messageId, index, code.code, 'tool_use', (target) => {
@@ -157,18 +161,24 @@ export function createMarkdownRunner(
 				: a.type === 'markdown'
 					? () => renderMarkdownClient(a.content)
 					: async () => a.content;
-		scheduleRender(key, a.content, render, (html) => {
+		scheduleRender(key, a.content, a.contentHtml, render, (html) => {
 			applyArtifactPatch(messageId, a.id, a.version, html);
 		});
 	}
 
+	// `currentHtml` is the rendered output already present on the target. The
+	// cache short-circuit only applies when the output is still attached —
+	// otherwise a state reload that strips `*Html` (server doesn't ship
+	// pre-rendered HTML over the wire) would leave parts un-rendered, since
+	// the cache thinks "we've already rendered this revision".
 	function scheduleRender(
 		key: CacheKey,
 		revision: string,
+		currentHtml: string | null | undefined,
 		render: () => Promise<string>,
 		apply: (html: string) => void,
 	): void {
-		if (renderedRevByKey.get(key) === revision) return;
+		if (currentHtml != null && renderedRevByKey.get(key) === revision) return;
 		if (inFlight.has(key)) return;
 		inFlight.add(key);
 		const work = (async () => {
