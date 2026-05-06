@@ -45,8 +45,18 @@
 		void conversationId;
 		const el = textareaEl;
 		if (!el || busy) return;
-		queueMicrotask(() => el.focus());
+		queueMicrotask(() => {
+			el.focus();
+			resizeTextarea();
+		});
 	});
+
+	function resizeTextarea() {
+		const el = textareaEl;
+		if (!el) return;
+		el.style.height = 'auto';
+		el.style.height = `${el.scrollHeight}px`;
+	}
 
 	// Sync selectedModel when defaultModel changes externally (e.g. model_switch tool).
 	$effect(() => {
@@ -155,15 +165,24 @@
 		const optimistic = trimmed.length > 0 && onOptimisticSubmit != null;
 		if (optimistic) {
 			onOptimisticSubmit!(trimmed, selectedModel);
-			if (textarea) textarea.value = '';
+			if (textarea) {
+				textarea.value = '';
+				resizeTextarea();
+			}
 		}
 		try {
 			await submit();
-			if (!optimistic && textarea) textarea.value = '';
+			if (!optimistic && textarea) {
+				textarea.value = '';
+				resizeTextarea();
+			}
 		} catch (err) {
 			if (optimistic) {
 				onOptimisticRevert?.();
-				if (textarea) textarea.value = rawContent;
+				if (textarea) {
+					textarea.value = rawContent;
+					resizeTextarea();
+				}
 			}
 			throw err;
 		}
@@ -179,6 +198,7 @@
 		disabled={busy}
 		rows={1}
 		onkeydown={onKeyDown}
+		oninput={resizeTextarea}
 		class="form-control border-0 shadow-none bg-transparent p-1"
 	></textarea>
 	<div class="d-flex align-items-center gap-2 flex-wrap">
@@ -330,7 +350,9 @@
 	.compose textarea {
 		width: 100%;
 		min-height: 2.5rem;
-		max-height: 50vh;
+		/* 10 lines (1.5em line-height) + vertical padding (p-1 → 0.5rem total). */
+		max-height: calc(1.5em * 10 + 0.5rem);
+		overflow-y: auto;
 		resize: none;
 		font-family: inherit;
 		font-size: 1rem;
