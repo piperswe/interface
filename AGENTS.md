@@ -141,6 +141,27 @@ Use `scripts/setup-sandbox-ssh.sh` to generate an Ed25519 key pair and
 upload the private half as the secret. After running it, add the printed
 public key to your GitHub account.
 
+## Workspace R2 mount (production)
+
+The sandbox `/workspace` directory is backed by the `WORKSPACE_BUCKET` R2
+bucket so files persist across container/DO cycles and surface in the
+file browser. **In production you must configure these three secrets,**
+otherwise files written in the sandbox will not sync to R2:
+
+| Secret | Value |
+|---|---|
+| `R2_ACCOUNT_ID` (or `R2_ENDPOINT`) | Cloudflare account id, used to derive `https://{id}.r2.cloudflarestorage.com`. Set `R2_ENDPOINT` directly if you use a custom hostname. |
+| `R2_ACCESS_KEY_ID` | R2 API token access key id. Generate at R2 → Manage R2 API Tokens. |
+| `R2_SECRET_ACCESS_KEY` | R2 API token secret. |
+
+When all three are set, the sandbox mounts `/workspace` via s3fs-FUSE
+inside the container, so writes go straight to R2. Without them the
+mount falls back to the SDK's `localBucket` mode which only works under
+`wrangler dev` — Cloudflare evicts the Sandbox DO before its background
+sync loops can run, and container→R2 uploads silently never happen.
+Override `R2_WORKSPACE_BUCKET_NAME` only if you renamed the bucket from
+the `bucket_name` declared in `wrangler.jsonc`.
+
 # Cloudflare Workers
 
 STOP. Your knowledge of Cloudflare Workers APIs and limits may be outdated. Always retrieve current documentation before any Workers, KV, R2, D1, Durable Objects, Queues, Vectorize, AI, or Agents SDK task.

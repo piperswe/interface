@@ -45,6 +45,25 @@ declare global {
 		// present, each conversation's /workspace is sync-mounted to the
 		// `conversations/{id}/` prefix so files survive sandbox cycles.
 		WORKSPACE_BUCKET?: R2Bucket;
+		// Optional R2 S3-API credentials for the workspace mount. When all
+		// three (endpoint + access key id + secret) are set, the sandbox
+		// mounts /workspace via s3fs-FUSE inside the container, which is
+		// the only mode that reliably syncs container→R2 in production
+		// (see tools/sandbox.ts for the rationale). Without these, the
+		// mount falls back to the SDK's `localBucket` mode, which only
+		// works under `wrangler dev` because Cloudflare evicts the
+		// Sandbox DO before its background sync loops can run. Generate
+		// the access key in the Cloudflare dashboard under R2 → Manage
+		// R2 API Tokens. R2_ENDPOINT can be omitted if R2_ACCOUNT_ID is
+		// set (the endpoint is derived).
+		R2_ENDPOINT?: string;
+		R2_ACCOUNT_ID?: string;
+		R2_ACCESS_KEY_ID?: string;
+		R2_SECRET_ACCESS_KEY?: string;
+		// Override the R2 bucket name passed to s3fs. Defaults to the
+		// `bucket_name` in wrangler.jsonc; only set this if you renamed
+		// the bucket.
+		R2_WORKSPACE_BUCKET_NAME?: string;
 		// Optional SSH private key injected into every sandbox container
 		// so the agent can interact with GitHub (clone, push, etc.).
 		SANDBOX_SSH_KEY?: string;

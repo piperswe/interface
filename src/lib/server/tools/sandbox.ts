@@ -75,28 +75,64 @@ async function ensureSshKey(ctx: ToolContext): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// R2 /workspace mount (one-time per conversation per isolate)
+// R2 /workspace mount
 // ---------------------------------------------------------------------------
-// When `WORKSPACE_BUCKET` is bound, mount it at /workspace via the sandbox
-// SDK's local-binding sync mode. Each conversation gets its own prefix so
-// files are isolated and survive sandbox cycles.
-const workspaceMounted = new Set<string>();
+// When `WORKSPACE_BUCKET` is bound, mount it at /workspace so files written
+// there sync to R2. Each conversation gets its own bucket prefix so files
+// are isolated across conversations.
+//
+// We prefer FUSE mode (s3fs inside the container) whenever R2 S3-API
+// credentials are configured. FUSE talks directly to R2 from the container
+// process — there are no background loops in the Durable Object that can
+// die when the DO is evicted. The earlier `localBucket: true` mode looked
+// nicer (no secrets needed) but its bidirectional sync ran setTimeout/SSE
+// loops inside the Sandbox DO, which Cloudflare evicts from memory shortly
+// after the originating RPC returns; the loops never made it past the next
+// tick, so container→R2 uploads never happened in production.
+//
+// `localBucket: true` is retained as a fallback for `wrangler dev`, where
+// the DO process is long-lived and the sync loops actually get to run.
+//
+// The mount lives on the Sandbox Durable Object (the SDK tracks it in
+// `activeMounts`), and the DO can be evicted independently of this Worker
+// isolate — so we must NOT cache "already mounted" at the Worker level.
+// Always call `mountBucket`; the SDK throws a tolerable
+// "Mount path already in use" error when the mount is already live.
+// Default matches `r2_buckets[0].bucket_name` in wrangler.jsonc. Override
+// via the `R2_WORKSPACE_BUCKET_NAME` secret if you renamed the bucket.
+const DEFAULT_R2_BUCKET_NAME = 'interface-workspace';
 
-async function ensureWorkspaceMount(ctx: ToolContext): Promise<void> {
+function r2Endpoint(env: Env): string | undefined {
+	if (env.R2_ENDPOINT) return env.R2_ENDPOINT;
+	if (env.R2_ACCOUNT_ID) return `https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
+	return undefined;
+}
+
+export async function ensureWorkspaceMount(ctx: ToolContext): Promise<void> {
 	if (!ctx.env.WORKSPACE_BUCKET) return;
-	if (workspaceMounted.has(ctx.conversationId)) return;
 	const sandbox = getConversationSandbox(ctx);
+	const prefix = `/conversations/${ctx.conversationId}`;
+	const endpoint = r2Endpoint(ctx.env);
+	const accessKeyId = ctx.env.R2_ACCESS_KEY_ID;
+	const secretAccessKey = ctx.env.R2_SECRET_ACCESS_KEY;
+	const bucketName = ctx.env.R2_WORKSPACE_BUCKET_NAME ?? DEFAULT_R2_BUCKET_NAME;
 	try {
-		await sandbox.mountBucket('WORKSPACE_BUCKET', '/workspace', {
-			localBucket: true,
-			prefix: `/conversations/${ctx.conversationId}`,
-		});
+		if (endpoint && accessKeyId && secretAccessKey) {
+			await sandbox.mountBucket(bucketName, '/workspace', {
+				endpoint,
+				provider: 'r2',
+				credentials: { accessKeyId, secretAccessKey },
+				prefix,
+			});
+		} else {
+			await sandbox.mountBucket('WORKSPACE_BUCKET', '/workspace', {
+				localBucket: true,
+				prefix,
+			});
+		}
 	} catch (e) {
-		// Container reuse can leave a previous mount in place. Tolerate that
-		// and surface anything else.
-		if (!(e instanceof Error) || !/already mount/i.test(e.message)) throw e;
+		if (!(e instanceof Error) || !/already (mount|in use)/i.test(e.message)) throw e;
 	}
-	workspaceMounted.add(ctx.conversationId);
 }
 
 function formatExecResult(result: Pick<ExecResult, 'exitCode' | 'success' | 'stdout' | 'stderr'>): ToolExecutionResult {
@@ -140,7 +176,7 @@ export const sandboxExecTool: Tool = {
 	definition: {
 		name: 'sandbox_exec',
 		description:
-			"Execute a shell command inside the conversation's isolated sandbox. Returns stdout, stderr, exit code, and success status. Use for running scripts, installing packages, compiling code, or any shell-level operation. The sandbox is running the latest Debian testing as root. Use `apt-get` to install packages. Ensure you run `apt-get update` before `apt-get install`.",
+			"Execute a shell command inside the conversation's isolated sandbox. Returns stdout, stderr, exit code, and success status. Use for running scripts, installing packages, compiling code, or any shell-level operation. The sandbox is running the latest Debian testing as root. Use `apt-get` to install packages. Ensure you run `apt-get update` before `apt-get install`. The default working directory is `/workspace`, which is the only directory whose contents persist across sandbox restarts and is visible to the user in the file browser. Files written elsewhere (e.g. `/tmp`, `/root`) are ephemeral and are NOT synced to R2.",
 		inputSchema: execInputSchema,
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
@@ -154,6 +190,7 @@ export const sandboxExecTool: Tool = {
 		if (!args.command || typeof args.command !== 'string') {
 			return { content: 'Missing required parameter: command', isError: true };
 		}
+		const cwd = args.cwd ?? '/workspace';
 		try {
 			await ensureWorkspaceMount(ctx);
 			await ensureSshKey(ctx);
@@ -166,7 +203,7 @@ export const sandboxExecTool: Tool = {
 				// "AbortSignal serialization is not enabled". The signal is
 				// still honored when iterating the SSE stream below.
 				const stream = await sandbox.execStream(args.command, {
-					...(args.cwd ? { cwd: args.cwd } : {}),
+					cwd,
 					...(args.env ? { env: args.env } : {}),
 					...(args.stdin ? { stdin: args.stdin } : {}),
 					...(args.timeout ? { timeout: args.timeout } : {}),
@@ -197,7 +234,7 @@ export const sandboxExecTool: Tool = {
 				return formatExecResult({ success: exitCode === 0, exitCode, stdout, stderr });
 			}
 			const result = await sandbox.exec(args.command, {
-				...(args.cwd ? { cwd: args.cwd } : {}),
+				cwd,
 				...(args.env ? { env: args.env } : {}),
 				...(args.stdin ? { stdin: args.stdin } : {}),
 				...(args.timeout ? { timeout: args.timeout } : {}),
@@ -360,7 +397,8 @@ const writeFileInputSchema = {
 export const sandboxWriteFileTool: Tool = {
 	definition: {
 		name: 'sandbox_write_file',
-		description: "Write (or overwrite) a file in the conversation's sandbox filesystem.",
+		description:
+			"Write (or overwrite) a file in the conversation's sandbox filesystem. Write under `/workspace/` to persist the file across sandbox restarts and surface it in the user's file browser; files written outside `/workspace` are ephemeral and not synced to R2.",
 		inputSchema: writeFileInputSchema,
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
@@ -439,7 +477,8 @@ const mkdirInputSchema = {
 export const sandboxMkdirTool: Tool = {
 	definition: {
 		name: 'sandbox_mkdir',
-		description: "Create a directory in the conversation's sandbox filesystem.",
+		description:
+			"Create a directory in the conversation's sandbox filesystem. Create under `/workspace/` for persistence; directories outside `/workspace` are ephemeral.",
 		inputSchema: mkdirInputSchema,
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
