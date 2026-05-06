@@ -68,6 +68,9 @@
 			"bucket_name": "interface-workspace",
 		},
 	],
+	"images": {
+		"binding": "IMAGES",
+	},
 	"worker_loaders": [
 		{
 			"binding": "RUN_JS_LOADER",

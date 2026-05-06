@@ -70,6 +70,9 @@ declare global {
 		// Optional Worker Loader binding. When present, the `run_js` tool
 		// is registered so the model can evaluate JS in a fresh isolate.
 		RUN_JS_LOADER?: WorkerLoader;
+		// Optional Images binding. When present, sandbox_load_image resizes
+		// images before storing to stay under the DO SQLite 2 MB per-value limit.
+		IMAGES?: ImagesBinding;
 		}
 	}
 }

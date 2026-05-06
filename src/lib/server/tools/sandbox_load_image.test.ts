@@ -122,6 +122,45 @@ describe('sandbox_load_image tool', () => {
 		expect(result.content as string).toMatch(/too large/);
 	});
 
+	it('resizes via IMAGES binding and returns image/jpeg when binding is present', async () => {
+		// Regression: large images stored as raw base64 in the parts TEXT column
+		// hit the DO SQLite 2 MB per-value limit (SQLITE_TOOBIG). When the IMAGES
+		// binding is configured the tool must resize and re-encode as JPEG.
+		const fakeWebPBytes = new Uint8Array([0x52, 0x49, 0x46, 0x46]); // 'RIFF' prefix
+		const mockImages: ImagesBinding = {
+			input(_stream) {
+				return {
+					transform() { return this; },
+					draw() { return this; },
+					output() {
+						return Promise.resolve({
+							response: () => new Response(fakeWebPBytes),
+						// eslint-disable-next-line @typescript-eslint/no-explicit-any
+						} as any);
+					},
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				} as any;
+			},
+			info: () => Promise.resolve({ format: 'image/webp', fileSize: fakeWebPBytes.length, width: 4, height: 1 }),
+			hosted: {} as ImagesBinding['hosted'],
+		};
+
+		const tool = createSandboxLoadImageTool({ getModels: () => [model({ supportsImageInput: true })] });
+		await bucket.put(`conversations/${CONV_ID}/uploads/photo.png`, new Uint8Array([1, 2, 3, 4, 5]));
+		const result = await tool.execute(ctx({ env: { ...env, IMAGES: mockImages } }), {
+			path: '/workspace/uploads/photo.png',
+		});
+		expect(result.isError).toBeFalsy();
+		const blocks = result.content as Array<{ type: string; mimeType?: string; data?: string }>;
+		expect(Array.isArray(blocks)).toBe(true);
+		const imageBlock = blocks.find((b) => b.type === 'image');
+		expect(imageBlock).toBeDefined();
+		expect(imageBlock!.mimeType).toBe('image/jpeg');
+		// Verify it's the resized bytes, not the raw upload
+		const expectedBase64 = btoa(String.fromCharCode(...fakeWebPBytes));
+		expect(imageBlock!.data).toBe(expectedBase64);
+	});
+
 	it('uses the live (post-switch) model from ctx.modelId', async () => {
 		const tool = createSandboxLoadImageTool({
 			getModels: () => [model({ id: 'no-vision', supportsImageInput: false }), model({ id: 'has-vision', supportsImageInput: true })],

@@ -62,6 +62,7 @@ function makeCtx(
 		env: baseEnv as unknown as Env,
 		conversationId: 'cccccccc-cccc-cccc-cccc-cccccccccccc',
 		assistantMessageId: 'm',
+		modelId: 'fake/model',
 	};
 }
 
