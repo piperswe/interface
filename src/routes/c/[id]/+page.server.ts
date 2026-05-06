@@ -2,7 +2,7 @@ import { error } from '@sveltejs/kit';
 import { createConversation, getConversation } from '$lib/server/conversations';
 import { getConversationStub } from '$lib/server/durable_objects';
 import { listAllModels } from '$lib/server/providers/models';
-import { getSetting } from '$lib/server/settings';
+import { getKagiCostPer1000Searches, getSetting } from '$lib/server/settings';
 import { listStyles } from '$lib/server/styles';
 import { tagsForConversation } from '$lib/server/tags';
 import type { ConversationState } from '$lib/types/conversation';
@@ -15,15 +15,23 @@ export const load: PageServerLoad = async ({ params, platform }) => {
 	if (!CONVERSATION_ID_PATTERN.test(conversationId)) error(404, 'not found');
 
 	const stub = getConversationStub(platform.env, conversationId);
-	const [state, models, initialConversation, defaultModel, styles, conversationTags] =
-		await Promise.all([
-			stub.getState(),
-			listAllModels(platform.env),
-			getConversation(platform.env, conversationId),
-			getSetting(platform.env, 'default_model'),
-			listStyles(platform.env),
-			tagsForConversation(platform.env, conversationId),
-		]);
+	const [
+		state,
+		models,
+		initialConversation,
+		defaultModel,
+		styles,
+		conversationTags,
+		kagiCostPer1000Searches,
+	] = await Promise.all([
+		stub.getState(),
+		listAllModels(platform.env),
+		getConversation(platform.env, conversationId),
+		getSetting(platform.env, 'default_model'),
+		listStyles(platform.env),
+		tagsForConversation(platform.env, conversationId),
+		getKagiCostPer1000Searches(platform.env),
+	]);
 	// Optimistic-creation race: the client may navigate to `/c/<id>` before its
 	// background `createNewConversation` call lands. If the row is missing but
 	// the DO has no messages, materialise the conversation here. We only do
@@ -46,5 +54,6 @@ export const load: PageServerLoad = async ({ params, platform }) => {
 		initialState: state as ConversationState,
 		defaultModel: defaultModel ?? '',
 		conversationTags,
+		kagiCostPer1000Searches,
 	};
 };

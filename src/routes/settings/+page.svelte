@@ -202,6 +202,8 @@
 	let newModelDescription = $state('');
 	let newModelContextLength = $state(128_000);
 	let newModelReasoning = $state<ReasoningType | ''>('');
+	let newModelInputCost = $state<string>('');
+	let newModelOutputCost = $state<string>('');
 
 	// Provider edit state
 	let editProviderId = $state<string | null>(null);
@@ -379,6 +381,11 @@
 								{#if data.defaultModel === `${p.id}/${m.id}`}
 									<span class="badge text-bg-success ms-1">Default</span>
 								{/if}
+								{#if m.inputCostPerMillionTokens != null || m.outputCostPerMillionTokens != null}
+									<div class="small text-muted">
+										${(m.inputCostPerMillionTokens ?? 0).toFixed(2)} in / ${(m.outputCostPerMillionTokens ?? 0).toFixed(2)} out per 1M tokens
+									</div>
+								{/if}
 							</div>
 							<div class="d-flex align-items-center gap-2">
 								<form {...reorderProviderModel.for(`up:${p.id}:${m.id}`).enhance(justSubmit)} class="m-0">
@@ -442,13 +449,40 @@
 									</select>
 								</div>
 							</div>
+							<div class="row g-2 mb-2">
+								<div class="col">
+									<input
+										name="input_cost_per_million_tokens"
+										type="number"
+										step="0.0001"
+										min="0"
+										bind:value={newModelInputCost}
+										placeholder="Input $ / 1M tokens (optional)"
+										class="form-control form-control-sm"
+									/>
+								</div>
+								<div class="col">
+									<input
+										name="output_cost_per_million_tokens"
+										type="number"
+										step="0.0001"
+										min="0"
+										bind:value={newModelOutputCost}
+										placeholder="Output $ / 1M tokens (optional)"
+										class="form-control form-control-sm"
+									/>
+								</div>
+							</div>
+							<div class="form-text small mb-2">
+								Used to estimate cost when the provider does not return one.
+							</div>
 							<div class="d-flex gap-2">
 								<button type="submit" class="btn btn-sm btn-primary">Save model</button>
 								<button type="button" class="btn btn-sm btn-outline-secondary" onclick={() => (addModelProviderId = null)}>Cancel</button>
 							</div>
 						</form>
 					{:else}
-						<button type="button" class="btn btn-sm btn-outline-primary mt-2" onclick={() => { addModelProviderId = p.id; newModelId = ''; newModelName = ''; newModelDescription = ''; newModelContextLength = 128_000; newModelReasoning = ''; }}>+ Add model</button>
+						<button type="button" class="btn btn-sm btn-outline-primary mt-2" onclick={() => { addModelProviderId = p.id; newModelId = ''; newModelName = ''; newModelDescription = ''; newModelContextLength = 128_000; newModelReasoning = ''; newModelInputCost = ''; newModelOutputCost = ''; }}>+ Add model</button>
 					{/if}
 				</div>
 			</div>
@@ -941,5 +975,32 @@
 			<input id="ctx-summary" type="number" name="value" min="256" value={data.contextCompactionSummaryTokens} class="form-control form-control-sm w-auto" />
 			<button type="submit" class="btn btn-sm btn-primary">Save</button>
 		</form>
+	</section>
+
+	<!-- Web search pricing -->
+	<section class="mb-4">
+		<h2 class="h5">Web search pricing</h2>
+		<form
+			{...saveSetting
+				.for('kagi_cost_per_1000_searches')
+				.enhance(toastSubmit('Kagi search cost saved'))}
+			class="d-flex gap-2 align-items-center"
+		>
+			<input type="hidden" name="key" value="kagi_cost_per_1000_searches" />
+			<label class="small" for="kagi-cost">Kagi cost ($ / 1000 searches)</label>
+			<input
+				id="kagi-cost"
+				type="number"
+				name="value"
+				step="0.01"
+				min="0"
+				value={data.kagiCostPer1000Searches}
+				class="form-control form-control-sm w-auto"
+			/>
+			<button type="submit" class="btn btn-sm btn-primary">Save</button>
+		</form>
+		<div class="form-text small">
+			Added to per-message cost. Kagi's API charges $25 per 1000 searches by default.
+		</div>
 	</section>
 </div>

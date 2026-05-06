@@ -27,6 +27,7 @@ const ALLOWED_SETTING_KEYS = new Set([
 	'user_bio',
 	'default_model',
 	'title_model',
+	'kagi_cost_per_1000_searches',
 ]);
 
 type Theme = 'system' | 'light' | 'dark';
@@ -44,6 +45,12 @@ function isValidSummaryTokens(v: string): boolean {
 	return Number.isFinite(n) && n >= 256;
 }
 
+function isValidNonNegativeNumber(v: string): boolean {
+	if (v === '') return true; // empty clears the override; helper resolves to default
+	const n = Number.parseFloat(v);
+	return Number.isFinite(n) && n >= 0;
+}
+
 // Persist a single key/value setting (theme, system prompt, user bio,
 // compaction params, model list). Re-uses the same key/value form across
 // the Settings page; all validation lives here.
@@ -59,6 +66,9 @@ export const saveSetting = form(
 		}
 		if (key === 'context_compaction_summary_tokens' && !isValidSummaryTokens(value)) {
 			error(400, 'Summary budget must be at least 256 tokens');
+		}
+		if (key === 'kagi_cost_per_1000_searches' && !isValidNonNegativeNumber(value)) {
+			error(400, 'Kagi cost per 1000 searches must be a non-negative number');
 		}
 		await setSetting(getEnv(), key, value);
 		if (key === 'theme') invalidateThemeCache();

@@ -19,6 +19,10 @@ export interface ProviderModel {
 	description: string | null;
 	maxContextLength: number;
 	reasoningType: ReasoningType | null;
+	// Optional USD price per 1,000,000 tokens. Used to compute cost when the
+	// provider does not report cost directly in the usage response.
+	inputCostPerMillionTokens: number | null;
+	outputCostPerMillionTokens: number | null;
 	sortOrder: number;
 	createdAt: number;
 	updatedAt: number;

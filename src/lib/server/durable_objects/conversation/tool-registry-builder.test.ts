@@ -19,6 +19,8 @@ function makeModel(providerId: string, id: string): ProviderModel {
 		description: null,
 		maxContextLength: 128_000,
 		reasoningType: null,
+		inputCostPerMillionTokens: null,
+		outputCostPerMillionTokens: null,
 		sortOrder: 0,
 		createdAt: 0,
 		updatedAt: 0,

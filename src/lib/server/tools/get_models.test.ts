@@ -9,8 +9,8 @@ describe('createGetModelsTool', () => {
 		const tool = createGetModelsTool({
 			currentModel: 'openrouter/anthropic/claude-sonnet-4',
 			availableModels: [
-				{ id: 'anthropic/claude-sonnet-4', providerId: 'openrouter', name: 'Claude Sonnet 4', createdAt: 0, updatedAt: 0, maxContextLength: 200_000, description: null, reasoningType: 'max_tokens', sortOrder: 0 },
-				{ id: 'openai/gpt-5.5', providerId: 'openrouter', name: 'GPT-5.5', createdAt: 0, updatedAt: 0, maxContextLength: 128_000, description: null, reasoningType: 'effort', sortOrder: 0 },
+				{ id: 'anthropic/claude-sonnet-4', providerId: 'openrouter', name: 'Claude Sonnet 4', createdAt: 0, updatedAt: 0, maxContextLength: 200_000, description: null, reasoningType: 'max_tokens', inputCostPerMillionTokens: null, outputCostPerMillionTokens: null, sortOrder: 0 },
+				{ id: 'openai/gpt-5.5', providerId: 'openrouter', name: 'GPT-5.5', createdAt: 0, updatedAt: 0, maxContextLength: 128_000, description: null, reasoningType: 'effort', inputCostPerMillionTokens: null, outputCostPerMillionTokens: null, sortOrder: 0 },
 			],
 		});
 		const result = await tool.execute(ctx, {});
@@ -24,7 +24,7 @@ describe('createGetModelsTool', () => {
 	it('omits the parenthesised label when id == name', async () => {
 		const tool = createGetModelsTool({
 			currentModel: 'p/m',
-			availableModels: [{ id: 'm', providerId: 'p', name: 'm', createdAt: 0, updatedAt: 0, maxContextLength: 128_000, description: null, reasoningType: null, sortOrder: 0 }],
+			availableModels: [{ id: 'm', providerId: 'p', name: 'm', createdAt: 0, updatedAt: 0, maxContextLength: 128_000, description: null, reasoningType: null, inputCostPerMillionTokens: null, outputCostPerMillionTokens: null, sortOrder: 0 }],
 		});
 		const result = await tool.execute(ctx, {});
 		expect(result.content).toContain('- p/m [current]');

@@ -1,10 +1,42 @@
 <script lang="ts">
-	import type { MetaSnapshot } from '$lib/types/conversation';
+	import type { MessagePart, MetaSnapshot } from '$lib/types/conversation';
 	import { fmtMs, fmtNumber } from '$lib/formatters';
+	import { computeCost, countWebSearches } from '$lib/cost';
 
-	let { snapshot }: { snapshot: MetaSnapshot | null } = $props();
+	let {
+		snapshot,
+		modelPricing = null,
+		parts = null,
+		kagiCostPer1000Searches = 25,
+	}: {
+		snapshot: MetaSnapshot | null;
+		modelPricing?: {
+			inputCostPerMillionTokens: number | null;
+			outputCostPerMillionTokens: number | null;
+		} | null;
+		parts?: MessagePart[] | null;
+		kagiCostPer1000Searches?: number;
+	} = $props();
 
 	const ttftMs = $derived(snapshot && snapshot.firstTokenAt && snapshot.startedAt ? snapshot.firstTokenAt - snapshot.startedAt : 0);
+	const webSearchCount = $derived(countWebSearches(parts));
+	const cost = $derived(
+		computeCost({
+			usage: snapshot?.usage ?? null,
+			model: modelPricing,
+			webSearchCount,
+			kagiCostPer1000Searches,
+		}),
+	);
+
+	function fmtUsd(value: number): string {
+		if (value === 0) return '$0.00';
+		// 4 fractional digits below $1, 2 above. Anything below 0.0001 collapses
+		// to "<$0.0001" so it doesn't render as "$0.0000".
+		if (value > 0 && value < 0.0001) return '<$0.0001';
+		const digits = value < 1 ? 4 : 2;
+		return '$' + value.toFixed(digits);
+	}
 </script>
 
 {#if snapshot}
@@ -33,6 +65,18 @@
 			{/if}
 			<dt>Time to first token</dt>
 			<dd>{fmtMs(ttftMs)}</dd>
+			{#if cost.total != null}
+				<dt>Cost</dt>
+				<dd>{fmtUsd(cost.total)}</dd>
+			{/if}
+			{#if webSearchCount > 0}
+				<dt>Web searches</dt>
+				<dd>
+					{fmtNumber(webSearchCount)}{cost.webSearchCost > 0
+						? ` (${fmtUsd(cost.webSearchCost)})`
+						: ''}
+				</dd>
+			{/if}
 		</dl>
 	</details>
 {/if}
