@@ -138,8 +138,7 @@ function toAnthropicMessages(messages: Message[]): Messages.MessageParam[] {
 				const blocks = typeof m.content === 'string' ? [{ type: 'text' as const, text: m.content }] : m.content;
 				return { role: 'user' as const, content: blocksToAnthropic(blocks) };
 			}
-			const content =
-				typeof m.content === 'string' ? [{ type: 'text' as const, text: m.content }] : m.content;
+			const content = typeof m.content === 'string' ? [{ type: 'text' as const, text: m.content }] : m.content;
 			return { role: m.role as 'user' | 'assistant', content: blocksToAnthropic(content) };
 		});
 }
@@ -156,10 +155,28 @@ function blocksToAnthropic(blocks: ContentBlock[]): Messages.ContentBlockParam[]
 			}
 			if (b.type === 'tool_use') return { type: 'tool_use', id: b.id, name: b.name, input: b.input };
 			if (b.type === 'tool_result') {
+				// `content` may be a plain string or an array of text/image
+				// blocks (multimodal tool returns). Anthropic's tool_result
+				// accepts both shapes natively; the array form maps 1:1.
+				const content =
+					typeof b.content === 'string'
+						? b.content
+						: b.content.map((blk) =>
+								blk.type === 'image'
+									? {
+											type: 'image' as const,
+											source: {
+												type: 'base64' as const,
+												media_type: blk.mimeType as 'image/jpeg',
+												data: blk.data,
+											},
+										}
+									: { type: 'text' as const, text: blk.text },
+							);
 				return {
 					type: 'tool_result',
 					tool_use_id: b.toolUseId,
-					content: b.content,
+					content,
 					...(b.isError ? { is_error: true } : {}),
 				};
 			}

@@ -19,6 +19,25 @@
 	const isError = $derived(!!result?.isError);
 	const isDone = $derived(!!result && !result.streaming);
 
+	// Tool results can be a plain string or an array of text/image blocks
+	// (e.g. `sandbox_load_image`). For UI display we flatten to a string so
+	// existing render paths keep working; image entries are summarised.
+	function flattenContent(c: string | { type: 'text'; text: string }[] | { type: 'image'; mimeType: string; data: string }[] | (
+		| { type: 'text'; text: string }
+		| { type: 'image'; mimeType: string; data: string }
+	)[]): string {
+		if (typeof c === 'string') return c;
+		if (!Array.isArray(c)) return '';
+		return c
+			.map((b) => {
+				if (b.type === 'text') return b.text;
+				if (b.type === 'image') return `[image ${b.mimeType}, ${Math.round((b.data.length * 3) / 4)} bytes]`;
+				return '';
+			})
+			.join('\n');
+	}
+	const resultText = $derived(result ? flattenContent(result.content) : '');
+
 	// Tool-specific input shapes
 	const execInput = $derived(
 		call.name === 'sandbox_exec'
@@ -74,7 +93,7 @@
 	}
 
 	const execParsed = $derived(
-		call.name === 'sandbox_exec' && result && isDone ? parseExecResult(result.content) : null,
+		call.name === 'sandbox_exec' && result && isDone ? parseExecResult(resultText) : null,
 	);
 
 	// Parse the structured run_js result
@@ -119,7 +138,7 @@
 	}
 
 	const runJsParsed = $derived(
-		call.name === 'run_js' && result && isDone ? parseRunJsResult(result.content) : null,
+		call.name === 'run_js' && result && isDone ? parseRunJsResult(resultText) : null,
 	);
 
 	// Parse web search results from formatted text
@@ -136,7 +155,7 @@
 	}
 
 	const searchResults = $derived(
-		call.name === 'web_search' && result && isDone ? parseSearchResults(result.content) : [],
+		call.name === 'web_search' && result && isDone ? parseSearchResults(resultText) : [],
 	);
 
 	function firstLine(s: string, max = 80): string {
@@ -255,7 +274,7 @@
 				{#if isStreaming}
 					<!-- Live streaming output -->
 					<div class="terminal-output streaming">
-						<pre><code>{result.content || ' '}</code></pre>
+						<pre><code>{resultText || ' '}</code></pre>
 					</div>
 				{:else if execParsed}
 					<!-- Structured final output -->
@@ -281,7 +300,7 @@
 					{/if}
 				{:else}
 					<!-- Fallback for unexpected format -->
-					<div class="terminal-output"><pre><code>{result.content}</code></pre></div>
+					<div class="terminal-output"><pre><code>{resultText}</code></pre></div>
 				{/if}
 			{:else}
 				<div class="pending-output">waiting for output…</div>
@@ -307,7 +326,7 @@
 			{#if result}
 				{#if isStreaming}
 					<div class="terminal-output streaming">
-						<pre><code>{result.content || ' '}</code></pre>
+						<pre><code>{resultText || ' '}</code></pre>
 					</div>
 				{:else if runJsParsed}
 					{#if runJsParsed.logs.length > 0}
@@ -334,7 +353,7 @@
 						<div class="empty-output">no output</div>
 					{/if}
 				{:else}
-					<div class="terminal-output{isError ? ' error' : ''}"><pre><code>{result.content}</code></pre></div>
+					<div class="terminal-output{isError ? ' error' : ''}"><pre><code>{resultText}</code></pre></div>
 				{/if}
 			{:else}
 				<div class="pending-output">running…</div>
@@ -354,7 +373,7 @@
 				<div class="output-section">
 					<div class="output-label">output</div>
 					<div class="terminal-output{isError ? ' error' : ''}">
-						<pre><code>{result.content || '(no output)'}</code></pre>
+						<pre><code>{resultText || "(no output)"}</code></pre>
 					</div>
 				</div>
 			{:else}
@@ -373,7 +392,7 @@
 				{#if isStreaming || pending}
 					<div class="pending-output">searching…</div>
 				{:else if isError}
-					<div class="terminal-output error"><pre><code>{result.content}</code></pre></div>
+					<div class="terminal-output error"><pre><code>{resultText}</code></pre></div>
 				{:else if searchResults.length > 0}
 					<ol class="search-results">
 						{#each searchResults as r (r.index)}
@@ -386,7 +405,7 @@
 					</ol>
 				{:else}
 					<!-- Fallback if parse yields nothing -->
-					<pre class="raw-result"><code>{result.content}</code></pre>
+					<pre class="raw-result"><code>{resultText}</code></pre>
 				{/if}
 			{:else}
 				<div class="pending-output">searching…</div>
@@ -406,7 +425,7 @@
 			{/if}
 			{#if result}
 				<div class="terminal-output{isError ? ' error' : ''}">
-					<pre><code>{result.content}</code></pre>
+					<pre><code>{resultText}</code></pre>
 				</div>
 			{:else}
 				<div class="pending-output">running…</div>
@@ -421,7 +440,7 @@
 			{#if result}
 				<div class="generic-section">
 					<div class="output-label">result</div>
-					<pre class="code-block{isError ? ' error' : ''}"><code>{result.content}</code></pre>
+					<pre class="code-block{isError ? ' error' : ''}"><code>{resultText}</code></pre>
 				</div>
 			{:else}
 				<div class="pending-output">running…</div>
@@ -448,7 +467,7 @@
 				<pre class="code-block"><code>{JSON.stringify(call.input ?? {}, null, 2)}</code></pre>
 				{#if result}
 					<div class="output-label mt-2">raw output</div>
-					<pre class="code-block{isError ? ' error' : ''}"><code>{result.content}</code></pre>
+					<pre class="code-block{isError ? ' error' : ''}"><code>{resultText}</code></pre>
 				{/if}
 			</details>
 		{/if}

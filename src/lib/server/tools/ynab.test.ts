@@ -2,7 +2,7 @@ import { env } from 'cloudflare:test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createYnabTools } from './ynab';
 
-const ctx = { env, conversationId: 'c', assistantMessageId: 'a' };
+const ctx = { env, conversationId: 'c', assistantMessageId: 'a', modelId: 'p/m' };
 
 function findTool(name: string) {
 	const tool = createYnabTools('test-token').find((t) => t.definition.name === name);
@@ -40,9 +40,7 @@ describe('createYnabTools', () => {
 	});
 
 	it('calls the YNAB API with the access token', async () => {
-		const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-			jsonResponse({ data: { user: { id: 'user-123' } } }),
-		);
+		const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ data: { user: { id: 'user-123' } } }));
 		const tool = findTool('ynab_get_user');
 		const result = await tool.execute(ctx, {});
 		expect(result.isError).toBeFalsy();
@@ -75,7 +73,7 @@ describe('ynab_list_budgets', () => {
 			}),
 		);
 		const result = await findTool('ynab_list_budgets').execute(ctx, {});
-		const parsed = JSON.parse(result.content) as {
+		const parsed = JSON.parse(result.content as string) as {
 			default_budget_id: string;
 			budgets: Array<{ id: string; name: string; currency: { iso_code: string } }>;
 		};
@@ -115,7 +113,7 @@ describe('ynab_list_accounts', () => {
 			}),
 		);
 		const result = await findTool('ynab_list_accounts').execute(ctx, { budget_id: 'last-used' });
-		const parsed = JSON.parse(result.content) as Array<{ id: string; balance_milliunits: number }>;
+		const parsed = JSON.parse(result.content as string) as Array<{ id: string; balance_milliunits: number }>;
 		expect(parsed[0]).toMatchObject({ id: 'a1', balance_milliunits: 123450 });
 	});
 
@@ -186,7 +184,7 @@ describe('ynab_list_categories', () => {
 			}),
 		);
 		const result = await findTool('ynab_list_categories').execute(ctx, { budget_id: 'b1' });
-		const parsed = JSON.parse(result.content) as Array<{ name: string; categories: Array<{ name: string }> }>;
+		const parsed = JSON.parse(result.content as string) as Array<{ name: string; categories: Array<{ name: string }> }>;
 		expect(parsed).toHaveLength(1);
 		expect(parsed[0].name).toBe('Visible');
 		expect(parsed[0].categories.map((c) => c.name)).toEqual(['Groceries']);
@@ -248,15 +246,13 @@ describe('ynab_list_transactions', () => {
 		expect(url).toContain('/plans/b1/accounts/a1/transactions');
 		expect(url).toContain('since_date=2026-04-01');
 		expect(url).toContain('type=unapproved');
-		const parsed = JSON.parse(result.content) as { count: number; transactions: Array<{ id: string }> };
+		const parsed = JSON.parse(result.content as string) as { count: number; transactions: Array<{ id: string }> };
 		expect(parsed.count).toBe(1);
 		expect(parsed.transactions[0].id).toBe('t1');
 	});
 
 	it('falls back to the unfiltered endpoint when no scope is provided', async () => {
-		const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-			jsonResponse({ data: { transactions: [] } }),
-		);
+		const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(jsonResponse({ data: { transactions: [] } }));
 		await findTool('ynab_list_transactions').execute(ctx, { budget_id: 'b1' });
 		const url = (fetchMock.mock.calls[0] as [string, RequestInit])[0];
 		expect(url).toContain('/plans/b1/transactions');

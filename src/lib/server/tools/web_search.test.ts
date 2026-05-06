@@ -14,7 +14,7 @@ class StubBackend implements WebSearchBackend {
 	}
 }
 
-const ctx = { env, conversationId: 'c', assistantMessageId: 'a' };
+const ctx = { env, conversationId: 'c', assistantMessageId: 'a', modelId: 'p/m' };
 
 describe('web_search tool', () => {
 	it('rejects missing query', async () => {

@@ -240,6 +240,7 @@
 	let newModelReasoning = $state<ReasoningType | ''>('');
 	let newModelInputCost = $state<string>('');
 	let newModelOutputCost = $state<string>('');
+	let newModelSupportsImageInput = $state(false);
 
 	// Model edit form state
 	let editModelKey = $state<string | null>(null); // `${providerId}/${modelId}`
@@ -249,6 +250,7 @@
 	let editModelReasoning = $state<ReasoningType | ''>('');
 	let editModelInputCost = $state<string>('');
 	let editModelOutputCost = $state<string>('');
+	let editModelSupportsImageInput = $state(false);
 
 	type ProviderModelLite = {
 		id: string;
@@ -259,6 +261,7 @@
 		reasoningType: ReasoningType | null;
 		inputCostPerMillionTokens: number | null;
 		outputCostPerMillionTokens: number | null;
+		supportsImageInput: boolean;
 	};
 
 	function startEditModel(m: ProviderModelLite) {
@@ -271,6 +274,7 @@
 			m.inputCostPerMillionTokens != null ? String(m.inputCostPerMillionTokens) : '';
 		editModelOutputCost =
 			m.outputCostPerMillionTokens != null ? String(m.outputCostPerMillionTokens) : '';
+		editModelSupportsImageInput = !!m.supportsImageInput;
 		// Cancel the add-model panel when starting an edit so two forms don't collide.
 		addModelProviderId = null;
 	}
@@ -966,6 +970,17 @@
 											/>
 											</label>
 										</div>
+										<div class="col-12">
+											<label class="form-check form-switch small">
+												<input
+													class="form-check-input"
+													type="checkbox"
+													name="supports_image_input"
+													bind:checked={editModelSupportsImageInput}
+												/>
+												<span class="form-check-label">Supports image input (multimodal)</span>
+											</label>
+										</div>
 									</div>
 									<div class="d-flex gap-2 justify-content-end mt-3">
 										<button
@@ -1183,6 +1198,17 @@
 											</span>
 										</label>
 									</div>
+									<div class="col-12">
+										<label class="form-check form-switch small">
+											<input
+												class="form-check-input"
+												type="checkbox"
+												name="supports_image_input"
+												bind:checked={newModelSupportsImageInput}
+											/>
+											<span class="form-check-label">Supports image input (multimodal)</span>
+										</label>
+									</div>
 								</div>
 								<div class="d-flex gap-2 justify-content-end mt-2">
 									<button
@@ -1209,6 +1235,7 @@
 									newModelReasoning = '';
 									newModelInputCost = '';
 									newModelOutputCost = '';
+									newModelSupportsImageInput = false;
 								}}
 							>
 								+ Add model

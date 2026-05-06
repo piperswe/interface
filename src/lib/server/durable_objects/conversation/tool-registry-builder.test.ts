@@ -21,6 +21,7 @@ function makeModel(providerId: string, id: string): ProviderModel {
 		reasoningType: null,
 		inputCostPerMillionTokens: null,
 		outputCostPerMillionTokens: null,
+		supportsImageInput: false,
 		sortOrder: 0,
 		createdAt: 0,
 		updatedAt: 0,
@@ -54,12 +55,7 @@ describe('buildToolRegistry', () => {
 		// The defining regression: switch_model used to ship without get_models
 		// when sub-agents weren't enabled, even though its description told
 		// the model to "Call `get_models` first".
-		const registry = await buildToolRegistry(
-			emptyEnv,
-			emptyCache,
-			'p/m',
-			makeContext({ allModels: [makeModel('p', 'm')] }),
-		);
+		const registry = await buildToolRegistry(emptyEnv, emptyCache, 'p/m', makeContext({ allModels: [makeModel('p', 'm')] }));
 		expect(registry.has('switch_model')).toBe(true);
 		expect(registry.has('get_models')).toBe(true);
 	});

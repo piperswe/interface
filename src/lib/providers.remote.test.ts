@@ -4,12 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearMockRequestEvent, setMockRequestEvent } from '../../test/shims/app-server';
 import * as remote from './providers.remote';
 import { createProvider, getProvider, listProviders } from './server/providers/store';
-import {
-	createModel,
-	getModel,
-	listAllModels,
-	listModelsForProvider,
-} from './server/providers/models';
+import { createModel, getModel, listAllModels, listModelsForProvider } from './server/providers/models';
 
 type AnyArgs = (...args: unknown[]) => Promise<unknown>;
 const saveProvider = remote.saveProvider as unknown as AnyArgs;
@@ -94,24 +89,13 @@ describe('providers.remote — saveProvider', () => {
 	});
 
 	it('rejects malformed provider ids', async () => {
-		await expectError(
-			saveProvider({ id: '1bad', type: 'anthropic' }) as Promise<unknown>,
-			400,
-			/Provider ID/,
-		);
-		await expectError(
-			saveProvider({ id: 'Bad-Caps', type: 'anthropic' }) as Promise<unknown>,
-			400,
-		);
+		await expectError(saveProvider({ id: '1bad', type: 'anthropic' }) as Promise<unknown>, 400, /Provider ID/);
+		await expectError(saveProvider({ id: 'Bad-Caps', type: 'anthropic' }) as Promise<unknown>, 400);
 		await expectError(saveProvider({ id: '', type: 'anthropic' }) as Promise<unknown>, 400);
 	});
 
 	it('rejects an invalid provider type', async () => {
-		await expectError(
-			saveProvider({ id: 'p1', type: 'cohere' }) as Promise<unknown>,
-			400,
-			/Invalid provider type/,
-		);
+		await expectError(saveProvider({ id: 'p1', type: 'cohere' }) as Promise<unknown>, 400, /Invalid provider type/);
 	});
 });
 
@@ -216,18 +200,32 @@ describe('providers.remote — saveProviderModel', () => {
 	});
 
 	it('requires non-empty name / provider_id / model_id', async () => {
-		await expectError(
-			saveProviderModel({ provider_id: '', model_id: 'm', name: 'n' }) as Promise<unknown>,
-			400,
+		await expectError(saveProviderModel({ provider_id: '', model_id: 'm', name: 'n' }) as Promise<unknown>, 400);
+		await expectError(saveProviderModel({ provider_id: 'p', model_id: '', name: 'n' }) as Promise<unknown>, 400);
+		await expectError(saveProviderModel({ provider_id: 'p', model_id: 'm', name: '' }) as Promise<unknown>, 400);
+	});
+
+	it('round-trips supports_image_input through create + update', async () => {
+		await createProvider(env, { id: 'p1', type: 'anthropic' });
+		await runForm(
+			saveProviderModel({
+				provider_id: 'p1',
+				model_id: 'm1',
+				name: 'vision-capable',
+				supports_image_input: 'on',
+			}),
 		);
-		await expectError(
-			saveProviderModel({ provider_id: 'p', model_id: '', name: 'n' }) as Promise<unknown>,
-			400,
+		expect((await getModel(env, 'p1', 'm1'))?.supportsImageInput).toBe(true);
+		// Updating without the checkbox in the form data clears it (HTML
+		// checkboxes omit the field when unchecked).
+		await runForm(
+			saveProviderModel({
+				provider_id: 'p1',
+				model_id: 'm1',
+				name: 'vision-capable',
+			}),
 		);
-		await expectError(
-			saveProviderModel({ provider_id: 'p', model_id: 'm', name: '' }) as Promise<unknown>,
-			400,
-		);
+		expect((await getModel(env, 'p1', 'm1'))?.supportsImageInput).toBe(false);
 	});
 });
 
@@ -235,10 +233,7 @@ describe('providers.remote — deleteProviderModel', () => {
 	it('removes the row', async () => {
 		await createProvider(env, { id: 'p1', type: 'anthropic' });
 		await createModel(env, 'p1', { id: 'm1', name: 'm' });
-		await expectRedirect(
-			deleteProviderModel({ provider_id: 'p1', model_id: 'm1' }) as Promise<unknown>,
-			'/settings',
-		);
+		await expectRedirect(deleteProviderModel({ provider_id: 'p1', model_id: 'm1' }) as Promise<unknown>, '/settings');
 		expect(await getModel(env, 'p1', 'm1')).toBeNull();
 	});
 });
@@ -249,10 +244,7 @@ describe('providers.remote — reorderProviderModel', () => {
 		await createModel(env, 'p1', { id: 'a', name: 'A', sortOrder: 0 });
 		await createModel(env, 'p1', { id: 'b', name: 'B', sortOrder: 10 });
 		await createModel(env, 'p1', { id: 'c', name: 'C', sortOrder: 20 });
-		await expectRedirect(
-			reorderProviderModel({ provider_id: 'p1', model_id: 'a', direction: 'down' }) as Promise<unknown>,
-			'/settings',
-		);
+		await expectRedirect(reorderProviderModel({ provider_id: 'p1', model_id: 'a', direction: 'down' }) as Promise<unknown>, '/settings');
 		const list = await listModelsForProvider(env, 'p1');
 		expect(list.map((m) => m.id)).toEqual(['b', 'a', 'c']);
 	});
@@ -261,10 +253,7 @@ describe('providers.remote — reorderProviderModel', () => {
 		await createProvider(env, { id: 'p1', type: 'anthropic' });
 		await createModel(env, 'p1', { id: 'a', name: 'A', sortOrder: 0 });
 		await createModel(env, 'p1', { id: 'b', name: 'B', sortOrder: 10 });
-		await expectRedirect(
-			reorderProviderModel({ provider_id: 'p1', model_id: 'a', direction: 'up' }) as Promise<unknown>,
-			'/settings',
-		);
+		await expectRedirect(reorderProviderModel({ provider_id: 'p1', model_id: 'a', direction: 'up' }) as Promise<unknown>, '/settings');
 		const list = await listModelsForProvider(env, 'p1');
 		expect(list.map((m) => m.id)).toEqual(['a', 'b']);
 	});
@@ -279,15 +268,12 @@ describe('providers.remote — reorderProviderModel', () => {
 	});
 
 	it('rejects an invalid direction', async () => {
-		await expectError(
-			reorderProviderModel({ provider_id: 'p1', model_id: 'a', direction: 'sideways' }) as Promise<unknown>,
-			400,
-		);
+		await expectError(reorderProviderModel({ provider_id: 'p1', model_id: 'a', direction: 'sideways' }) as Promise<unknown>, 400);
 	});
 });
 
 describe('providers.remote — addPresetProvider', () => {
-	it('creates the provider plus all of the preset\'s default models', async () => {
+	it("creates the provider plus all of the preset's default models", async () => {
 		// `ai-gateway` has 8 default models (see providers/presets.ts).
 		await expectRedirect(
 			addPresetProvider({
@@ -317,9 +303,7 @@ describe('providers.remote — addPresetProvider', () => {
 			'/settings',
 		);
 		const models = await listModelsForProvider(env, 'cf2');
-		expect(models.map((m) => m.id).sort()).toEqual(
-			['anthropic/claude-sonnet-4-6', 'openai/gpt-5.5'].sort(),
-		);
+		expect(models.map((m) => m.id).sort()).toEqual(['anthropic/claude-sonnet-4-6', 'openai/gpt-5.5'].sort());
 	});
 
 	it('falls back to preset.defaultEndpoint when endpoint is blank', async () => {
@@ -336,20 +320,12 @@ describe('providers.remote — addPresetProvider', () => {
 	});
 
 	it('rejects an unknown preset', async () => {
-		await expectError(
-			addPresetProvider({ id: 'mystery', provider_id: 'p', api_key: 'k' }) as Promise<unknown>,
-			400,
-			/preset/,
-		);
+		await expectError(addPresetProvider({ id: 'mystery', provider_id: 'p', api_key: 'k' }) as Promise<unknown>, 400, /preset/);
 	});
 
 	it('rejects a duplicate provider id with 400 instead of 500', async () => {
 		await createProvider(env, { id: 'taken', type: 'openai_compatible' });
-		await expectError(
-			addPresetProvider({ id: 'ai-gateway', provider_id: 'taken' }) as Promise<unknown>,
-			400,
-			/already exists/,
-		);
+		await expectError(addPresetProvider({ id: 'ai-gateway', provider_id: 'taken' }) as Promise<unknown>, 400, /already exists/);
 	});
 });
 
@@ -378,9 +354,7 @@ describe('providers.remote — fetchPresetModels', () => {
 	});
 
 	it('forwards the apiKey as a Bearer token when provided', async () => {
-		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-			new Response(JSON.stringify({ data: [] }), { status: 200 }),
-		);
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({ data: [] }), { status: 200 }));
 		await fetchPresetModels({ preset_id: 'openrouter', api_key: 'sk-or' });
 		const init = fetchSpy.mock.calls[0][1] as RequestInit;
 		const headers = init.headers as Record<string, string>;
@@ -392,11 +366,7 @@ describe('providers.remote — fetchPresetModels', () => {
 	});
 
 	it('rejects a preset that does not support model fetching', async () => {
-		await expectError(
-			fetchPresetModels({ preset_id: 'workers-ai' }) as Promise<unknown>,
-			400,
-			/does not support/,
-		);
+		await expectError(fetchPresetModels({ preset_id: 'workers-ai' }) as Promise<unknown>, 400, /does not support/);
 	});
 
 	it('rejects an empty preset id', async () => {

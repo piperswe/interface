@@ -1,6 +1,8 @@
 import { getSandbox, parseSSEStream } from '@cloudflare/sandbox';
 import type { Sandbox, ExecEvent, ExecResult } from '@cloudflare/sandbox';
 import type { Tool, ToolContext, ToolExecutionResult } from './registry';
+import type { ProviderModel } from '../providers/types';
+import { parseGlobalModelId } from '../providers/types';
 
 // ---------------------------------------------------------------------------
 // Helper: resolve a sandbox instance scoped to the current conversation.
@@ -588,7 +590,7 @@ export const sandboxCreateArtifactTool: Tool = {
 	definition: {
 		name: 'sandbox_create_artifact',
 		description:
-			"Read a file from the sandbox and expose it as a visual artifact in the conversation. Use this to share code, HTML pages, SVG images, markdown documents, or mermaid diagrams with the user. The artifact will appear in the side panel for easy viewing.",
+			'Read a file from the sandbox and expose it as a visual artifact in the conversation. Use this to share code, HTML pages, SVG images, markdown documents, or mermaid diagrams with the user. The artifact will appear in the side panel for easy viewing.',
 		inputSchema: createArtifactInputSchema,
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
@@ -607,8 +609,7 @@ export const sandboxCreateArtifactTool: Tool = {
 			const file = await sandbox.readFile(args.path);
 			const type = args.type ?? inferArtifactType(args.path);
 			const name = args.name ?? args.path.split('/').pop() ?? args.path;
-			const language =
-				args.language ?? (type === 'code' ? inferLanguage(args.path) : undefined);
+			const language = args.language ?? (type === 'code' ? inferLanguage(args.path) : undefined);
 
 			return {
 				content: `Created artifact from ${args.path}`,
@@ -631,9 +632,154 @@ export const sandboxCreateArtifactTool: Tool = {
 };
 
 // ---------------------------------------------------------------------------
+// sandbox_load_image
+// ---------------------------------------------------------------------------
+// Reads an image file from the conversation's R2 workspace prefix, encodes
+// it as base64, and returns it as image content for the next LLM turn.
+// Gated on the current model's `supportsImageInput` flag — non-vision models
+// see a text fallback steering the agent to existing sandbox tools.
+
+const IMAGE_EXTENSIONS: Record<string, string> = {
+	png: 'image/png',
+	jpg: 'image/jpeg',
+	jpeg: 'image/jpeg',
+	gif: 'image/gif',
+	webp: 'image/webp',
+};
+
+// Cap the in-context image size. Provider request bodies and token
+// economy both suffer when an image is too large; agents should resize
+// via `sandbox_exec` (e.g. ImageMagick) before reloading.
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+const loadImageInputSchema = {
+	type: 'object',
+	properties: {
+		path: {
+			type: 'string',
+			description: 'Absolute path under /workspace, e.g. /workspace/uploads/foo.png.',
+		},
+	},
+	required: ['path'],
+} as const;
+
+export type SandboxLoadImageDeps = {
+	// Returns the current snapshot of configured provider models. Called per
+	// invocation so a `switch_model` mid-turn picks up the new model's flags.
+	getModels: () => ProviderModel[];
+};
+
+function bytesToBase64(bytes: Uint8Array): string {
+	// Build the binary string in chunks to avoid `Maximum call stack size
+	// exceeded` on large files when spreading into String.fromCharCode.
+	const CHUNK = 0x8000;
+	let binary = '';
+	for (let i = 0; i < bytes.length; i += CHUNK) {
+		binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CHUNK)));
+	}
+	return btoa(binary);
+}
+
+export function createSandboxLoadImageTool(deps: SandboxLoadImageDeps): Tool {
+	return {
+		definition: {
+			name: 'sandbox_load_image',
+			description:
+				"Load an image from the conversation's /workspace into the model's context as a vision-readable image. Supported formats: PNG, JPEG, GIF, WEBP. The current model must accept image input — for non-vision models, this tool returns text guidance pointing you at sandbox_read_file or sandbox_exec instead. Cap: 5MB; resize larger images via sandbox_exec (e.g. ImageMagick) before loading.",
+			inputSchema: loadImageInputSchema,
+		},
+		async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
+			const args = (input ?? {}) as { path?: string };
+			if (!args.path || typeof args.path !== 'string') {
+				return { content: 'Missing required parameter: path', isError: true, errorCode: 'invalid_input' };
+			}
+			const path = args.path;
+			if (!path.startsWith('/workspace/')) {
+				return {
+					content: 'Path must start with /workspace/.',
+					isError: true,
+					errorCode: 'invalid_input',
+				};
+			}
+			const ext = path.split('.').pop()?.toLowerCase() ?? '';
+			const mimeType = IMAGE_EXTENSIONS[ext];
+			if (!mimeType) {
+				return {
+					content: `Unsupported image extension: .${ext}. Supported: ${Object.keys(IMAGE_EXTENSIONS).join(', ')}. For non-image files, use sandbox_read_file or sandbox_exec.`,
+					isError: true,
+					errorCode: 'invalid_input',
+				};
+			}
+
+			// Look up the current model's vision capability. The DO threads the
+			// live (post-switch) model id into ctx.modelId, so this tracks
+			// `switch_model` calls within the same turn.
+			let supportsImageInput = false;
+			try {
+				const { providerId, modelId } = parseGlobalModelId(ctx.modelId);
+				const model = deps.getModels().find((m) => m.providerId === providerId && m.id === modelId);
+				supportsImageInput = !!model?.supportsImageInput;
+			} catch {
+				// Malformed model id — treat as non-vision.
+			}
+
+			const bucket = ctx.env.WORKSPACE_BUCKET;
+			if (!bucket) {
+				return { content: 'Workspace bucket not configured.', isError: true };
+			}
+			const key = `conversations/${ctx.conversationId}/${path.slice('/workspace/'.length)}`;
+			const obj = await bucket.get(key);
+			if (!obj) {
+				return {
+					content: `File not found: ${path}`,
+					isError: true,
+					errorCode: 'not_found',
+				};
+			}
+			const size = obj.size;
+			if (size > MAX_IMAGE_BYTES) {
+				const mb = (size / (1024 * 1024)).toFixed(1);
+				return {
+					content: `Image too large to load (${mb} MB > 5 MB). Use sandbox_exec to resize the image (e.g. \`convert ${path} -resize 1024x1024\\> ${path.replace(/(\.[^.]+)$/, '.small$1')}\`) and load the resized copy.`,
+					isError: true,
+				};
+			}
+
+			if (!supportsImageInput) {
+				return {
+					content: `Current model (${ctx.modelId}) does not accept image input. To inspect this file, use sandbox_read_file (text) or sandbox_exec (e.g. \`file ${path}\`, \`identify ${path}\`, OCR via tesseract). To switch to a vision-capable model, call switch_model.`,
+					isError: false,
+				};
+			}
+
+			const bytes = new Uint8Array(await obj.arrayBuffer());
+			const base64 = bytesToBase64(bytes);
+			const filename = path.split('/').pop() ?? path;
+			return {
+				content: [
+					{
+						type: 'text',
+						text: `Loaded ${filename} (${mimeType}, ${size} bytes) into context.`,
+					},
+					{
+						type: 'image',
+						mimeType,
+						data: base64,
+					},
+				],
+			};
+		},
+	};
+}
+
+// ---------------------------------------------------------------------------
 // Registry helper
 // ---------------------------------------------------------------------------
-export function registerSandboxTools(registry: { register(tool: Tool): void }): void {
+export type SandboxToolDeps = {
+	loadImage?: SandboxLoadImageDeps;
+};
+
+export function registerSandboxTools(registry: { register(tool: Tool): void }, deps: SandboxToolDeps = {}): void {
 	registry.register(sandboxExecTool);
 	registry.register(sandboxRunCodeTool);
 	registry.register(sandboxReadFileTool);
@@ -642,4 +788,7 @@ export function registerSandboxTools(registry: { register(tool: Tool): void }): 
 	registry.register(sandboxMkdirTool);
 	registry.register(sandboxExistsTool);
 	registry.register(sandboxCreateArtifactTool);
+	if (deps.loadImage) {
+		registry.register(createSandboxLoadImageTool(deps.loadImage));
+	}
 }

@@ -5,6 +5,7 @@ import type { ToolContext } from './registry';
 const baseCtx: Omit<ToolContext, 'env'> = {
 	conversationId: 'c1',
 	assistantMessageId: 'a1',
+	modelId: 'p/m',
 };
 // We don't need a real Env for this tool — it never reads from `ctx.env`.
 const env = {} as Env;
@@ -49,10 +50,7 @@ describe('switch_model tool', () => {
 			availableModelGlobalIds: ['openai/gpt-5.5', 'anthropic/claude-sonnet-4-6'],
 		});
 		const switchModel = vi.fn();
-		const result = await tool.execute(
-			{ ...baseCtx, env, switchModel },
-			{ model_id: 'anthropic/claude-sonnet-4-6' },
-		);
+		const result = await tool.execute({ ...baseCtx, env, switchModel }, { model_id: 'anthropic/claude-sonnet-4-6' });
 		expect(result.isError).toBeFalsy();
 		expect(result.content).toContain('anthropic/claude-sonnet-4-6');
 		expect(switchModel).toHaveBeenCalledWith('anthropic/claude-sonnet-4-6');

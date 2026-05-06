@@ -66,9 +66,13 @@ export type ToolCallRecord = {
 	thoughtSignature?: string;
 	startedAt?: number;
 };
+// One block of a tool result; mirrors `ToolResultBlock` in
+// `src/lib/server/llm/LLM.ts` so client code can import it without crossing
+// the server-only boundary.
+export type ToolResultBlock = { type: 'text'; text: string } | { type: 'image'; mimeType: string; data: string };
 export type ToolResultRecord = {
 	toolUseId: string;
-	content: string;
+	content: string | ToolResultBlock[];
 	isError: boolean;
 	streaming?: boolean;
 	startedAt?: number;
@@ -95,7 +99,7 @@ export type ToolUsePart = {
 export type ToolResultPart = {
 	type: 'tool_result';
 	toolUseId: string;
-	content: string;
+	content: string | ToolResultBlock[];
 	isError: boolean;
 	streaming?: boolean;
 	startedAt?: number;

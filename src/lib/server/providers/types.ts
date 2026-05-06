@@ -23,6 +23,10 @@ export interface ProviderModel {
 	// provider does not report cost directly in the usage response.
 	inputCostPerMillionTokens: number | null;
 	outputCostPerMillionTokens: number | null;
+	// Whether the model accepts image input. Gates the `sandbox_load_image`
+	// tool: when false, it returns a text fallback steering the agent to
+	// existing sandbox tools (`sandbox_read_file`, `sandbox_exec`).
+	supportsImageInput: boolean;
 	sortOrder: number;
 	createdAt: number;
 	updatedAt: number;

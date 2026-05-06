@@ -4,10 +4,7 @@ import type { ChatCompletionChunk } from 'openai/resources/chat/completions';
 import { OpenAILLM } from './OpenAILLM';
 import type { StreamEvent } from './LLM';
 
-function fakeClient(
-	chunks: ChatCompletionChunk[],
-	capture?: { params?: unknown },
-): OpenAI {
+function fakeClient(chunks: ChatCompletionChunk[], capture?: { params?: unknown }): OpenAI {
 	return {
 		chat: {
 			completions: {
@@ -72,11 +69,7 @@ describe('OpenAILLM', () => {
 	});
 
 	it('emits thinking_delta for reasoning_content chunks', async () => {
-		const c = fakeClient([
-			chunk({ reasoning_content: 'planning...' }),
-			chunk({ content: 'answer' }),
-			chunk({}, { finish_reason: 'stop' }),
-		]);
+		const c = fakeClient([chunk({ reasoning_content: 'planning...' }), chunk({ content: 'answer' }), chunk({}, { finish_reason: 'stop' })]);
 		const llm = new OpenAILLM(c, 'gpt-5.5', 'openai-via-aig');
 		const events = await collect(llm.chat({ messages: [] }));
 		expect(events).toContainEqual({ type: 'thinking_delta', delta: 'planning...' });
@@ -170,7 +163,8 @@ describe('OpenAILLM', () => {
 	});
 
 	it('serializes assistant tool_use blocks into OpenAI tool_calls', async () => {
-		const capture: { params?: { messages?: Array<{ role: string; tool_calls?: unknown[]; tool_call_id?: string; content?: unknown }> } } = {};
+		const capture: { params?: { messages?: Array<{ role: string; tool_calls?: unknown[]; tool_call_id?: string; content?: unknown }> } } =
+			{};
 		const c = fakeClient([chunk({}, { finish_reason: 'stop' })], capture);
 		const llm = new OpenAILLM(c, 'gpt-5.5', 'openai-via-aig');
 		await collect(
@@ -236,6 +230,75 @@ describe('OpenAILLM', () => {
 		const llm = new OpenAILLM(c, 'gpt-5.5', 'openai-via-aig');
 		await collect(llm.chat({ messages: [], reasoning: { type: 'effort', effort: 'none' } }));
 		expect(capture.params!.reasoning_effort).toBeUndefined();
+	});
+
+	it('emits stub tool message + synthetic user with image_url for array tool_result content', async () => {
+		// OpenAI tool messages are string-only per the chat-completions API,
+		// so when a tool returns image content we forward the images via a
+		// follow-up user message. Regression: keep that hand-off intact for
+		// vision-capable models running on OpenAI-compatible providers.
+		const capture: { params?: { messages?: Array<Record<string, unknown>> } } = {};
+		const c = fakeClient([chunk({}, { finish_reason: 'stop' })], capture);
+		const llm = new OpenAILLM(c, 'gpt-4o', 'openai-via-aig');
+		await collect(
+			llm.chat({
+				messages: [
+					{
+						role: 'assistant',
+						content: [{ type: 'tool_use', id: 't1', name: 'sandbox_load_image', input: {} }],
+					},
+					{
+						role: 'tool',
+						content: [
+							{
+								type: 'tool_result',
+								toolUseId: 't1',
+								content: [
+									{ type: 'text', text: 'Loaded photo.png.' },
+									{ type: 'image', mimeType: 'image/png', data: 'AAAA' },
+								],
+							},
+						],
+					},
+				],
+			}),
+		);
+		const msgs = capture.params!.messages!;
+		// Tool message is a stub string referencing the follow-up.
+		expect(msgs[1]).toMatchObject({ role: 'tool', tool_call_id: 't1' });
+		expect(typeof msgs[1].content).toBe('string');
+		expect(msgs[1].content as string).toMatch(/Loaded photo\.png/);
+		// Synthetic user message carries the image as a data URL.
+		expect(msgs[2]).toMatchObject({ role: 'user' });
+		const userContent = msgs[2].content as Array<Record<string, unknown>>;
+		expect(userContent).toContainEqual({ type: 'text', text: 'Loaded photo.png.' });
+		expect(userContent).toContainEqual({
+			type: 'image_url',
+			image_url: { url: 'data:image/png;base64,AAAA' },
+		});
+	});
+
+	it('passes string tool_result content through unchanged (no synthetic user)', async () => {
+		const capture: { params?: { messages?: Array<Record<string, unknown>> } } = {};
+		const c = fakeClient([chunk({}, { finish_reason: 'stop' })], capture);
+		const llm = new OpenAILLM(c, 'gpt-4o', 'openai-via-aig');
+		await collect(
+			llm.chat({
+				messages: [
+					{
+						role: 'assistant',
+						content: [{ type: 'tool_use', id: 't1', name: 'web_search', input: {} }],
+					},
+					{
+						role: 'tool',
+						content: [{ type: 'tool_result', toolUseId: 't1', content: 'no cats' }],
+					},
+				],
+			}),
+		);
+		const msgs = capture.params!.messages!;
+		expect(msgs).toHaveLength(2);
+		expect(msgs[1]).toMatchObject({ role: 'tool', content: 'no cats' });
 	});
 
 	it('throws on tool message with no tool_result block', async () => {

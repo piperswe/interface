@@ -1,8 +1,10 @@
-import type { ToolDefinition } from '../llm/LLM';
+import type { ToolDefinition, ToolResultBlock } from '../llm/LLM';
 
-// Result of a tool execution. The string `content` flows back into the next
-// LLM turn as a tool_result block; structured `citations` and `artifacts` are
-// surfaced to the UI separately by the tool execution loop.
+// Result of a tool execution. The `content` flows back into the next LLM
+// turn as a tool_result block; structured `citations` and `artifacts` are
+// surfaced to the UI separately by the tool execution loop. Most tools
+// return a string; multimodal tools (e.g. sandbox_load_image) return an
+// array of text/image blocks.
 export type ToolCitation = {
 	url: string;
 	title: string;
@@ -22,7 +24,7 @@ export type ToolArtifactSpec = {
 export type ToolErrorCode = 'not_found' | 'execution_failure' | 'invalid_input';
 
 export type ToolExecutionResult = {
-	content: string;
+	content: string | ToolResultBlock[];
 	isError?: boolean;
 	errorCode?: ToolErrorCode;
 	citations?: ToolCitation[];
@@ -33,6 +35,11 @@ export type ToolContext = {
 	env: Env;
 	conversationId: string;
 	assistantMessageId: string;
+	// The model id active for the current iteration. Reflects mid-turn
+	// `switch_model` calls — tools that need to know the live model
+	// (e.g. capability-gated tools) should read this, not the turn-start
+	// model.
+	modelId: string;
 	signal?: AbortSignal;
 	emitToolOutput?: (chunk: string) => void;
 	switchModel?: (newModelId: string) => void;

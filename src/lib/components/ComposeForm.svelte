@@ -35,7 +35,91 @@
 	let formEl: HTMLFormElement | null = $state(null);
 	let textareaEl: HTMLTextAreaElement | null = $state(null);
 	let optionsEl: HTMLDetailsElement | null = $state(null);
+	let fileInputEl: HTMLInputElement | null = $state(null);
 	let selectedModel = $state(untrack(() => defaultModel));
+
+	// Tracked attachments for the next submit. `path` is set once the upload
+	// completes; `error` is set if the upload fails. We render chips for each
+	// item so the user sees uploads in flight, completed, and any failures.
+	type Attachment = {
+		key: string;
+		filename: string;
+		status: 'uploading' | 'done' | 'error';
+		path?: string;
+		size?: number;
+		error?: string;
+	};
+	let attachments = $state<Attachment[]>([]);
+	let isDraggingOver = $state(false);
+
+	async function uploadFile(file: File): Promise<void> {
+		const key = `att-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+		const entry: Attachment = { key, filename: file.name, status: 'uploading' };
+		attachments = [...attachments, entry];
+		try {
+			const url = `/c/${conversationId}/sandbox/upload?filename=${encodeURIComponent(file.name)}`;
+			const res = await fetch(url, {
+				method: 'POST',
+				headers: { 'Content-Type': file.type || 'application/octet-stream' },
+				body: file,
+			});
+			if (!res.ok) {
+				const text = await res.text().catch(() => `${res.status} ${res.statusText}`);
+				throw new Error(text || `upload failed (${res.status})`);
+			}
+			const data = (await res.json()) as { path: string; size: number };
+			attachments = attachments.map((a) =>
+				a.key === key ? { ...a, status: 'done', path: data.path, size: data.size } : a,
+			);
+		} catch (err) {
+			attachments = attachments.map((a) =>
+				a.key === key
+					? { ...a, status: 'error', error: err instanceof Error ? err.message : String(err) }
+					: a,
+			);
+		}
+	}
+
+	function onPickFiles(e: Event) {
+		const input = e.currentTarget as HTMLInputElement;
+		const files = input.files;
+		if (!files) return;
+		for (const f of Array.from(files)) void uploadFile(f);
+		// Reset so picking the same file twice still triggers change.
+		input.value = '';
+	}
+
+	function onDragOver(e: DragEvent) {
+		if (!e.dataTransfer?.types.includes('Files')) return;
+		e.preventDefault();
+		isDraggingOver = true;
+	}
+	function onDragLeave() {
+		isDraggingOver = false;
+	}
+	function onDrop(e: DragEvent) {
+		if (!e.dataTransfer?.files?.length) return;
+		e.preventDefault();
+		isDraggingOver = false;
+		for (const f of Array.from(e.dataTransfer.files)) void uploadFile(f);
+	}
+
+	function removeAttachment(key: string) {
+		attachments = attachments.filter((a) => a.key !== key);
+	}
+
+	function fmtBytes(n: number): string {
+		if (n < 1024) return `${n} B`;
+		if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+		return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+	}
+
+	function buildAttachmentsTrailer(): string {
+		const ready = attachments.filter((a) => a.status === 'done' && a.path);
+		if (ready.length === 0) return '';
+		const lines = ready.map((a) => a.path).join('\n');
+		return `\n\n<attachments>\n${lines}\n</attachments>`;
+	}
 
 	// Focus the textarea whenever the conversation changes — covers the
 	// optimistic-create flow where we navigate into a fresh `/c/<id>` and want
@@ -161,20 +245,31 @@
 	{...sendMessage.for(conversationId).enhance(async ({ form, submit }) => {
 		const textarea = form.querySelector<HTMLTextAreaElement>('textarea[name="content"]');
 		const rawContent = textarea?.value ?? '';
-		const trimmed = rawContent.trim();
+		const trailer = buildAttachmentsTrailer();
+		// SvelteKit captures FormData at submit-event time, before this
+		// callback runs — so we rely on the hidden `attachments_trailer`
+		// input below being up-to-date via Svelte reactivity. The optimistic
+		// echo to the user includes the trailer too so it stays in sync with
+		// what the server will store.
+		const trimmed = (rawContent + trailer).trim();
 		const optimistic = trimmed.length > 0 && onOptimisticSubmit != null;
+		const previousAttachments = attachments;
 		if (optimistic) {
 			onOptimisticSubmit!(trimmed, selectedModel);
 			if (textarea) {
 				textarea.value = '';
 				resizeTextarea();
 			}
+			attachments = [];
 		}
 		try {
 			await submit();
-			if (!optimistic && textarea) {
-				textarea.value = '';
-				resizeTextarea();
+			if (!optimistic) {
+				if (textarea) {
+					textarea.value = '';
+					resizeTextarea();
+				}
+				attachments = [];
 			}
 		} catch (err) {
 			if (optimistic) {
@@ -183,24 +278,55 @@
 					textarea.value = rawContent;
 					resizeTextarea();
 				}
+				attachments = previousAttachments;
 			}
 			throw err;
 		}
 	})}
 	class="compose d-flex flex-column gap-2 bg-body border rounded-4 p-2 ps-3"
+	class:dragover={isDraggingOver}
+	ondragover={onDragOver}
+	ondragleave={onDragLeave}
+	ondrop={onDrop}
 >
 	<input type="hidden" name="conversationId" value={conversationId} />
+	<input type="hidden" name="attachments_trailer" value={buildAttachmentsTrailer()} />
 	<textarea
 		bind:this={textareaEl}
 		name="content"
 		placeholder="Send a message…"
-		required
+		required={attachments.filter((a) => a.status === 'done').length === 0}
 		disabled={busy}
 		rows={1}
 		onkeydown={onKeyDown}
 		oninput={resizeTextarea}
 		class="form-control border-0 shadow-none bg-transparent p-1"
 	></textarea>
+	{#if attachments.length > 0}
+		<ul class="attachment-list list-unstyled m-0 p-0 d-flex flex-wrap gap-2">
+			{#each attachments as a (a.key)}
+				<li class="attachment-chip" class:error={a.status === 'error'} title={a.error ?? a.path ?? ''}>
+					{#if a.status === 'uploading'}
+						<span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
+					{:else if a.status === 'error'}
+						<span aria-hidden="true">⚠</span>
+					{:else}
+						<span aria-hidden="true">📎</span>
+					{/if}
+					<span class="attachment-name text-truncate">{a.filename}</span>
+					{#if a.status === 'done' && a.size != null}
+						<span class="attachment-size text-muted small">{fmtBytes(a.size)}</span>
+					{/if}
+					<button
+						type="button"
+						class="attachment-remove"
+						onclick={() => removeAttachment(a.key)}
+						aria-label="Remove attachment {a.filename}"
+					>×</button>
+				</li>
+			{/each}
+		</ul>
+	{/if}
 	<div class="d-flex align-items-center gap-2 flex-wrap">
 		<details bind:this={optionsEl} class="compose-options" use:clickOutside={closeOptions}>
 			<summary class="compose-options-button" aria-label="Model and options">
@@ -295,6 +421,25 @@
 			</div>
 		</details>
 		<div class="compose-actions d-flex align-items-center gap-2">
+			<input
+				type="file"
+				bind:this={fileInputEl}
+				multiple
+				class="visually-hidden"
+				onchange={onPickFiles}
+			/>
+			<button
+				type="button"
+				class="attach-button"
+				onclick={() => fileInputEl?.click()}
+				disabled={busy}
+				aria-label="Attach files"
+				title="Attach files"
+			>
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width: 18px; height: 18px">
+					<path d="M21.44 11.05l-9.19 9.19a6 6 0 1 1-8.49-8.49l9.19-9.19a4 4 0 1 1 5.66 5.66l-9.2 9.19a2 2 0 1 1-2.83-2.83l8.49-8.48"/>
+				</svg>
+			</button>
 			{#if showMeter}
 				<button
 					type="button"
@@ -569,5 +714,80 @@
 			width: 40px;
 			height: 40px;
 		}
+	}
+
+	.compose.dragover {
+		border-color: var(--accent);
+		box-shadow: 0 0 0 2px var(--accent);
+	}
+
+	.attachment-list {
+		max-height: 8rem;
+		overflow-y: auto;
+	}
+
+	.attachment-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		padding: 0.2rem 0.5rem;
+		font-size: 0.8125rem;
+		background: var(--bs-secondary-bg);
+		border: 1px solid var(--border-soft);
+		border-radius: 999px;
+		max-width: 220px;
+	}
+
+	.attachment-chip.error {
+		background: var(--error-bg, rgba(255, 0, 0, 0.05));
+		color: var(--error-fg, #c00);
+		border-color: var(--error-fg, #c00);
+	}
+
+	.attachment-name {
+		max-width: 140px;
+	}
+
+	.attachment-size {
+		font-variant-numeric: tabular-nums;
+	}
+
+	.attachment-remove {
+		background: none;
+		border: none;
+		padding: 0;
+		font-size: 1rem;
+		line-height: 1;
+		color: var(--muted);
+		cursor: pointer;
+	}
+
+	.attachment-remove:hover {
+		color: var(--fg);
+	}
+
+	.attach-button {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 32px;
+		height: 32px;
+		padding: 0;
+		background: transparent;
+		border: 1px solid transparent;
+		border-radius: 999px;
+		color: var(--muted);
+		cursor: pointer;
+		transition: background 120ms ease, color 120ms ease;
+	}
+
+	.attach-button:hover:not([disabled]) {
+		background: var(--bs-secondary-bg);
+		color: var(--fg);
+	}
+
+	.attach-button[disabled] {
+		opacity: 0.4;
+		cursor: not-allowed;
 	}
 </style>

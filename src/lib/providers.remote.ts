@@ -1,20 +1,7 @@
 import { form, command, getRequestEvent } from '$app/server';
 import { error, redirect } from '@sveltejs/kit';
-import {
-	createProvider,
-	deleteProvider,
-	getProvider,
-	updateProvider,
-	isValidProviderId,
-} from '$lib/server/providers/store';
-import {
-	createModel,
-	deleteModel,
-	getModel,
-	listModelsForProvider,
-	updateModel,
-	swapModelOrder,
-} from '$lib/server/providers/models';
+import { createProvider, deleteProvider, getProvider, updateProvider, isValidProviderId } from '$lib/server/providers/store';
+import { createModel, deleteModel, getModel, listModelsForProvider, updateModel, swapModelOrder } from '$lib/server/providers/models';
 import { fetchOpenRouterModels } from '$lib/server/providers/fetch';
 import { getPresetById } from '$lib/server/providers/presets';
 import type { ProviderType, ReasoningType } from '$lib/server/providers/types';
@@ -38,13 +25,7 @@ function validateReasoningType(v: unknown): ReasoningType | null {
 
 export const saveProvider = form(
 	'unchecked',
-	async (data: {
-		id?: unknown;
-		type?: unknown;
-		api_key?: unknown;
-		endpoint?: unknown;
-		gateway_id?: unknown;
-	}) => {
+	async (data: { id?: unknown; type?: unknown; api_key?: unknown; endpoint?: unknown; gateway_id?: unknown }) => {
 		const id = String(data.id ?? '').trim();
 		const type = validateProviderType(data.type);
 		const apiKey = String(data.api_key ?? '').trim() || null;
@@ -73,15 +54,12 @@ export const saveProvider = form(
 	},
 );
 
-export const deleteProviderAction = form(
-	'unchecked',
-	async (data: { id?: unknown }) => {
-		const id = String(data.id ?? '').trim();
-		if (!id) error(400, 'Provider ID required');
-		await deleteProvider(getEnv(), id);
-		redirect(303, '/settings');
-	},
-);
+export const deleteProviderAction = form('unchecked', async (data: { id?: unknown }) => {
+	const id = String(data.id ?? '').trim();
+	if (!id) error(400, 'Provider ID required');
+	await deleteProvider(getEnv(), id);
+	redirect(303, '/settings');
+});
 
 function parseOptionalCost(raw: unknown, label: string): number | null {
 	const trimmed = String(raw ?? '').trim();
@@ -104,6 +82,7 @@ export const saveProviderModel = form(
 		reasoning_type?: unknown;
 		input_cost_per_million_tokens?: unknown;
 		output_cost_per_million_tokens?: unknown;
+		supports_image_input?: unknown;
 	}) => {
 		const providerId = String(data.provider_id ?? '').trim();
 		const modelId = String(data.model_id ?? '').trim();
@@ -111,14 +90,15 @@ export const saveProviderModel = form(
 		const description = String(data.description ?? '').trim() || null;
 		const maxContextLengthRaw = String(data.max_context_length ?? '').trim();
 		const reasoningType = validateReasoningType(data.reasoning_type);
-		const inputCostPerMillionTokens = parseOptionalCost(
-			data.input_cost_per_million_tokens,
-			'Input cost per million tokens',
-		);
-		const outputCostPerMillionTokens = parseOptionalCost(
-			data.output_cost_per_million_tokens,
-			'Output cost per million tokens',
-		);
+		const inputCostPerMillionTokens = parseOptionalCost(data.input_cost_per_million_tokens, 'Input cost per million tokens');
+		const outputCostPerMillionTokens = parseOptionalCost(data.output_cost_per_million_tokens, 'Output cost per million tokens');
+		// HTML checkbox sends 'on' (or 'true' / '1') when checked, omits when unchecked.
+		const supportsImageInput = (() => {
+			const v = data.supports_image_input;
+			if (v == null || v === '') return false;
+			const s = String(v).toLowerCase();
+			return s === 'on' || s === 'true' || s === '1';
+		})();
 
 		if (!providerId) error(400, 'Provider ID required');
 		if (!modelId) error(400, 'Model ID required');
@@ -140,6 +120,7 @@ export const saveProviderModel = form(
 				reasoningType,
 				inputCostPerMillionTokens,
 				outputCostPerMillionTokens,
+				supportsImageInput,
 			});
 		} else {
 			await createModel(env, providerId, {
@@ -150,6 +131,7 @@ export const saveProviderModel = form(
 				reasoningType,
 				inputCostPerMillionTokens,
 				outputCostPerMillionTokens,
+				supportsImageInput,
 			});
 		}
 
@@ -157,56 +139,40 @@ export const saveProviderModel = form(
 	},
 );
 
-export const deleteProviderModel = form(
-	'unchecked',
-	async (data: { provider_id?: unknown; model_id?: unknown }) => {
-		const providerId = String(data.provider_id ?? '').trim();
-		const modelId = String(data.model_id ?? '').trim();
-		if (!providerId || !modelId) error(400, 'Provider ID and Model ID required');
-		await deleteModel(getEnv(), providerId, modelId);
+export const deleteProviderModel = form('unchecked', async (data: { provider_id?: unknown; model_id?: unknown }) => {
+	const providerId = String(data.provider_id ?? '').trim();
+	const modelId = String(data.model_id ?? '').trim();
+	if (!providerId || !modelId) error(400, 'Provider ID and Model ID required');
+	await deleteModel(getEnv(), providerId, modelId);
+	redirect(303, '/settings');
+});
+
+export const reorderProviderModel = form('unchecked', async (data: { provider_id?: unknown; model_id?: unknown; direction?: unknown }) => {
+	const providerId = String(data.provider_id ?? '').trim();
+	const modelId = String(data.model_id ?? '').trim();
+	const direction = String(data.direction ?? '').trim();
+
+	if (!providerId || !modelId) error(400, 'Provider ID and Model ID required');
+	if (direction !== 'up' && direction !== 'down') error(400, 'Direction must be up or down');
+
+	const env = getEnv();
+	const models = await listModelsForProvider(env, providerId);
+	const idx = models.findIndex((m) => m.id === modelId);
+	if (idx === -1) error(400, 'Model not found');
+
+	const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+	if (swapIdx < 0 || swapIdx >= models.length) {
+		// Already at boundary; nothing to do
 		redirect(303, '/settings');
-	},
-);
+	}
 
-export const reorderProviderModel = form(
-	'unchecked',
-	async (data: {
-		provider_id?: unknown;
-		model_id?: unknown;
-		direction?: unknown;
-	}) => {
-		const providerId = String(data.provider_id ?? '').trim();
-		const modelId = String(data.model_id ?? '').trim();
-		const direction = String(data.direction ?? '').trim();
-
-		if (!providerId || !modelId) error(400, 'Provider ID and Model ID required');
-		if (direction !== 'up' && direction !== 'down') error(400, 'Direction must be up or down');
-
-		const env = getEnv();
-		const models = await listModelsForProvider(env, providerId);
-		const idx = models.findIndex((m) => m.id === modelId);
-		if (idx === -1) error(400, 'Model not found');
-
-		const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
-		if (swapIdx < 0 || swapIdx >= models.length) {
-			// Already at boundary; nothing to do
-			redirect(303, '/settings');
-		}
-
-		await swapModelOrder(env, providerId, modelId, models[swapIdx].id);
-		redirect(303, '/settings');
-	},
-);
+	await swapModelOrder(env, providerId, modelId, models[swapIdx].id);
+	redirect(303, '/settings');
+});
 
 export const addPresetProvider = form(
 	'unchecked',
-	async (data: {
-		id?: unknown;
-		provider_id?: unknown;
-		api_key?: unknown;
-		endpoint?: unknown;
-		model_ids?: unknown;
-	}) => {
+	async (data: { id?: unknown; provider_id?: unknown; api_key?: unknown; endpoint?: unknown; model_ids?: unknown }) => {
 		const presetId = String(data.id ?? '').trim();
 		const providerId = String(data.provider_id ?? '').trim();
 		const apiKey = String(data.api_key ?? '').trim() || null;
@@ -243,10 +209,7 @@ export const addPresetProvider = form(
 
 		// Add selected models (or all default models if none selected)
 		const selectedIds = modelIdsRaw ? modelIdsRaw.split(',').filter(Boolean) : [];
-		const modelsToAdd =
-			selectedIds.length > 0
-				? preset.defaultModels.filter((m) => selectedIds.includes(m.id))
-				: preset.defaultModels;
+		const modelsToAdd = selectedIds.length > 0 ? preset.defaultModels.filter((m) => selectedIds.includes(m.id)) : preset.defaultModels;
 
 		for (let i = 0; i < modelsToAdd.length; i++) {
 			const m = modelsToAdd[i];
@@ -264,21 +227,18 @@ export const addPresetProvider = form(
 	},
 );
 
-export const fetchPresetModels = command(
-	'unchecked',
-	async (data: { preset_id?: unknown; api_key?: unknown }) => {
-		const presetId = String(data.preset_id ?? '').trim();
-		const apiKey = String(data.api_key ?? '').trim() || undefined;
+export const fetchPresetModels = command('unchecked', async (data: { preset_id?: unknown; api_key?: unknown }) => {
+	const presetId = String(data.preset_id ?? '').trim();
+	const apiKey = String(data.api_key ?? '').trim() || undefined;
 
-		if (!presetId) error(400, 'Preset ID required');
-		const preset = getPresetById(presetId);
-		if (!preset) error(400, `Unknown preset: ${presetId}`);
-		if (!preset.canFetchModels) error(400, `Preset ${presetId} does not support model fetching`);
+	if (!presetId) error(400, 'Preset ID required');
+	const preset = getPresetById(presetId);
+	if (!preset) error(400, `Unknown preset: ${presetId}`);
+	if (!preset.canFetchModels) error(400, `Preset ${presetId} does not support model fetching`);
 
-		if (presetId === 'openrouter') {
-			return await fetchOpenRouterModels(apiKey);
-		}
+	if (presetId === 'openrouter') {
+		return await fetchOpenRouterModels(apiKey);
+	}
 
-		return [];
-	},
-);
+	return [];
+});

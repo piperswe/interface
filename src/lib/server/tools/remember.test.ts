@@ -13,6 +13,7 @@ function makeCtx(overrides: Partial<ToolContext> = {}): ToolContext {
 		env,
 		conversationId: 'conv-id',
 		assistantMessageId: 'asst-id',
+		modelId: 'p/m',
 		...overrides,
 	};
 }

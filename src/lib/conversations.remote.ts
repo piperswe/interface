@@ -1,11 +1,6 @@
 import { command, form, getRequestEvent } from '$app/server';
 import { error, redirect } from '@sveltejs/kit';
-import {
-	archiveConversation,
-	createConversation,
-	deleteConversation,
-	unarchiveConversation,
-} from '$lib/server/conversations';
+import { archiveConversation, createConversation, deleteConversation, unarchiveConversation } from '$lib/server/conversations';
 import { getConversationStub } from '$lib/server/durable_objects';
 import { CONVERSATION_ID_PATTERN } from '$lib/conversation-id';
 
@@ -25,27 +20,32 @@ function stubFor(id: string) {
 // buttons throughout the app. Accepts an optional client-pre-allocated id so
 // the UI can navigate optimistically while the row is created in the
 // background.
-export const createNewConversation = command(
-	'unchecked',
-	async (input: { id?: string } | void) => {
-		const env = getEnv();
-		const requested = input && typeof input.id === 'string' ? input.id : null;
-		if (requested != null && !CONVERSATION_ID_PATTERN.test(requested)) {
-			error(400, `invalid conversation id: ${requested}`);
-		}
-		const id = await createConversation(env, requested ?? undefined);
-		return { id };
-	},
-);
+export const createNewConversation = command('unchecked', async (input: { id?: string } | void) => {
+	const env = getEnv();
+	const requested = input && typeof input.id === 'string' ? input.id : null;
+	if (requested != null && !CONVERSATION_ID_PATTERN.test(requested)) {
+		error(400, `invalid conversation id: ${requested}`);
+	}
+	const id = await createConversation(env, requested ?? undefined);
+	return { id };
+});
 
 // Form: send a user message into a conversation. Per-conversation instance via
 // `.for(conversationId)` — that namespaces the form so result/pending state
 // doesn't bleed between concurrent forms.
+//
+// `attachments_trailer` is appended to `content` server-side; the compose
+// form pre-builds it from completed uploads (paths under /workspace/) so the
+// model sees them in its view of the user message. Splitting it from
+// `content` lets the textarea remain a clean reflection of what the user
+// typed while the trailer rides along to the LLM.
 export const sendMessage = form(
 	'unchecked',
-	async (data: { conversationId?: unknown; content?: unknown; model?: unknown }) => {
+	async (data: { conversationId?: unknown; content?: unknown; model?: unknown; attachments_trailer?: unknown }) => {
 		const conversationId = String(data.conversationId ?? '');
-		const content = String(data.content ?? '');
+		const baseContent = String(data.content ?? '');
+		const trailer = String(data.attachments_trailer ?? '');
+		const content = trailer ? baseContent + trailer : baseContent;
 		const model = String(data.model ?? '');
 		const stub = stubFor(conversationId);
 		const result = await stub.addUserMessage(conversationId, content, model);
@@ -70,37 +70,28 @@ export const regenerateTitle = command('unchecked', async (conversationId: strin
 
 // Command: set the per-conversation thinking-token budget. `null` disables
 // extended thinking; positive integers cap it.
-export const setThinkingBudget = command(
-	'unchecked',
-	async (input: { conversationId: string; budget: number | null }) => {
-		const stub = stubFor(input.conversationId);
-		await stub.setThinkingBudget(input.conversationId, input.budget);
-		return { ok: true as const };
-	},
-);
+export const setThinkingBudget = command('unchecked', async (input: { conversationId: string; budget: number | null }) => {
+	const stub = stubFor(input.conversationId);
+	await stub.setThinkingBudget(input.conversationId, input.budget);
+	return { ok: true as const };
+});
 
 // Command: override the global system prompt for this conversation only.
 // `null` (or empty string) clears the override and falls back to the global
 // setting / default.
-export const setConversationSystemPrompt = command(
-	'unchecked',
-	async (input: { conversationId: string; prompt: string | null }) => {
-		const stub = stubFor(input.conversationId);
-		await stub.setSystemPrompt(input.conversationId, input.prompt);
-		return { ok: true as const };
-	},
-);
+export const setConversationSystemPrompt = command('unchecked', async (input: { conversationId: string; prompt: string | null }) => {
+	const stub = stubFor(input.conversationId);
+	await stub.setSystemPrompt(input.conversationId, input.prompt);
+	return { ok: true as const };
+});
 
 // Command: pick a saved Style for this conversation. `null` clears the
 // selection.
-export const setConversationStyle = command(
-	'unchecked',
-	async (input: { conversationId: string; styleId: number | null }) => {
-		const stub = stubFor(input.conversationId);
-		await stub.setStyle(input.conversationId, input.styleId);
-		return { ok: true as const };
-	},
-);
+export const setConversationStyle = command('unchecked', async (input: { conversationId: string; styleId: number | null }) => {
+	const stub = stubFor(input.conversationId);
+	await stub.setStyle(input.conversationId, input.styleId);
+	return { ok: true as const };
+});
 
 // Command: abort the current in-flight generation in this conversation.
 // Persists whatever partial content exists as a complete message.

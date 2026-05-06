@@ -69,7 +69,10 @@ export class OpenAILLM implements LLM {
 				...this.#extraBody,
 			};
 
-			const stream = await this.#client.chat.completions.create((body as unknown) as Parameters<OpenAI['chat']['completions']['create']>[0], request.signal ? { signal: request.signal } : undefined);
+			const stream = await this.#client.chat.completions.create(
+				body as unknown as Parameters<OpenAI['chat']['completions']['create']>[0],
+				request.signal ? { signal: request.signal } : undefined,
+			);
 
 			for await (const chunk of stream as AsyncIterable<ChatCompletionChunk>) {
 				lastChunk = chunk;
@@ -128,21 +131,15 @@ export class OpenAILLM implements LLM {
 						usage: {
 							inputTokens: u.prompt_tokens ?? 0,
 							outputTokens: u.completion_tokens ?? 0,
-							totalTokens:
-								u.total_tokens ??
-								(u.prompt_tokens ?? 0) + (u.completion_tokens ?? 0),
-							...(u.prompt_tokens_details?.cached_tokens != null
-								? { cacheReadInputTokens: u.prompt_tokens_details.cached_tokens }
-								: {}),
+							totalTokens: u.total_tokens ?? (u.prompt_tokens ?? 0) + (u.completion_tokens ?? 0),
+							...(u.prompt_tokens_details?.cached_tokens != null ? { cacheReadInputTokens: u.prompt_tokens_details.cached_tokens } : {}),
 							...(u.prompt_tokens_details?.cache_write_tokens != null
 								? { cacheCreationInputTokens: u.prompt_tokens_details.cache_write_tokens }
 								: {}),
 							...(u.completion_tokens_details?.reasoning_tokens != null
 								? { thinkingTokens: u.completion_tokens_details.reasoning_tokens }
 								: {}),
-							...(typeof u.cost === 'number' && Number.isFinite(u.cost)
-								? { cost: u.cost }
-								: {}),
+							...(typeof u.cost === 'number' && Number.isFinite(u.cost) ? { cost: u.cost } : {}),
 						},
 					};
 				}
@@ -222,7 +219,31 @@ function toOpenAIMessages(systemPrompt: string | undefined, messages: Message[])
 			if (!result) {
 				throw new Error('tool role message has no tool_result block');
 			}
-			out.push({ role: 'tool', tool_call_id: result.toolUseId, content: result.content });
+			// OpenAI's `tool` role only accepts string content. When a tool
+			// returns array content with images (e.g. sandbox_load_image), emit
+			// a stub string in the tool message and a follow-up synthetic user
+			// message carrying the images. The next assistant turn sees both
+			// in history; OpenAI permits user messages between tool_result and
+			// the next assistant turn.
+			if (typeof result.content === 'string') {
+				out.push({ role: 'tool', tool_call_id: result.toolUseId, content: result.content });
+				continue;
+			}
+			const textPieces = result.content.filter((b): b is { type: 'text'; text: string } => b.type === 'text').map((b) => b.text);
+			const imagePieces = result.content.filter((b): b is { type: 'image'; mimeType: string; data: string } => b.type === 'image');
+			const stubText = textPieces.length > 0 ? textPieces.join('\n') : '[image returned — see following user message]';
+			out.push({ role: 'tool', tool_call_id: result.toolUseId, content: stubText });
+			if (imagePieces.length > 0) {
+				const userContent: Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }> = [];
+				if (textPieces.length > 0) userContent.push({ type: 'text', text: textPieces.join('\n') });
+				for (const img of imagePieces) {
+					userContent.push({
+						type: 'image_url',
+						image_url: { url: `data:${img.mimeType};base64,${img.data}` },
+					});
+				}
+				out.push({ role: 'user', content: userContent } as ChatCompletionMessageParam);
+			}
 			continue;
 		}
 		// assistant

@@ -13,21 +13,20 @@ export type TextContent = { type: 'text'; text: string };
 export type ImageContent = { type: 'image'; mimeType: string; data: string };
 export type FileContent = { type: 'file'; mimeType: string; data: string; name?: string };
 export type ToolUseContent = { type: 'tool_use'; id: string; name: string; input: unknown; thoughtSignature?: string };
+// Discriminated union of blocks a tool can return as part of an array-shaped
+// tool_result. `text` carries narration; `image` carries a base64-encoded
+// image with its mime type. Tools that return only text continue to use the
+// string form below.
+export type ToolResultBlock = { type: 'text'; text: string } | { type: 'image'; mimeType: string; data: string };
 export type ToolResultContent = {
 	type: 'tool_result';
 	toolUseId: string;
-	content: string;
+	content: string | ToolResultBlock[];
 	isError?: boolean;
 };
 export type ThinkingContent = { type: 'thinking'; text: string; signature?: string };
 
-export type ContentBlock =
-	| TextContent
-	| ImageContent
-	| FileContent
-	| ToolUseContent
-	| ToolResultContent
-	| ThinkingContent;
+export type ContentBlock = TextContent | ImageContent | FileContent | ToolUseContent | ToolResultContent | ThinkingContent;
 
 export type Message = {
 	role: Role;
@@ -44,9 +43,7 @@ export type ThinkingConfig = { type: 'enabled'; budgetTokens: number } | { type:
 
 export type ReasoningEffort = 'xhigh' | 'high' | 'medium' | 'low' | 'minimal' | 'none';
 
-export type ReasoningConfig =
-	| { type: 'max_tokens'; maxTokens: number }
-	| { type: 'effort'; effort: ReasoningEffort };
+export type ReasoningConfig = { type: 'max_tokens'; maxTokens: number } | { type: 'effort'; effort: ReasoningEffort };
 
 export type CacheControl = { type: 'ephemeral' } | null;
 

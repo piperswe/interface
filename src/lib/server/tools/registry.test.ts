@@ -22,7 +22,7 @@ const throwingTool: Tool = {
 };
 
 describe('ToolRegistry', () => {
-	const ctx = { env, conversationId: 'c', assistantMessageId: 'a' };
+	const ctx = { env, conversationId: 'c', assistantMessageId: 'a', modelId: 'p/m' };
 
 	it('registers and executes a tool', async () => {
 		const registry = new ToolRegistry().register(echoTool);
