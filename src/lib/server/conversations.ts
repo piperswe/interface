@@ -28,7 +28,7 @@ export async function listArchivedConversations(env: Env): Promise<Conversation[
 // background create resolves).
 export async function createConversation(env: Env, id: string = uuid()): Promise<string> {
 	const ts = now();
-	await env.DB.prepare(`INSERT OR IGNORE INTO conversations (id, title, created_at, updated_at) VALUES (?, 'New conversation', ?, ?)`)
+	await env.DB.prepare(`INSERT OR IGNORE INTO conversations (id, title, created_at, updated_at, thinking_budget) VALUES (?, 'New conversation', ?, ?, 4096)`)
 		.bind(id, ts, ts)
 		.run();
 	await indexTitle(env, id, 'New conversation', ts);
