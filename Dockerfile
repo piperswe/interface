@@ -81,6 +81,7 @@ RUN apt-get update \
     xdotool \
     imagemagick \
     task-lxqt-desktop \
+    s3fs \
  && apt-get clean -y \
  && rm -rf /var/lib/apt/lists/*
 
