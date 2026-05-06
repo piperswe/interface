@@ -566,6 +566,33 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		this.__titleLLMOverrideCalls = [];
 	}
 
+	// Test-only synchronization barriers. Each entry is awaited inside the
+	// tool-execution loop just before the corresponding `registry.execute()`
+	// call. Lets a test hold the loop while one or more tools are "in
+	// flight" so it can call `abortGeneration` (and queue a follow-up turn)
+	// at a deterministic point in time. Each `__armToolExecBarrier` enqueues
+	// one hold; the next tool exec to run pops the front of the queue and
+	// awaits it. `__releaseToolExecBarrier(slot)` resolves the hold at
+	// `slot` (FIFO insertion order, 0-based).
+	__toolExecHolds: Array<Promise<void>> = [];
+	#toolExecReleases: Array<() => void> = [];
+
+	async __armToolExecBarrier(): Promise<number> {
+		let release!: () => void;
+		const promise = new Promise<void>((r) => { release = r; });
+		this.__toolExecHolds.push(promise);
+		this.#toolExecReleases.push(release);
+		return this.#toolExecReleases.length - 1;
+	}
+
+	async __releaseToolExecBarrier(slot: number): Promise<void> {
+		const release = this.#toolExecReleases[slot];
+		if (release) {
+			this.#toolExecReleases[slot] = () => {};
+			release();
+		}
+	}
+
 	async #routeLLM(
 		globalId: string,
 		opts: { purpose?: 'main' | 'title' } = {},
@@ -818,6 +845,14 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 						streaming: true,
 						startedAt: callStartedAt,
 					});
+					// Test-only synchronization point: lets tests pause the loop
+					// after the preliminary tool_result is published but before the
+					// real tool runs, so abortGeneration can fire while the tool is
+					// "in flight." A no-op outside of tests.
+					if (this.__toolExecHolds.length > 0) {
+						const hold = this.__toolExecHolds.shift()!;
+						await hold;
+					}
 					const result = await registry.execute(
 						{
 							env: this.env,
@@ -839,6 +874,14 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 						call.name,
 						call.input,
 					);
+					// Regression: abortGeneration may have fired while the tool was
+					// running. If so, #inProgress is null (or for a different
+					// message that started in the meantime) and the persisted
+					// row already reflects the abort. Bail out before touching
+					// the DB so we don't overwrite the abort state with the
+					// post-exec result, and don't cancel an unrelated message's
+					// flush timer.
+					if (!this.#inProgress || this.#inProgress.messageId !== assistantId) break;
 					const callEndedAt = nowMs();
 					// Swap the preliminary streaming part for the final result.
 					const partsIdx = parts.findIndex((p) => p.type === 'tool_result' && p.toolUseId === call.id);
