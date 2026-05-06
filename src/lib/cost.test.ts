@@ -286,16 +286,19 @@ describe('computeConversationCost', () => {
 		expect(result.total).toBeCloseTo(0.075, 6);
 	});
 
-	it('skips tool messages and counts only assistant turns', () => {
+	it('skips system messages and counts only assistant turns', () => {
+		// `computeConversationCost` only sums turns with role==='assistant'.
+		// Compaction injects role='system' summaries that carry no usage of
+		// their own; this guards against them ever being billed.
 		const messages: MessageRow[] = [
 			asst({
 				id: 'a1',
 				meta: { startedAt: 0, firstTokenAt: 0, lastChunk: null, usage: { inputTokens: 0, outputTokens: 0, cost: 1 } },
 			}),
 			{
-				id: 't1',
-				role: 'tool',
-				content: 'tool output',
+				id: 's1',
+				role: 'system',
+				content: 'Previous conversation summary: ...',
 				model: null,
 				status: 'complete',
 				error: null,
