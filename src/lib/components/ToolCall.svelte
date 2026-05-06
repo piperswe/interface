@@ -66,6 +66,12 @@
 			: null,
 	);
 
+	const loadImageInput = $derived(
+		call.name === 'sandbox_load_image'
+			? (call.input as { path?: string })
+			: null,
+	);
+
 	// Parse the structured exec result (only valid when isDone)
 	type ExecParsed = { exitCode: number | null; success: boolean | null; stdout: string; stderr: string };
 	function parseExecResult(content: string): ExecParsed {
@@ -158,6 +164,27 @@
 		call.name === 'web_search' && result && isDone ? parseSearchResults(resultText) : [],
 	);
 
+	type LoadImageParsed = {
+		images: { mimeType: string; data: string }[];
+		text: string;
+	};
+	function parseLoadImageResult(c: ToolResultRecord['content']): LoadImageParsed {
+		if (typeof c === 'string') return { images: [], text: c };
+		const images: { mimeType: string; data: string }[] = [];
+		const texts: string[] = [];
+		for (const b of c) {
+			if (b.type === 'image') images.push({ mimeType: b.mimeType, data: b.data });
+			else if (b.type === 'text') texts.push(b.text);
+		}
+		return { images, text: texts.join('\n') };
+	}
+
+	const loadImageParsed = $derived(
+		call.name === 'sandbox_load_image' && result && isDone && !isError
+			? parseLoadImageResult(result.content)
+			: null,
+	);
+
 	function firstLine(s: string, max = 80): string {
 		const line = s.split('\n').find((l) => l.trim().length > 0) ?? '';
 		const trimmed = line.trim();
@@ -178,7 +205,9 @@
 						? webSearchInput.query
 						: fileOpInput?.path
 							? fileOpInput.path
-							: null,
+							: loadImageInput?.path
+								? loadImageInput.path
+								: null,
 	);
 
 	const toolLabel = $derived(
@@ -200,7 +229,9 @@
 										? 'mkdir'
 										: call.name === 'sandbox_exists'
 											? 'exists'
-											: call.name,
+											: call.name === 'sandbox_load_image'
+												? 'image'
+												: call.name,
 	);
 
 	const startedAt = $derived(result?.startedAt ?? call.startedAt ?? null);
@@ -429,6 +460,36 @@
 				</div>
 			{:else}
 				<div class="pending-output">running…</div>
+			{/if}
+
+		<!-- ── sandbox_load_image ── -->
+		{:else if call.name === 'sandbox_load_image' && loadImageInput}
+			<div class="file-path">
+				<span class="path-label">image</span>
+				<span class="path-val">{loadImageInput.path ?? ''}</span>
+			</div>
+			{#if !result || isStreaming}
+				<div class="pending-output">loading…</div>
+			{:else if isError}
+				<div class="terminal-output error"><pre><code>{resultText}</code></pre></div>
+			{:else if loadImageParsed && loadImageParsed.images.length > 0}
+				<div class="image-previews">
+					{#each loadImageParsed.images as img, i (i)}
+						<img
+							class="image-preview"
+							src={`data:${img.mimeType};base64,${img.data}`}
+							alt={loadImageInput.path ?? 'loaded image'}
+							loading="lazy"
+							decoding="async"
+						/>
+					{/each}
+				</div>
+				{#if loadImageParsed.text}
+					<div class="meta-row"><span class="meta-val">{loadImageParsed.text}</span></div>
+				{/if}
+			{:else}
+				<!-- non-vision-model fallback: content is a plain string -->
+				<div class="terminal-output"><pre><code>{resultText}</code></pre></div>
 			{/if}
 
 		<!-- ── generic fallback ── -->
@@ -942,5 +1003,24 @@
 		margin: 0;
 		color: var(--fg);
 		word-break: break-all;
+	}
+
+	.image-previews {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.4rem;
+		padding: 0.3rem;
+		background: var(--code-block-bg);
+		border-radius: var(--bs-border-radius-sm);
+	}
+
+	.image-preview {
+		max-width: 100%;
+		max-height: 320px;
+		object-fit: contain;
+		border: 1px solid var(--border-soft);
+		border-radius: var(--bs-border-radius-sm);
+		background: #000;
+		display: block;
 	}
 </style>
