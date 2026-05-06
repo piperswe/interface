@@ -113,6 +113,101 @@ describe('computeCost', () => {
 		});
 		expect(result.llmCost).toBeCloseTo(2, 6);
 	});
+
+	it('handles partial pricing (only output rate set)', () => {
+		const result = computeCost({
+			usage: { inputTokens: 1_000_000, outputTokens: 500_000 },
+			model: { inputCostPerMillionTokens: null, outputCostPerMillionTokens: 8 },
+			webSearchCount: 0,
+			kagiCostPer1000Searches: 25,
+		});
+		// 0.5M * $8/M = $4
+		expect(result.llmCost).toBeCloseTo(4, 6);
+	});
+
+	it('falls back to per-million pricing when usage.cost is NaN', () => {
+		// NaN is not "finite" → falls through to per-million pricing.
+		const result = computeCost({
+			usage: { inputTokens: 1_000_000, outputTokens: 0, cost: NaN },
+			model,
+			webSearchCount: 0,
+			kagiCostPer1000Searches: 25,
+		});
+		expect(result.llmCost).toBeCloseTo(3, 6);
+	});
+
+	it('falls back to per-million pricing when usage.cost is Infinity', () => {
+		const result = computeCost({
+			usage: { inputTokens: 1_000_000, outputTokens: 0, cost: Infinity },
+			model,
+			webSearchCount: 0,
+			kagiCostPer1000Searches: 25,
+		});
+		expect(result.llmCost).toBeCloseTo(3, 6);
+	});
+
+	it('treats undefined token fields as zero', () => {
+		const result = computeCost({
+			usage: { inputTokens: 1_000_000 } as never,
+			model,
+			webSearchCount: 0,
+			kagiCostPer1000Searches: 25,
+		});
+		// outputTokens defaults to 0; only input is billed.
+		expect(result.llmCost).toBeCloseTo(3, 6);
+	});
+
+	it('webSearchCost is zero when count is zero, NaN, negative, or kagi cost is invalid', () => {
+		const baseModel = { inputCostPerMillionTokens: null, outputCostPerMillionTokens: null };
+		expect(
+			computeCost({ usage: null, model: baseModel, webSearchCount: 0, kagiCostPer1000Searches: 25 })
+				.webSearchCost,
+		).toBe(0);
+		expect(
+			computeCost({
+				usage: null,
+				model: baseModel,
+				webSearchCount: NaN as number,
+				kagiCostPer1000Searches: 25,
+			}).webSearchCost,
+		).toBe(0);
+		expect(
+			computeCost({
+				usage: null,
+				model: baseModel,
+				webSearchCount: -3,
+				kagiCostPer1000Searches: 25,
+			}).webSearchCost,
+		).toBe(0);
+		// Invalid kagi cost falls back to 0.
+		expect(
+			computeCost({
+				usage: null,
+				model: baseModel,
+				webSearchCount: 10,
+				kagiCostPer1000Searches: NaN as number,
+			}).webSearchCost,
+		).toBe(0);
+		expect(
+			computeCost({
+				usage: null,
+				model: baseModel,
+				webSearchCount: 10,
+				kagiCostPer1000Searches: -5,
+			}).webSearchCost,
+		).toBe(0);
+	});
+
+	it('total stays null when both LLM cost is null and search cost is zero', () => {
+		const result = computeCost({
+			usage: null,
+			model: null,
+			webSearchCount: 0,
+			kagiCostPer1000Searches: 25,
+		});
+		expect(result.total).toBeNull();
+		expect(result.webSearchCost).toBe(0);
+	});
 });
 
 describe('computeConversationCost', () => {
@@ -191,6 +286,27 @@ describe('computeConversationCost', () => {
 		expect(result.total).toBeCloseTo(0.075, 6);
 	});
 
+	it('skips tool messages and counts only assistant turns', () => {
+		const messages: MessageRow[] = [
+			asst({
+				id: 'a1',
+				meta: { startedAt: 0, firstTokenAt: 0, lastChunk: null, usage: { inputTokens: 0, outputTokens: 0, cost: 1 } },
+			}),
+			{
+				id: 't1',
+				role: 'tool',
+				content: 'tool output',
+				model: null,
+				status: 'complete',
+				error: null,
+				createdAt: 0,
+				meta: { startedAt: 0, firstTokenAt: 0, lastChunk: null, usage: { inputTokens: 99, outputTokens: 99, cost: 99 } },
+			},
+		];
+		const result = computeConversationCost(messages, lookup, 25);
+		expect(result.llmCost).toBeCloseTo(1, 6);
+	});
+
 	it('contributes zero LLM cost for messages whose model is no longer registered', () => {
 		// Regression: removed/renamed models used to error or null out the
 		// conversation total. They now contribute zero LLM cost (and any
@@ -226,5 +342,22 @@ describe('countWebSearches', () => {
 			{ type: 'tool_use', id: '2', name: 'kagi_search', input: {} },
 		];
 		expect(countWebSearches(parts, ['kagi_search'])).toBe(2);
+	});
+
+	it('does not double-count when a name appears in both the default set and extraNames', () => {
+		const parts: MessagePart[] = [
+			{ type: 'tool_use', id: '1', name: 'web_search', input: {} },
+		];
+		// 'web_search' is built-in; passing it in extraNames again should not
+		// matter (Set dedupe).
+		expect(countWebSearches(parts, ['web_search'])).toBe(1);
+	});
+
+	it('ignores tool_result and text parts even when their text mentions web_search', () => {
+		const parts: MessagePart[] = [
+			{ type: 'text', text: 'I called web_search' },
+			{ type: 'tool_result', toolUseId: 't1', content: 'web_search results', isError: false },
+		];
+		expect(countWebSearches(parts)).toBe(0);
 	});
 });
