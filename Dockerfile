@@ -47,7 +47,6 @@ RUN apt-get update \
     ripgrep \
     fd-find \
     bat \
-    eza \
     tree \
     default-jdk \
     cmake \
@@ -60,18 +59,15 @@ RUN apt-get update \
     netcat-openbsd \
     jq \
     httpie \
-    xh \
     openssl \
     tcpdump \
     pandoc \
     libreoffice \
-    chromium \
-    firefox-esr \
     ffmpeg \
     xdotool \
     imagemagick \
-    task-lxqt-desktop \
     s3fs \
+    libimage-exiftool-perl \
  && apt-get clean -y \
  && rm -rf /var/lib/apt/lists/*
 
