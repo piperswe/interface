@@ -644,7 +644,7 @@ const IMAGE_EXTENSIONS: Record<string, string> = {
 	jpg: 'image/jpeg',
 	jpeg: 'image/jpeg',
 	gif: 'image/gif',
-	webp: 'image/webp',
+	webp: 'image/jpeg',
 };
 
 // Cap the in-context image size. Provider request bodies and token
@@ -753,8 +753,46 @@ export function createSandboxLoadImageTool(deps: SandboxLoadImageDeps): Tool {
 			}
 
 			const bytes = new Uint8Array(await obj.arrayBuffer());
-			const base64 = bytesToBase64(bytes);
 			const filename = path.split('/').pop() ?? path;
+
+			// Use the Images binding to resize before encoding. DO SQLite has a
+			// 2 MB per-value limit; a raw 5 MB image hits that after base64 encoding.
+			// Resizing to ≤1568 px on each side keeps the encoded blob well under
+			// the limit while preserving useful detail for vision models.
+			if (ctx.env.IMAGES) {
+				try {
+					const stream = new ReadableStream<Uint8Array>({
+						start(controller) {
+							controller.enqueue(bytes);
+							controller.close();
+						},
+					});
+					const resizedResponse = (
+						await ctx.env.IMAGES.input(stream)
+							.transform({ width: 1568, height: 1568, fit: 'scale-down' })
+							.output({ format: 'image/jpeg' })
+					).response();
+					const resizedBytes = new Uint8Array(await resizedResponse.arrayBuffer());
+					const resizedBase64 = bytesToBase64(resizedBytes);
+					return {
+						content: [
+							{
+								type: 'text',
+								text: `Loaded ${filename} (image/jpeg, ${resizedBytes.length} bytes) into context.`,
+							},
+							{
+								type: 'image',
+								mimeType: 'image/jpeg',
+								data: resizedBase64,
+							},
+						],
+					};
+				} catch {
+					// Fall through to the unresized path below.
+				}
+			}
+
+			const base64 = bytesToBase64(bytes);
 			return {
 				content: [
 					{
