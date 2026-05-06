@@ -12,6 +12,8 @@
 	import { confirmToastSubmit, toastSubmit } from '$lib/form-actions';
 	import { clickOutside } from '$lib/click-outside';
 	import { pushToast } from '$lib/toasts';
+	import { computeConversationCost, type ModelPricing } from '$lib/cost';
+	import { fmtUsd } from '$lib/formatters';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -176,6 +178,24 @@
 	const contextUsed = $derived(
 		[...convState.messages].reverse().find((m) => m.role === 'assistant' && m.meta?.usage?.inputTokens)?.meta?.usage?.inputTokens ?? 0,
 	);
+	const modelPricingIndex = $derived(
+		new Map<string, ModelPricing>(
+			data.models.map((m) => [
+				`${m.providerId}/${m.id}`,
+				{
+					inputCostPerMillionTokens: m.inputCostPerMillionTokens,
+					outputCostPerMillionTokens: m.outputCostPerMillionTokens,
+				},
+			]),
+		),
+	);
+	const conversationCost = $derived(
+		computeConversationCost(
+			convState.messages,
+			(id) => modelPricingIndex.get(id) ?? null,
+			data.kagiCostPer1000Searches,
+		),
+	);
 
 	const mdRunner = createMarkdownRunner(
 		() => convState,
@@ -287,6 +307,12 @@
 <div class="conversation-layout d-flex flex-column flex-fill min-h-0">
 	<div class="conversation-header d-flex align-items-center justify-content-between gap-3 flex-wrap border-bottom px-side py-2">
 		<h1 class="conversation-title fs-6 fw-medium m-0 flex-fill text-truncate">{data.conversation.title}</h1>
+		{#if conversationCost.total != null && conversationCost.total > 0}
+			<span
+				class="conversation-cost small text-muted font-monospace"
+				title="Running total cost for this conversation"
+			>{fmtUsd(conversationCost.total)}</span>
+		{/if}
 		<button
 			type="button"
 			title="Regenerate title"
@@ -466,6 +492,10 @@
 
 	.conversation-title {
 		min-width: 0;
+	}
+
+	.conversation-cost {
+		font-variant-numeric: tabular-nums;
 	}
 
 	.title-action-button {

@@ -7,6 +7,15 @@ export function fmtMs(ms: number): string {
 	return ms < 1000 ? ms + ' ms' : (ms / 1000).toFixed(2) + ' s';
 }
 
+export function fmtUsd(value: number): string {
+	if (value === 0) return '$0.00';
+	// 4 fractional digits below $1, 2 above. Anything below 0.0001 collapses
+	// to "<$0.0001" so it doesn't render as "$0.0000".
+	if (value > 0 && value < 0.0001) return '<$0.0001';
+	const digits = value < 1 ? 4 : 2;
+	return '$' + value.toFixed(digits);
+}
+
 export function fmtThroughput(completionTokens: number | undefined, totalMs: number): string {
 	if (!completionTokens || !totalMs) return '—';
 	return (completionTokens / (totalMs / 1000)).toFixed(1) + ' tok/s';
