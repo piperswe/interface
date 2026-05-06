@@ -13,7 +13,7 @@
 //
 // Web-search calls (Kagi) are billed independently and added on top.
 
-import type { ConversationUsage, MessagePart } from '$lib/types/conversation';
+import type { ConversationUsage, MessagePart, MessageRow } from '$lib/types/conversation';
 
 export type CostInput = {
 	usage: ConversationUsage | null | undefined;
@@ -67,6 +67,42 @@ function computeWebSearchCost(searches: number, costPer1000: number): number {
 	if (!Number.isFinite(searches) || searches <= 0) return 0;
 	if (!Number.isFinite(costPer1000) || costPer1000 <= 0) return 0;
 	return (searches * costPer1000) / 1000;
+}
+
+export type ModelPricing = {
+	inputCostPerMillionTokens: number | null;
+	outputCostPerMillionTokens: number | null;
+};
+
+// Sum the per-assistant-message costs into a single conversation total.
+// `lookupModelPricing` receives the global model id stored on each message
+// (e.g. "openrouter/anthropic/claude-sonnet"). Messages whose model is no
+// longer in the configured registry contribute their provider-reported cost
+// (if any) and zero LLM cost otherwise — search costs are still counted.
+export function computeConversationCost(
+	messages: readonly MessageRow[],
+	lookupModelPricing: (modelId: string) => ModelPricing | null,
+	kagiCostPer1000Searches: number,
+): CostBreakdown {
+	let llmTotal = 0;
+	let llmAny = false;
+	let webSearchTotal = 0;
+	for (const m of messages) {
+		if (m.role !== 'assistant') continue;
+		const usage = m.meta?.usage ?? null;
+		const model = m.model ? lookupModelPricing(m.model) : null;
+		const webSearchCount = countWebSearches(m.parts);
+		const cost = computeCost({ usage, model, webSearchCount, kagiCostPer1000Searches });
+		if (cost.llmCost != null) {
+			llmAny = true;
+			llmTotal += cost.llmCost;
+		}
+		webSearchTotal += cost.webSearchCost;
+	}
+	const llmCost = llmAny ? llmTotal : null;
+	const total =
+		!llmAny && webSearchTotal === 0 ? null : (llmAny ? llmTotal : 0) + webSearchTotal;
+	return { llmCost, webSearchCost: webSearchTotal, total };
 }
 
 // Count tool_use parts whose name matches a web-search tool. The default

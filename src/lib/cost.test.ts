@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { computeCost, countWebSearches } from './cost';
-import type { MessagePart } from '$lib/types/conversation';
+import { computeCost, computeConversationCost, countWebSearches } from './cost';
+import type { MessagePart, MessageRow } from '$lib/types/conversation';
 
 describe('computeCost', () => {
 	const model = {
@@ -112,6 +112,95 @@ describe('computeCost', () => {
 			kagiCostPer1000Searches: 25,
 		});
 		expect(result.llmCost).toBeCloseTo(2, 6);
+	});
+});
+
+describe('computeConversationCost', () => {
+	const pricing = { inputCostPerMillionTokens: 3, outputCostPerMillionTokens: 15 };
+	const lookup = (id: string) => (id === 'p/m' ? pricing : null);
+
+	function asst(over: Partial<MessageRow>): MessageRow {
+		return {
+			id: 'a',
+			role: 'assistant',
+			content: '',
+			model: 'p/m',
+			status: 'complete',
+			error: null,
+			createdAt: 0,
+			meta: null,
+			...over,
+		};
+	}
+
+	it('returns null total for an empty conversation', () => {
+		expect(computeConversationCost([], lookup, 25).total).toBeNull();
+	});
+
+	it('skips user messages when summing', () => {
+		const messages: MessageRow[] = [
+			{
+				id: 'u',
+				role: 'user',
+				content: 'hi',
+				model: null,
+				status: 'complete',
+				error: null,
+				createdAt: 0,
+				meta: { startedAt: 0, firstTokenAt: 0, lastChunk: null, usage: { inputTokens: 999, outputTokens: 999, cost: 9 } },
+			},
+			asst({
+				id: 'a1',
+				meta: { startedAt: 0, firstTokenAt: 0, lastChunk: null, usage: { inputTokens: 0, outputTokens: 0, cost: 0.5 } },
+			}),
+		];
+		const result = computeConversationCost(messages, lookup, 25);
+		expect(result.total).toBeCloseTo(0.5, 6);
+	});
+
+	it('sums LLM cost across multiple assistant turns', () => {
+		const messages: MessageRow[] = [
+			asst({
+				id: 'a1',
+				meta: { startedAt: 0, firstTokenAt: 0, lastChunk: null, usage: { inputTokens: 0, outputTokens: 0, cost: 0.25 } },
+			}),
+			asst({
+				id: 'a2',
+				meta: { startedAt: 0, firstTokenAt: 0, lastChunk: null, usage: { inputTokens: 1_000_000, outputTokens: 0 } },
+			}),
+		];
+		// 0.25 (provider) + 1M * $3/M = $3.25
+		const result = computeConversationCost(messages, lookup, 25);
+		expect(result.llmCost).toBeCloseTo(3.25, 6);
+		expect(result.total).toBeCloseTo(3.25, 6);
+	});
+
+	it('aggregates Kagi search cost across turns', () => {
+		const parts: MessagePart[] = [
+			{ type: 'tool_use', id: 't', name: 'web_search', input: {} },
+			{ type: 'tool_use', id: 't2', name: 'web_search', input: {} },
+		];
+		const messages: MessageRow[] = [
+			asst({ id: 'a1', meta: null, parts }),
+			asst({ id: 'a2', meta: null, parts: [{ type: 'tool_use', id: 't3', name: 'web_search', input: {} }] }),
+		];
+		// 3 searches * $25/1000 = $0.075
+		const result = computeConversationCost(messages, lookup, 25);
+		expect(result.webSearchCost).toBeCloseTo(0.075, 6);
+		expect(result.llmCost).toBeNull();
+		expect(result.total).toBeCloseTo(0.075, 6);
+	});
+
+	it('contributes zero LLM cost for messages whose model is no longer registered', () => {
+		// Regression: removed/renamed models used to error or null out the
+		// conversation total. They now contribute zero LLM cost (and any
+		// provider-reported cost is still honoured) instead of poisoning the sum.
+		const messages: MessageRow[] = [
+			asst({ id: 'a1', model: 'unknown/model', meta: { startedAt: 0, firstTokenAt: 0, lastChunk: null, usage: { inputTokens: 100, outputTokens: 50 } } }),
+			asst({ id: 'a2', meta: { startedAt: 0, firstTokenAt: 0, lastChunk: null, usage: { inputTokens: 0, outputTokens: 0, cost: 0.4 } } }),
+		];
+		const result = computeConversationCost(messages, lookup, 25);
+		expect(result.llmCost).toBeCloseTo(0.4, 6);
 	});
 });
 

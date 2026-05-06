@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { MessagePart, MetaSnapshot } from '$lib/types/conversation';
-	import { fmtMs, fmtNumber } from '$lib/formatters';
+	import { fmtMs, fmtNumber, fmtUsd } from '$lib/formatters';
 	import { computeCost, countWebSearches } from '$lib/cost';
 
 	let {
@@ -29,14 +29,6 @@
 		}),
 	);
 
-	function fmtUsd(value: number): string {
-		if (value === 0) return '$0.00';
-		// 4 fractional digits below $1, 2 above. Anything below 0.0001 collapses
-		// to "<$0.0001" so it doesn't render as "$0.0000".
-		if (value > 0 && value < 0.0001) return '<$0.0001';
-		const digits = value < 1 ? 4 : 2;
-		return '$' + value.toFixed(digits);
-	}
 </script>
 
 {#if snapshot}
