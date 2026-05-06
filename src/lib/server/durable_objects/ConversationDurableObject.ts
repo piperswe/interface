@@ -487,8 +487,8 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	// Sandbox helpers
 	// -------------------------------------------------------------------------
 
-	async getSandboxPreviewPorts(): Promise<{ port: number; url: string; name?: string }[]> {
-		return getSandboxPreviewPorts(this.env, this.#getConversationId());
+	async getSandboxPreviewPorts(hostname: string): Promise<{ port: number; url: string; name?: string }[]> {
+		return getSandboxPreviewPorts(this.env, this.#getConversationId(), hostname);
 	}
 
 	async subscribe(): Promise<ReadableStream<Uint8Array>> {

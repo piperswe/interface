@@ -72,7 +72,7 @@ describe('ConversationDurableObject — artifacts & sandbox', () => {
 	it('getSandboxPreviewPorts returns an empty array gracefully when sandbox is unavailable', async () => {
 		const id = await createConversation(env);
 		const stub = stubFor(id);
-		const ports = await stub.getSandboxPreviewPorts();
+		const ports = await stub.getSandboxPreviewPorts('test.example.com');
 		expect(Array.isArray(ports)).toBe(true);
 	});
 });

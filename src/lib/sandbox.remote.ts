@@ -16,7 +16,9 @@ function stubFor(id: string) {
 
 // List currently-exposed preview ports for the conversation sandbox.
 export const getSandboxPreviewPorts = command('unchecked', async (conversationId: string) => {
+	const event = getRequestEvent();
+	const hostname = event.url.host;
 	const stub = stubFor(conversationId);
-	const ports = await stub.getSandboxPreviewPorts();
+	const ports = await stub.getSandboxPreviewPorts(hostname);
 	return { ports };
 });
