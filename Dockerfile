@@ -1,4 +1,4 @@
-FROM debian:testing
+FROM debian:unstable
 
 # Pull the sandbox server binary AND its bundled runtime executors from the
 # official image. The 0.9.x SDK's interpreter spawns python3 / node via
