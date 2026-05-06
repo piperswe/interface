@@ -3,6 +3,7 @@
 // lazily by `createHighlighter`, so each one becomes its own chunk and the
 // initial bundle stays small.
 
+import 'katex/dist/katex.min.css';
 import { Marked } from 'marked';
 import markedShiki from 'marked-shiki';
 import markedKatex from 'marked-katex-extension';

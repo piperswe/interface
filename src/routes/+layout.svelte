@@ -1,6 +1,5 @@
 <script lang="ts">
 	import '../app.scss';
-	import 'katex/dist/katex.min.css';
 	import AppShell from '$lib/components/AppShell.svelte';
 	import Toaster from '$lib/components/Toaster.svelte';
 	import { navigating, page } from '$app/state';

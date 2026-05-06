@@ -3,7 +3,6 @@
 // messages, artifacts, and tool calls. The renderer is fully async; one
 // scan per animation frame, one in-flight render per (target, revision).
 
-import { renderMarkdownClient, renderArtifactCodeClient } from './markdown.client';
 import type {
 	Artifact,
 	ConversationState,
@@ -11,6 +10,10 @@ import type {
 	MessagePart,
 	MessageRow,
 } from '$lib/types/conversation';
+
+// Start the download immediately (separate chunk, but begins resolving on
+// module init so it's ready by the time the first render is needed).
+const _markdownMod = import('./markdown.client');
 
 type CacheKey = string;
 
@@ -98,7 +101,7 @@ export function createMarkdownRunner(
 				messageContentKey(m.id),
 				text,
 				m.contentHtml,
-				() => renderMarkdownClient(text),
+				() => _markdownMod.then((m) => m.renderMarkdownClient(text)),
 				(html) => applyMessagePatch(m.id, (msg) => ({ ...msg, contentHtml: html })),
 			);
 		}
@@ -108,7 +111,7 @@ export function createMarkdownRunner(
 				messageThinkingKey(m.id),
 				text,
 				m.thinkingHtml,
-				() => renderMarkdownClient(text),
+				() => _markdownMod.then((m) => m.renderMarkdownClient(text)),
 				(html) => applyMessagePatch(m.id, (msg) => ({ ...msg, thinkingHtml: html })),
 			);
 		}
@@ -126,7 +129,7 @@ export function createMarkdownRunner(
 				partKey(messageId, index, 'text'),
 				text,
 				part.textHtml,
-				() => renderMarkdownClient(text),
+				() => _markdownMod.then((m) => m.renderMarkdownClient(text)),
 				(html) => {
 					applyPartPatch(messageId, index, text, kind, (target) => ({
 						...target,
@@ -141,7 +144,7 @@ export function createMarkdownRunner(
 				partKey(messageId, index, 'input'),
 				`${code.language}:${code.code}`,
 				part.inputHtml,
-				() => renderArtifactCodeClient(code.code, code.language),
+				() => _markdownMod.then((m) => m.renderArtifactCodeClient(code.code, code.language)),
 				(html) => {
 					applyPartPatch(messageId, index, code.code, 'tool_use', (target) => {
 						if (target.type !== 'tool_use') return target;
@@ -157,9 +160,9 @@ export function createMarkdownRunner(
 		const key = artifactKey(a.id, a.version);
 		const render =
 			a.type === 'code'
-				? () => renderArtifactCodeClient(a.content, a.language ?? 'text')
+				? () => _markdownMod.then((m) => m.renderArtifactCodeClient(a.content, a.language ?? 'text'))
 				: a.type === 'markdown'
-					? () => renderMarkdownClient(a.content)
+					? () => _markdownMod.then((m) => m.renderMarkdownClient(a.content))
 					: async () => a.content;
 		scheduleRender(key, a.content, a.contentHtml, render, (html) => {
 			applyArtifactPatch(messageId, a.id, a.version, html);
