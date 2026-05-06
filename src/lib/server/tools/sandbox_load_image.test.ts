@@ -110,16 +110,55 @@ describe('sandbox_load_image tool', () => {
 		expect(data).toBe('AQIDBAU=');
 	});
 
-	it('returns a text guidance error when the file exceeds the 5MB cap', async () => {
+	it('returns a text guidance error when the file exceeds the 5MB cap and no IMAGES binding', async () => {
 		const tool = createSandboxLoadImageTool({
 			getModels: () => [model({ supportsImageInput: true })],
 		});
 		const bytes = new Uint8Array(6 * 1024 * 1024);
 		await bucket.put(`conversations/${CONV_ID}/uploads/big.png`, bytes);
+		// ctx() uses env which has no IMAGES binding — must fall back to error
 		const result = await tool.execute(ctx(), { path: '/workspace/uploads/big.png' });
 		expect(result.isError).toBe(true);
 		expect(typeof result.content).toBe('string');
 		expect(result.content as string).toMatch(/too large/);
+	});
+
+	it('resizes via IMAGES binding instead of erroring when file exceeds the 5MB cap', async () => {
+		// Regression: large images should be fed through Cloudflare Image Resizing
+		// rather than returning a "too large" error when the IMAGES binding is present.
+		const fakeResizedBytes = new Uint8Array([0x01, 0x02, 0x03]);
+		const mockImages: ImagesBinding = {
+			input(_stream) {
+				return {
+					transform() { return this; },
+					draw() { return this; },
+					output() {
+						return Promise.resolve({
+							response: () => new Response(fakeResizedBytes),
+						// eslint-disable-next-line @typescript-eslint/no-explicit-any
+						} as any);
+					},
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				} as any;
+			},
+			info: () => Promise.resolve({ format: 'image/jpeg', fileSize: fakeResizedBytes.length, width: 100, height: 100 }),
+			hosted: {} as ImagesBinding['hosted'],
+		};
+
+		const tool = createSandboxLoadImageTool({ getModels: () => [model({ supportsImageInput: true })] });
+		const bigBytes = new Uint8Array(6 * 1024 * 1024);
+		await bucket.put(`conversations/${CONV_ID}/uploads/big.png`, bigBytes);
+		const result = await tool.execute(ctx({ env: { ...env, IMAGES: mockImages } }), {
+			path: '/workspace/uploads/big.png',
+		});
+		expect(result.isError).toBeFalsy();
+		const blocks = result.content as Array<{ type: string; mimeType?: string; data?: string }>;
+		expect(Array.isArray(blocks)).toBe(true);
+		const imageBlock = blocks.find((b) => b.type === 'image');
+		expect(imageBlock).toBeDefined();
+		expect(imageBlock!.mimeType).toBe('image/jpeg');
+		const expectedBase64 = btoa(String.fromCharCode(...fakeResizedBytes));
+		expect(imageBlock!.data).toBe(expectedBase64);
 	});
 
 	it('resizes via IMAGES binding and returns image/jpeg when binding is present', async () => {
