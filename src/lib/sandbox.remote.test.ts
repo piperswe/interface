@@ -9,7 +9,7 @@ type AnyArgs = (...args: unknown[]) => Promise<unknown>;
 const getSandboxPreviewPorts = remote.getSandboxPreviewPorts as unknown as AnyArgs;
 
 beforeEach(() => {
-	setMockRequestEvent({ platform: { env } });
+	setMockRequestEvent({ platform: { env }, url: new URL('http://test.example.com/') });
 });
 
 afterEach(async () => {
