@@ -2,7 +2,16 @@ import { env, runInDurableObject } from 'cloudflare:test';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createConversation } from '../conversations';
 import { textTurn, toolUseTurn } from '../../../../test/fakes/FakeLLM';
-import { setOverride, stubFor, waitForState } from './conversation/_test-helpers';
+import { readState, setOverride, stubFor, waitForState } from './conversation/_test-helpers';
+import type { ConversationStub } from './index';
+
+// Methods on the DO that aren't part of the public RPC interface but are
+// reachable through the stub for testing.
+type WithToolBarrier = {
+	__armToolExecBarrier(): Promise<number>;
+	__releaseToolExecBarrier(slot: number): Promise<void>;
+};
+const barrierFor = (stub: ConversationStub) => stub as unknown as WithToolBarrier;
 
 afterEach(async () => {
 	await env.DB.prepare('DELETE FROM conversations').run();
@@ -115,6 +124,102 @@ describe('ConversationDurableObject — #generate (FakeLLM)', () => {
 			expect(toolResult.endedAt!).toBeGreaterThanOrEqual(toolResult.startedAt!);
 		}
 		// Cleanup the memory the tool created so other tests start clean.
+		await env.DB.prepare('DELETE FROM memories').run();
+	});
+
+	// Regression: when the user clicks "stop" while a tool (e.g. a
+	// long-running sandbox_exec) is in flight, abortGeneration sets
+	// #inProgress = null and persists the row. Without the post-exec guard,
+	// the tool loop kept running after registry.execute returned: it
+	// updated `parts` with the late-arriving result, called
+	// `this.#cancelFlush()` (which would torch a follow-up turn's pending
+	// flush timer), and wrote `this.#inProgress!.content` back into the DB
+	// — either crashing (if nothing else was in progress) or smearing the
+	// new turn's state across the aborted row.
+	//
+	// To make the corruption deterministic we hold the aborted turn at the
+	// tool barrier, fire abortGeneration, queue a follow-up turn that ALSO
+	// blocks at its own tool barrier (so #inProgress stays set to the new
+	// message's id), then release the original barrier. With the bug
+	// present this overwrites the aborted row's tool_result with the
+	// late `remember` output. With the fix the guard short-circuits.
+	it('abortGeneration mid-tool keeps the aborted message intact when the tool later completes', { timeout: 15_000 }, async () => {
+		const id = await createConversation(env);
+		const stub = stubFor(id);
+		// First two turns call `remember` so we can park each generation at
+		// its own barrier and control the resume order precisely. The
+		// remaining turns are extras: after the aborted turn's guard short-
+		// circuits its tool loop the outer iteration loop falls through to
+		// another `llm.chat()` call (and consumes a turn) before its inner
+		// guard breaks out, so we leave a couple of harmless follow-ups in
+		// the queue for both generations to drain.
+		await setOverride(stub, [
+			toolUseTurn('t1', 'remember', { content: 'I prefer brief replies' }).events,
+			toolUseTurn('t2', 'remember', { content: 'and one more thing' }).events,
+			textTurn('throwaway').events,
+			textTurn('done').events,
+			textTurn('extra').events,
+		]);
+
+		const slotA = await barrierFor(stub).__armToolExecBarrier();
+		const started = await stub.addUserMessage(id, 'remember this', 'fake/model');
+		expect(started).toEqual({ status: 'started' });
+
+		// Wait until the tool loop publishes the preliminary streaming
+		// tool_result. At that point #generate is parked at slotA's hold,
+		// so a real abort lands while the tool is "in flight."
+		const beforeAbort = await waitForState(stub, (s) => {
+			const last = s.messages.at(-1);
+			return (last?.parts ?? []).some((p) => p.type === 'tool_result' && p.streaming === true);
+		});
+		const abortedAssistantId = beforeAbort.messages.at(-1)!.id;
+
+		await stub.abortGeneration(id);
+
+		// Arm a second hold for the follow-up turn, then queue it. The
+		// second generation will start, push the preliminary tool_result,
+		// and park itself at slotB. While it's parked, #inProgress is set
+		// to the follow-up's assistant message id — which is what makes
+		// the unguarded `this.#inProgress!.content` write at the end of
+		// the original tool loop scribble onto the wrong row.
+		const slotB = await barrierFor(stub).__armToolExecBarrier();
+		const followup = await stub.addUserMessage(id, 'second turn', 'fake/model');
+		expect(followup).toEqual({ status: 'started' });
+
+		await waitForState(stub, (s) => {
+			const last = s.messages.at(-1);
+			return (
+				last?.id !== abortedAssistantId &&
+				(last?.parts ?? []).some((p) => p.type === 'tool_result' && p.streaming === true)
+			);
+		});
+
+		// Release the aborted turn's hold first. With the bug this lands
+		// the late `remember` result on the aborted row.
+		await barrierFor(stub).__releaseToolExecBarrier(slotA);
+		// Release the follow-up turn so it can run to completion and the
+		// test can synchronize on its terminal state.
+		await barrierFor(stub).__releaseToolExecBarrier(slotB);
+
+		await waitForState(stub, (s) => {
+			const last = s.messages.at(-1);
+			return last?.role === 'assistant' && last.status === 'complete';
+		}, { timeoutMs: 5000 });
+
+		const finalState = await readState(stub);
+		const aborted = finalState.messages.find((m) => m.id === abortedAssistantId)!;
+		expect(aborted.status).toBe('complete');
+		// The persisted parts must reflect the abort, not the late-arriving
+		// `remember` result that resolved after the user clicked stop.
+		const abortedToolResult = (aborted.parts ?? []).find(
+			(p): p is import('$lib/types/conversation').ToolResultPart => p.type === 'tool_result' && p.toolUseId === 't1',
+		);
+		expect(abortedToolResult).toBeTruthy();
+		expect(abortedToolResult!.content).toBe('Aborted by user before this tool completed.');
+		expect(abortedToolResult!.isError).toBe(true);
+		expect(abortedToolResult!.streaming).toBeUndefined();
+
+		// Cleanup the memories `remember` may have written.
 		await env.DB.prepare('DELETE FROM memories').run();
 	});
 });
