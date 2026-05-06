@@ -31,7 +31,7 @@ export default defineConfig({
 		// Tests target server-side modules under `src/lib/server/`. Component
 		// behaviour is exercised through the integration tests that drive the
 		// Durable Object end-to-end; we don't run a Svelte SSR test runner here.
-		include: ['src/lib/**/*.test.ts', 'test/**/*.test.ts'],
+		include: ['src/lib/**/*.test.ts', 'src/routes/**/*.test.ts', 'test/**/*.test.ts'],
 		coverage: {
 			// V8 coverage is not supported by the Workers pool; use istanbul.
 			// https://developers.cloudflare.com/workers/testing/vitest-integration/known-issues/
