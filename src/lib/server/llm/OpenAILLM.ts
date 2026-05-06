@@ -61,7 +61,7 @@ export class OpenAILLM implements LLM {
 				...(tools ? { tools } : {}),
 				...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
 				...(request.maxTokens !== undefined ? { max_completion_tokens: request.maxTokens } : {}),
-				...(request.reasoning?.type === 'effort' && request.reasoning.effort !== 'none'
+				...(request.reasoning?.type === 'effort'
 					? { reasoning_effort: mapReasoningEffort(request.reasoning.effort) }
 					: {}),
 				// Pass through custom reasoning param (e.g. OpenRouter)
@@ -180,8 +180,10 @@ function* finalizeToolCalls(
 	}
 }
 
-function mapReasoningEffort(effort: ReasoningEffort): 'minimal' | 'low' | 'medium' | 'high' {
+function mapReasoningEffort(effort: ReasoningEffort): 'none' | 'minimal' | 'low' | 'medium' | 'high' {
 	switch (effort) {
+		case 'none':
+			return 'none';
 		case 'minimal':
 			return 'minimal';
 		case 'low':

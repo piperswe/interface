@@ -165,6 +165,21 @@ describe('AnthropicLLM', () => {
 		expect(capture.params?.thinking).toEqual({ type: 'enabled', budget_tokens: 5000 });
 	});
 
+	it('passes thinking disabled to the SDK when thinking type is disabled', async () => {
+		// Regression: { type: 'disabled' } was never forwarded — AnthropicLLM only
+		// handled 'enabled'. The disabled shape must be sent explicitly so the API
+		// receives an unambiguous signal when a thinking-capable model has thinking off.
+		const capture: { params?: { thinking?: { type: string } } } = {};
+		const llm = new AnthropicLLM(fakeAnthropic([{ type: 'message_stop' } as unknown as MessageStreamEvent], capture), 'claude-sonnet-4-6');
+		await collect(
+			llm.chat({
+				messages: [{ role: 'user', content: 'hi' }],
+				thinking: { type: 'disabled' },
+			}),
+		);
+		expect(capture.params?.thinking).toEqual({ type: 'disabled' });
+	});
+
 	it('applies cache_control to system when requested', async () => {
 		const capture: { params?: { system?: unknown } } = {};
 		const llm = new AnthropicLLM(fakeAnthropic([{ type: 'message_stop' } as unknown as MessageStreamEvent], capture), 'claude-sonnet-4-5');
