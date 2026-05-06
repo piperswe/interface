@@ -1,14 +1,4 @@
-FROM debian:unstable
-
-# Pull the sandbox server binary AND its bundled runtime executors from the
-# official image. The 0.9.x SDK's interpreter spawns python3 / node via
-# scripts at /container-server/dist/runtime/executors/{python,javascript}/...
-# which weren't being copied before — that's what produced
-#   Failed to create code context: ENOENT: ... posix_spawn 'python3'
-# (the server couldn't find the executor and reported it as a missing
-# python3). Keep this tag in lockstep with the @cloudflare/sandbox npm
-# package version in package.json.
-COPY --from=docker.io/cloudflare/sandbox:0.9.2-python /container-server /container-server
+FROM docker.io/cloudflare/sandbox:0.9.2
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -86,26 +76,3 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /workspace
-
-WORKDIR /container-server
-
-# Match the official image's interpreter pool sizing so all three pools are
-# warmed at startup.
-ENV PYTHON_POOL_MIN_SIZE=3 \
-    JAVASCRIPT_POOL_MIN_SIZE=3 \
-    TYPESCRIPT_POOL_MIN_SIZE=3
-
-# Ports commonly used by dev servers inside the sandbox (required for
-# local `wrangler dev` preview exposure; ignored in production).
-EXPOSE 3000
-EXPOSE 3001
-EXPOSE 4000
-EXPOSE 4200
-EXPOSE 5000
-EXPOSE 5173
-EXPOSE 8000
-EXPOSE 8080
-EXPOSE 9000
-EXPOSE 9001
-
-ENTRYPOINT ["/container-server/sandbox"]
