@@ -11,10 +11,9 @@ import type {
 	MessageRow,
 } from '$lib/types/conversation';
 
-let _markdownMod: Promise<typeof import('./markdown.client')> | undefined;
-function markdownMod() {
-	return (_markdownMod ??= import('./markdown.client'));
-}
+// Start the download immediately (separate chunk, but begins resolving on
+// module init so it's ready by the time the first render is needed).
+const _markdownMod = import('./markdown.client');
 
 type CacheKey = string;
 
@@ -102,7 +101,7 @@ export function createMarkdownRunner(
 				messageContentKey(m.id),
 				text,
 				m.contentHtml,
-				() => markdownMod().then((m) => m.renderMarkdownClient(text)),
+				() => _markdownMod.then((m) => m.renderMarkdownClient(text)),
 				(html) => applyMessagePatch(m.id, (msg) => ({ ...msg, contentHtml: html })),
 			);
 		}
@@ -112,7 +111,7 @@ export function createMarkdownRunner(
 				messageThinkingKey(m.id),
 				text,
 				m.thinkingHtml,
-				() => markdownMod().then((m) => m.renderMarkdownClient(text)),
+				() => _markdownMod.then((m) => m.renderMarkdownClient(text)),
 				(html) => applyMessagePatch(m.id, (msg) => ({ ...msg, thinkingHtml: html })),
 			);
 		}
@@ -130,7 +129,7 @@ export function createMarkdownRunner(
 				partKey(messageId, index, 'text'),
 				text,
 				part.textHtml,
-				() => markdownMod().then((m) => m.renderMarkdownClient(text)),
+				() => _markdownMod.then((m) => m.renderMarkdownClient(text)),
 				(html) => {
 					applyPartPatch(messageId, index, text, kind, (target) => ({
 						...target,
@@ -145,7 +144,7 @@ export function createMarkdownRunner(
 				partKey(messageId, index, 'input'),
 				`${code.language}:${code.code}`,
 				part.inputHtml,
-				() => markdownMod().then((m) => m.renderArtifactCodeClient(code.code, code.language)),
+				() => _markdownMod.then((m) => m.renderArtifactCodeClient(code.code, code.language)),
 				(html) => {
 					applyPartPatch(messageId, index, code.code, 'tool_use', (target) => {
 						if (target.type !== 'tool_use') return target;
@@ -161,9 +160,9 @@ export function createMarkdownRunner(
 		const key = artifactKey(a.id, a.version);
 		const render =
 			a.type === 'code'
-				? () => markdownMod().then((m) => m.renderArtifactCodeClient(a.content, a.language ?? 'text'))
+				? () => _markdownMod.then((m) => m.renderArtifactCodeClient(a.content, a.language ?? 'text'))
 				: a.type === 'markdown'
-					? () => markdownMod().then((m) => m.renderMarkdownClient(a.content))
+					? () => _markdownMod.then((m) => m.renderMarkdownClient(a.content))
 					: async () => a.content;
 		scheduleRender(key, a.content, a.contentHtml, render, (html) => {
 			applyArtifactPatch(messageId, a.id, a.version, html);
