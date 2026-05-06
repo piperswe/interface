@@ -61,6 +61,31 @@ describe('partsToMessages', () => {
 		const msgs = partsToMessages(parts);
 		expect(msgs.map((m) => m.role)).toEqual(['assistant', 'tool', 'assistant']);
 	});
+
+	it('preserves array tool_result content (text + image) so sandbox_load_image survives replay', () => {
+		const parts: MessagePart[] = [
+			{ type: 'tool_use', id: 't1', name: 'sandbox_load_image', input: { path: '/workspace/x.png' } },
+			{
+				type: 'tool_result',
+				toolUseId: 't1',
+				content: [
+					{ type: 'text', text: 'Loaded x.png.' },
+					{ type: 'image', mimeType: 'image/png', data: 'AAAA' },
+				],
+				isError: false,
+			},
+		];
+		const msgs = partsToMessages(parts);
+		expect(msgs).toHaveLength(2);
+		const toolBlock = (msgs[1].content as Array<{ type: string }>)[0] as {
+			type: 'tool_result';
+			content: Array<{ type: string; text?: string; mimeType?: string; data?: string }>;
+		};
+		expect(toolBlock.type).toBe('tool_result');
+		expect(Array.isArray(toolBlock.content)).toBe(true);
+		expect(toolBlock.content).toContainEqual({ type: 'text', text: 'Loaded x.png.' });
+		expect(toolBlock.content).toContainEqual({ type: 'image', mimeType: 'image/png', data: 'AAAA' });
+	});
 });
 
 describe('trimTrailingPartialOutput', () => {

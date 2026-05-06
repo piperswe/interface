@@ -211,6 +211,7 @@ export function createAgentTool(deps: AgentToolDeps, subAgents: SubAgentRow[]): 
 							env: ctx.env,
 							conversationId: ctx.conversationId,
 							assistantMessageId: ctx.assistantMessageId,
+							modelId: model,
 							signal: ctx.signal,
 						},
 						call.name,

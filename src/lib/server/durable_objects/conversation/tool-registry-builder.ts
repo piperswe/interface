@@ -47,6 +47,7 @@ export async function buildBaseToolRegistry(
 	env: Env,
 	mcpCache: McpCache,
 	mcpServers: McpServerRow[],
+	getModels?: () => ProviderModel[],
 ): Promise<ToolRegistry> {
 	const registry = new ToolRegistry();
 	registry.register(fetchUrlTool);
@@ -74,7 +75,9 @@ export async function buildBaseToolRegistry(
 		// MCP enumeration failures are best-effort.
 	}
 	if (env.SANDBOX) {
-		registerSandboxTools(registry);
+		registerSandboxTools(registry, {
+			...(getModels ? { loadImage: { getModels } } : {}),
+		});
 	}
 	if (env.RUN_JS_LOADER) {
 		registry.register(runJsTool);
@@ -82,13 +85,9 @@ export async function buildBaseToolRegistry(
 	return registry;
 }
 
-export async function buildToolRegistry(
-	env: Env,
-	mcpCache: McpCache,
-	model: string,
-	context: ConversationContext,
-): Promise<ToolRegistry> {
-	const registry = await buildBaseToolRegistry(env, mcpCache, context.mcpServers);
+export async function buildToolRegistry(env: Env, mcpCache: McpCache, model: string, context: ConversationContext): Promise<ToolRegistry> {
+	const getModels = () => context.allModels;
+	const registry = await buildBaseToolRegistry(env, mcpCache, context.mcpServers, getModels);
 	const globalIds = context.allModels.map((m) => buildGlobalModelId(m.providerId, m.id));
 	if (globalIds.length > 0) {
 		// `switch_model`'s description tells the model to call `get_models`
@@ -101,7 +100,7 @@ export async function buildToolRegistry(
 	if (enabledSubAgents.length > 0) {
 		const agentTool = createAgentTool(
 			{
-				buildInnerToolRegistry: () => buildBaseToolRegistry(env, mcpCache, context.mcpServers),
+				buildInnerToolRegistry: () => buildBaseToolRegistry(env, mcpCache, context.mcpServers, getModels),
 				defaultModel: model,
 				availableModelGlobalIds: globalIds,
 			},
@@ -112,12 +111,7 @@ export async function buildToolRegistry(
 	return registry;
 }
 
-async function registerMcpServerTools(
-	env: Env,
-	mcpCache: McpCache,
-	registry: ToolRegistry,
-	server: McpServerRow,
-): Promise<void> {
+async function registerMcpServerTools(env: Env, mcpCache: McpCache, registry: ToolRegistry, server: McpServerRow): Promise<void> {
 	const serverId = server.id;
 	const serverName = server.name;
 	const url = server.url!;

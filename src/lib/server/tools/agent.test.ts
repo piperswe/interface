@@ -38,7 +38,7 @@ class ScriptedLLM implements LLM {
 	}
 }
 
-const ctx = { env, conversationId: 'c-1', assistantMessageId: 'a-1' };
+const ctx = { env, conversationId: 'c-1', assistantMessageId: 'a-1', modelId: 'fake-model' };
 
 describe('createAgentTool', () => {
 	it('returns null when no sub-agents are configured', () => {
@@ -81,10 +81,7 @@ describe('createAgentTool', () => {
 		await createSubAgent(env, { name: 'reviewer', description: 'Review code', systemPrompt: 'sp' });
 		const subAgents = (await import('../sub_agents')).listSubAgents;
 		const list = await subAgents(env);
-		const tool = createAgentTool(
-			{ buildInnerToolRegistry: async () => new ToolRegistry(), defaultModel: 'fake-model' },
-			list,
-		);
+		const tool = createAgentTool({ buildInnerToolRegistry: async () => new ToolRegistry(), defaultModel: 'fake-model' }, list);
 		expect(tool).not.toBeNull();
 		expect(tool!.definition.name).toBe('agent');
 		expect(tool!.definition.description).toContain('researcher');
@@ -96,12 +93,7 @@ describe('createAgentTool', () => {
 	it('runs a one-turn sub-agent that produces a final answer', async () => {
 		await createSubAgent(env, { name: 'r', description: 'd', systemPrompt: 'You are r.' });
 		const list = await (await import('../sub_agents')).listSubAgents(env);
-		const llm = new ScriptedLLM([
-			[
-				{ type: 'text_delta', delta: 'final answer' },
-				{ type: 'done' },
-			],
-		]);
+		const llm = new ScriptedLLM([[{ type: 'text_delta', delta: 'final answer' }, { type: 'done' }]]);
 		const tool = createAgentTool(
 			{
 				buildInnerToolRegistry: async () => new ToolRegistry(),
@@ -121,14 +113,8 @@ describe('createAgentTool', () => {
 		await createSubAgent(env, { name: 'r', description: 'd', systemPrompt: 'sp' });
 		const list = await (await import('../sub_agents')).listSubAgents(env);
 		const llm = new ScriptedLLM([
-			[
-				{ type: 'tool_call', id: 'tc-1', name: 'echo', input: { text: 'hi' } },
-				{ type: 'done' },
-			],
-			[
-				{ type: 'text_delta', delta: 'I called echo and got a result.' },
-				{ type: 'done' },
-			],
+			[{ type: 'tool_call', id: 'tc-1', name: 'echo', input: { text: 'hi' } }, { type: 'done' }],
+			[{ type: 'text_delta', delta: 'I called echo and got a result.' }, { type: 'done' }],
 		]);
 		const tool = createAgentTool(
 			{
@@ -152,14 +138,8 @@ describe('createAgentTool', () => {
 		await createSubAgent(env, { name: 'r', description: 'd', systemPrompt: 'sp', maxIterations: 2 });
 		const list = await (await import('../sub_agents')).listSubAgents(env);
 		const llm = new ScriptedLLM([
-			[
-				{ type: 'tool_call', id: 'tc-1', name: 'agent', input: { subagent_type: 'r', prompt: 'recurse' } },
-				{ type: 'done' },
-			],
-			[
-				{ type: 'text_delta', delta: 'Got it.' },
-				{ type: 'done' },
-			],
+			[{ type: 'tool_call', id: 'tc-1', name: 'agent', input: { subagent_type: 'r', prompt: 'recurse' } }, { type: 'done' }],
+			[{ type: 'text_delta', delta: 'Got it.' }, { type: 'done' }],
 		]);
 		const tool = createAgentTool(
 			{
@@ -192,14 +172,8 @@ describe('createAgentTool', () => {
 			},
 		};
 		const llm = new ScriptedLLM([
-			[
-				{ type: 'tool_call', id: 'tc-1', name: 'banned', input: {} },
-				{ type: 'done' },
-			],
-			[
-				{ type: 'text_delta', delta: 'noted' },
-				{ type: 'done' },
-			],
+			[{ type: 'tool_call', id: 'tc-1', name: 'banned', input: {} }, { type: 'done' }],
+			[{ type: 'text_delta', delta: 'noted' }, { type: 'done' }],
 		]);
 		const tool = createAgentTool(
 			{
@@ -238,12 +212,7 @@ describe('createAgentTool', () => {
 	it('returns an error when the sub-agent exhausts its iteration budget', async () => {
 		await createSubAgent(env, { name: 'r', description: 'd', systemPrompt: 'sp', maxIterations: 1 });
 		const list = await (await import('../sub_agents')).listSubAgents(env);
-		const llm = new ScriptedLLM([
-			[
-				{ type: 'tool_call', id: 'tc-1', name: 'echo', input: { text: 'a' } },
-				{ type: 'done' },
-			],
-		]);
+		const llm = new ScriptedLLM([[{ type: 'tool_call', id: 'tc-1', name: 'echo', input: { text: 'a' } }, { type: 'done' }]]);
 		const tool = createAgentTool(
 			{
 				buildInnerToolRegistry: async () => new ToolRegistry().register(echoTool),

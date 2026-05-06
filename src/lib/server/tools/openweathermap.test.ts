@@ -2,7 +2,7 @@ import { env } from 'cloudflare:test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createOpenWeatherMapTools } from './openweathermap';
 
-const ctx = { env, conversationId: 'c', assistantMessageId: 'a' };
+const ctx = { env, conversationId: 'c', assistantMessageId: 'a', modelId: 'p/m' };
 
 function getTool(name: string) {
 	const tool = createOpenWeatherMapTools('test-key').find((t) => t.definition.name === name);
@@ -17,12 +17,7 @@ afterEach(() => {
 describe('createOpenWeatherMapTools', () => {
 	it('registers four tools with stable names', () => {
 		const names = createOpenWeatherMapTools('k').map((t) => t.definition.name);
-		expect(names).toEqual([
-			'openweather_geocode',
-			'openweather_reverse_geocode',
-			'openweather_current',
-			'openweather_forecast',
-		]);
+		expect(names).toEqual(['openweather_geocode', 'openweather_reverse_geocode', 'openweather_current', 'openweather_forecast']);
 	});
 });
 
@@ -34,17 +29,17 @@ describe('openweather_geocode', () => {
 	});
 
 	it('passes appid and limit and returns slim hits', async () => {
-		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-			new Response(
-				JSON.stringify([
-					{ name: 'Austin', lat: 30.27, lon: -97.74, country: 'US', state: 'Texas', extra: 'drop' },
-				]),
-				{ status: 200, headers: { 'content-type': 'application/json' } },
-			),
-		);
+		const fetchSpy = vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify([{ name: 'Austin', lat: 30.27, lon: -97.74, country: 'US', state: 'Texas', extra: 'drop' }]), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				}),
+			);
 		const result = await getTool('openweather_geocode').execute(ctx, { query: 'Austin,TX,US', limit: 1 });
 		expect(result.isError).toBeFalsy();
-		const url = new URL((fetchSpy.mock.calls[0][0] as string));
+		const url = new URL(fetchSpy.mock.calls[0][0] as string);
 		expect(url.searchParams.get('q')).toBe('Austin,TX,US');
 		expect(url.searchParams.get('limit')).toBe('1');
 		expect(url.searchParams.get('appid')).toBe('test-key');

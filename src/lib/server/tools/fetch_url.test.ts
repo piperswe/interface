@@ -2,7 +2,7 @@ import { env } from 'cloudflare:test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fetchUrlTool } from './fetch_url';
 
-const ctx = { env, conversationId: 'c', assistantMessageId: 'a' };
+const ctx = { env, conversationId: 'c', assistantMessageId: 'a', modelId: 'p/m' };
 
 afterEach(() => {
 	vi.restoreAllMocks();
@@ -38,9 +38,7 @@ describe('fetch_url tool', () => {
 	});
 
 	it('marks non-2xx as error', async () => {
-		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-			new Response('nope', { status: 500, statusText: 'Server Error' }),
-		);
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('nope', { status: 500, statusText: 'Server Error' }));
 		const result = await fetchUrlTool.execute(ctx, { url: 'https://example.com' });
 		expect(result.isError).toBe(true);
 	});
@@ -75,9 +73,7 @@ describe('fetch_url tool', () => {
 
 	it('returns raw HTML when readability is explicitly disabled', async () => {
 		const html = '<!doctype html><html><body><h1>Raw</h1><p>body</p></body></html>';
-		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-			new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
-		);
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }));
 		const result = await fetchUrlTool.execute(ctx, { url: 'https://example.com', readability: false });
 		expect(result.content).toContain('mode=raw');
 		expect(result.content).toContain('<h1>Raw</h1>');

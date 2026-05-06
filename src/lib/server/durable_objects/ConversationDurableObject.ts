@@ -24,11 +24,7 @@ import { buildHistory, buildHistoryWithRowIds } from './conversation/history';
 import { resolveReasoningConfig } from './conversation/reasoning';
 import { composeSystemPrompt } from './conversation/system-prompt';
 import { SubscriberSet } from './conversation/subscribers';
-import {
-	buildToolRegistry,
-	type ConversationContext,
-	type McpCache,
-} from './conversation/tool-registry-builder';
+import { buildToolRegistry, type ConversationContext, type McpCache } from './conversation/tool-registry-builder';
 import { readMessages } from './conversation/state-readers';
 import { writeTitle, TITLE_GEN_SYSTEM_PROMPT, TITLE_REGEN_SYSTEM_PROMPT } from './conversation/title-generator';
 import { getSandboxPreviewPorts, destroySandbox } from './conversation/sandbox';
@@ -371,18 +367,14 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	async setSystemPrompt(conversationId: string, prompt: string | null): Promise<void> {
 		this.#setConversationId(conversationId);
 		const trimmed = prompt?.trim() || null;
-		await this.env.DB.prepare('UPDATE conversations SET system_prompt = ? WHERE id = ?')
-			.bind(trimmed, conversationId)
-			.run();
+		await this.env.DB.prepare('UPDATE conversations SET system_prompt = ? WHERE id = ?').bind(trimmed, conversationId).run();
 		this.#subscribers.broadcast('refresh', {});
 	}
 
 	async setStyle(conversationId: string, styleId: number | null): Promise<void> {
 		this.#setConversationId(conversationId);
 		const value = styleId != null && styleId > 0 ? Math.floor(styleId) : null;
-		await this.env.DB.prepare('UPDATE conversations SET style_id = ? WHERE id = ?')
-			.bind(value, conversationId)
-			.run();
+		await this.env.DB.prepare('UPDATE conversations SET style_id = ? WHERE id = ?').bind(value, conversationId).run();
 		this.#subscribers.broadcast('refresh', {});
 	}
 
@@ -675,8 +667,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			const usageForCompaction = lastUsage
 				? {
 						inputTokens: lastUsage.inputTokens ?? lastUsage.promptTokens ?? 0,
-						cacheReadInputTokens:
-							lastUsage.cacheReadInputTokens ?? lastUsage.promptTokensDetails?.cachedTokens,
+						cacheReadInputTokens: lastUsage.cacheReadInputTokens ?? lastUsage.promptTokensDetails?.cachedTokens,
 					}
 				: null;
 			const compaction = await compactHistory(messages, model, this.env, usageForCompaction, {
@@ -695,9 +686,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 
 			const [context, convoRow] = await Promise.all([
 				this.#getContext(),
-				this.env.DB.prepare(
-					'SELECT thinking_budget, style_id, system_prompt FROM conversations WHERE id = ?',
-				)
+				this.env.DB.prepare('SELECT thinking_budget, style_id, system_prompt FROM conversations WHERE id = ?')
 					.bind(conversationId)
 					.first<{ thinking_budget: number | null; style_id: number | null; system_prompt: string | null }>(),
 			]);
@@ -834,6 +823,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 							env: this.env,
 							conversationId,
 							assistantMessageId: assistantId,
+							modelId: currentModel,
 							signal,
 							emitToolOutput: (chunk: string) => {
 								this.#subscribers.broadcast('tool_output', {
@@ -923,12 +913,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 					ip.providerID = llm.providerID;
 					const infoPart: MessagePart = { type: 'info', text: `Switched to model: ${currentModel}` };
 					parts.push(infoPart);
-					this.#sql.exec(
-						'UPDATE messages SET model = ?, parts = ? WHERE id = ?',
-						currentModel,
-						JSON.stringify(parts),
-						assistantId,
-					);
+					this.#sql.exec('UPDATE messages SET model = ?, parts = ? WHERE id = ?', currentModel, JSON.stringify(parts), assistantId);
 					this.#subscribers.broadcast('part', { messageId: assistantId, part: infoPart });
 					this.#subscribers.broadcast('model_switch', { messageId: assistantId, model: currentModel });
 				}

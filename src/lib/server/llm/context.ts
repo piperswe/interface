@@ -6,7 +6,7 @@ import type { Message } from './LLM';
 
 // Tokens ≈ characters / 4, with ~10% safety margin.
 function estimateTokens(text: string): number {
-	return Math.ceil(text.length / 4 * 1.1);
+	return Math.ceil((text.length / 4) * 1.1);
 }
 
 function estimateMessagesTokens(messages: Message[]): number {
@@ -20,7 +20,14 @@ function estimateMessagesTokens(messages: Message[]): number {
 			if (block.type === 'text' || block.type === 'thinking') {
 				sum += estimateTokens(block.text);
 			} else if (block.type === 'tool_result') {
-				sum += estimateTokens(block.content);
+				if (typeof block.content === 'string') {
+					sum += estimateTokens(block.content);
+				} else {
+					for (const sub of block.content) {
+						if (sub.type === 'text') sum += estimateTokens(sub.text);
+						// image blocks: token cost is provider-specific, skip.
+					}
+				}
 			} else if (block.type === 'tool_use') {
 				// Rough fixed estimate for the JSON-encoded call wrapper.
 				sum += 64 + estimateTokens(JSON.stringify(block.input ?? {}));
@@ -80,8 +87,7 @@ export async function compactHistory(
 	// Estimate current token count. When the prior turn reported usage, prefer
 	// it over a fresh re-count, but subtract cached tokens so heavily-cached
 	// runs don't trip compaction earlier than they should.
-	const reportedUsage =
-		lastUsage != null ? Math.max(0, lastUsage.inputTokens - (lastUsage.cacheReadInputTokens ?? 0)) : null;
+	const reportedUsage = lastUsage != null ? Math.max(0, lastUsage.inputTokens - (lastUsage.cacheReadInputTokens ?? 0)) : null;
 	let estimated = reportedUsage ?? estimateMessagesTokens(messages);
 	// Add safety margin for the new assistant response.
 	estimated += 1024;

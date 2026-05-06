@@ -16,13 +16,14 @@ type ModelRow = {
 	reasoning_type: string | null;
 	input_cost_per_million_tokens: number | null;
 	output_cost_per_million_tokens: number | null;
+	supports_image_input: number;
 	sort_order: number;
 	created_at: number;
 	updated_at: number;
 };
 
 const MODEL_COLUMNS =
-	'id, provider_id, name, description, max_context_length, reasoning_type, input_cost_per_million_tokens, output_cost_per_million_tokens, sort_order, created_at, updated_at';
+	'id, provider_id, name, description, max_context_length, reasoning_type, input_cost_per_million_tokens, output_cost_per_million_tokens, supports_image_input, sort_order, created_at, updated_at';
 
 function rowToModel(r: ModelRow): ProviderModel {
 	return {
@@ -34,17 +35,14 @@ function rowToModel(r: ModelRow): ProviderModel {
 		reasoningType: (r.reasoning_type as ReasoningType | null) ?? null,
 		inputCostPerMillionTokens: r.input_cost_per_million_tokens,
 		outputCostPerMillionTokens: r.output_cost_per_million_tokens,
+		supportsImageInput: !!r.supports_image_input,
 		sortOrder: r.sort_order,
 		createdAt: r.created_at,
 		updatedAt: r.updated_at,
 	};
 }
 
-export async function listModelsForProvider(
-	env: Env,
-	providerId: string,
-	userId: number = SINGLE_USER_ID,
-): Promise<ProviderModel[]> {
+export async function listModelsForProvider(env: Env, providerId: string, userId: number = SINGLE_USER_ID): Promise<ProviderModel[]> {
 	const result = await env.DB.prepare(
 		`SELECT ${MODEL_COLUMNS}
 		 FROM provider_models WHERE user_id = ? AND provider_id = ? ORDER BY sort_order ASC, name ASC`,
@@ -79,16 +77,9 @@ export async function getModel(
 	return row ? rowToModel(row) : null;
 }
 
-export async function getResolvedModel(
-	env: Env,
-	globalId: string,
-	userId: number = SINGLE_USER_ID,
-): Promise<ResolvedModel | null> {
+export async function getResolvedModel(env: Env, globalId: string, userId: number = SINGLE_USER_ID): Promise<ResolvedModel | null> {
 	const { providerId, modelId } = parseGlobalModelId(globalId);
-	const [provider, model] = await Promise.all([
-		getProvider(env, providerId, userId),
-		getModel(env, providerId, modelId, userId),
-	]);
+	const [provider, model] = await Promise.all([getProvider(env, providerId, userId), getModel(env, providerId, modelId, userId)]);
 	if (!provider || !model) return null;
 	return { globalId, provider, model };
 }
@@ -101,19 +92,15 @@ export type CreateModelInput = {
 	reasoningType?: ReasoningType | null;
 	inputCostPerMillionTokens?: number | null;
 	outputCostPerMillionTokens?: number | null;
+	supportsImageInput?: boolean;
 	sortOrder?: number;
 };
 
-export async function createModel(
-	env: Env,
-	providerId: string,
-	input: CreateModelInput,
-	userId: number = SINGLE_USER_ID,
-): Promise<void> {
+export async function createModel(env: Env, providerId: string, input: CreateModelInput, userId: number = SINGLE_USER_ID): Promise<void> {
 	const now = nowMs();
 	await env.DB.prepare(
-		`INSERT INTO provider_models (id, provider_id, name, description, max_context_length, reasoning_type, input_cost_per_million_tokens, output_cost_per_million_tokens, sort_order, created_at, updated_at, user_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO provider_models (id, provider_id, name, description, max_context_length, reasoning_type, input_cost_per_million_tokens, output_cost_per_million_tokens, supports_image_input, sort_order, created_at, updated_at, user_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	)
 		.bind(
 			input.id,
@@ -124,6 +111,7 @@ export async function createModel(
 			input.reasoningType ?? null,
 			input.inputCostPerMillionTokens ?? null,
 			input.outputCostPerMillionTokens ?? null,
+			input.supportsImageInput ? 1 : 0,
 			input.sortOrder ?? 0,
 			now,
 			now,
@@ -169,6 +157,10 @@ export async function updateModel(
 		fields.push('output_cost_per_million_tokens = ?');
 		values.push(input.outputCostPerMillionTokens ?? null);
 	}
+	if ('supportsImageInput' in input) {
+		fields.push('supports_image_input = ?');
+		values.push(input.supportsImageInput ? 1 : 0);
+	}
 	if ('sortOrder' in input) {
 		fields.push('sort_order = ?');
 		values.push(input.sortOrder ?? 0);
@@ -180,32 +172,19 @@ export async function updateModel(
 	values.push(now);
 	values.push(userId, providerId, modelId);
 
-	await env.DB.prepare(
-		`UPDATE provider_models SET ${fields.join(', ')} WHERE user_id = ? AND provider_id = ? AND id = ?`,
-	)
+	await env.DB.prepare(`UPDATE provider_models SET ${fields.join(', ')} WHERE user_id = ? AND provider_id = ? AND id = ?`)
 		.bind(...values)
 		.run();
 }
 
-export async function deleteModel(
-	env: Env,
-	providerId: string,
-	modelId: string,
-	userId: number = SINGLE_USER_ID,
-): Promise<void> {
+export async function deleteModel(env: Env, providerId: string, modelId: string, userId: number = SINGLE_USER_ID): Promise<void> {
 	await env.DB.prepare('DELETE FROM provider_models WHERE user_id = ? AND provider_id = ? AND id = ?')
 		.bind(userId, providerId, modelId)
 		.run();
 }
 
-export async function deleteModelsForProvider(
-	env: Env,
-	providerId: string,
-	userId: number = SINGLE_USER_ID,
-): Promise<void> {
-	await env.DB.prepare('DELETE FROM provider_models WHERE user_id = ? AND provider_id = ?')
-		.bind(userId, providerId)
-		.run();
+export async function deleteModelsForProvider(env: Env, providerId: string, userId: number = SINGLE_USER_ID): Promise<void> {
+	await env.DB.prepare('DELETE FROM provider_models WHERE user_id = ? AND provider_id = ?').bind(userId, providerId).run();
 }
 
 /** Swap sort_order between two models in the same provider. */
@@ -227,11 +206,7 @@ export async function swapModelOrder(
 }
 
 /** Convenience: return all global IDs for a given provider. */
-export async function listGlobalIdsForProvider(
-	env: Env,
-	providerId: string,
-	userId: number = SINGLE_USER_ID,
-): Promise<string[]> {
+export async function listGlobalIdsForProvider(env: Env, providerId: string, userId: number = SINGLE_USER_ID): Promise<string[]> {
 	const models = await listModelsForProvider(env, providerId, userId);
 	return models.map((m) => buildGlobalModelId(providerId, m.id));
 }
