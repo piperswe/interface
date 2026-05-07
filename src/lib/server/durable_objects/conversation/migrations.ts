@@ -4,6 +4,9 @@
 // the `_meta` table will pass through it on first boot, but each ALTER
 // swallows "column exists" errors so it's safe.
 
+import { parseJson } from './parts';
+import { execRows } from './sql';
+
 // Idempotent helper: run ALTER, swallow "duplicate column" errors so the same
 // migration can be safely replayed on a DO that pre-dates the schema
 // versioning table.
@@ -97,9 +100,7 @@ const MIGRATIONS: { version: number; up: (sql: SqlStorage) => void }[] = [
 			// before the schema_version write (which would leave the DO stuck
 			// retrying the migration forever on each cold start).
 			const existingCols = new Set(
-				(sql.exec('PRAGMA table_info(messages)').toArray() as unknown as Array<{ name: string }>).map(
-					(c) => c.name,
-				),
+				execRows<{ name: string }>(sql, 'PRAGMA table_info(messages)').map((c) => c.name),
 			);
 
 			// Backfill `parts` from any row that still has only the legacy
@@ -123,33 +124,22 @@ const MIGRATIONS: { version: number; up: (sql: SqlStorage) => void }[] = [
 			// missing `parts` entirely. The JSON shape mirrors `buildLegacyParts`:
 			// thinking → text → tool_use[] → tool_result[].
 			if (existingCols.has('tool_calls') || existingCols.has('tool_results')) {
-				const rows = sql
-					.exec(
-						`SELECT id, content, thinking, tool_calls, tool_results FROM messages
-						 WHERE parts IS NULL AND (thinking IS NOT NULL OR tool_calls IS NOT NULL OR tool_results IS NOT NULL)`,
-					)
-					.toArray() as unknown as Array<{
+				const rows = execRows<{
 					id: string;
 					content: string;
 					thinking: string | null;
 					tool_calls: string | null;
 					tool_results: string | null;
-				}>;
+				}>(
+					sql,
+					`SELECT id, content, thinking, tool_calls, tool_results FROM messages
+					 WHERE parts IS NULL AND (thinking IS NOT NULL OR tool_calls IS NOT NULL OR tool_results IS NOT NULL)`,
+				);
 				for (const r of rows) {
-					const tcs: Array<{ id: string; name: string; input: unknown; thoughtSignature?: string }> = (() => {
-						try {
-							return r.tool_calls ? JSON.parse(r.tool_calls) : [];
-						} catch {
-							return [];
-						}
-					})();
-					const trs: Array<{ toolUseId: string; content: string; isError: boolean }> = (() => {
-						try {
-							return r.tool_results ? JSON.parse(r.tool_results) : [];
-						} catch {
-							return [];
-						}
-					})();
+					const tcs =
+						parseJson<Array<{ id: string; name: string; input: unknown; thoughtSignature?: string }>>(r.tool_calls) ?? [];
+					const trs =
+						parseJson<Array<{ toolUseId: string; content: string; isError: boolean }>>(r.tool_results) ?? [];
 					const built: Array<Record<string, unknown>> = [];
 					if (r.thinking) built.push({ type: 'thinking', text: r.thinking });
 					if (r.content) built.push({ type: 'text', text: r.content });
@@ -184,7 +174,7 @@ export function runMigrations(sql: SqlStorage): void {
 			value TEXT NOT NULL
 		)
 	`);
-	const row = sql.exec("SELECT value FROM _meta WHERE key = 'schema_version'").toArray() as unknown as Array<{ value: string }>;
+	const row = execRows<{ value: string }>(sql, "SELECT value FROM _meta WHERE key = 'schema_version'");
 	const current = row[0] ? Number.parseInt(row[0].value, 10) || 0 : 0;
 	for (const m of MIGRATIONS) {
 		if (m.version <= current) continue;

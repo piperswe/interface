@@ -1,29 +1,12 @@
 import { error, json } from '@sveltejs/kit';
 import { CONVERSATION_ID_PATTERN } from '$lib/conversation-id';
+import { DEFAULT_BINARY_MIME, mimeTypeForPath } from '$lib/server/sandbox-mime';
 import type { RequestHandler } from './$types';
 
 // Hard cap to keep request bodies sane. Cloudflare Workers Free/Pro is 100MB
 // of body; we cap well below that to leave headroom and to keep one upload
 // from filling the per-conversation R2 prefix.
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
-
-const EXTENSION_MIME: Record<string, string> = {
-	png: 'image/png',
-	jpg: 'image/jpeg',
-	jpeg: 'image/jpeg',
-	gif: 'image/gif',
-	webp: 'image/webp',
-	svg: 'image/svg+xml',
-	pdf: 'application/pdf',
-	txt: 'text/plain',
-	md: 'text/markdown',
-	csv: 'text/csv',
-	json: 'application/json',
-	html: 'text/html',
-	xml: 'application/xml',
-	yaml: 'application/yaml',
-	yml: 'application/yaml',
-};
 
 function stripControlChars(s: string): string {
 	let out = '';
@@ -76,15 +59,14 @@ export const POST: RequestHandler = async ({ params, url, request, platform }) =
 
 	if (!request.body) error(400, 'request body required');
 
-	const ext = filename.split('.').pop()?.toLowerCase() ?? '';
 	const headerContentType = request.headers.get('content-type') ?? '';
 	// Browsers default unknown POST bodies to `application/octet-stream` for
 	// raw uploads. Prefer the request header when it's not the generic
 	// fallback, otherwise fall back to extension lookup.
 	const mimeType =
-		headerContentType && headerContentType !== 'application/octet-stream'
+		headerContentType && headerContentType !== DEFAULT_BINARY_MIME
 			? headerContentType
-			: (EXTENSION_MIME[ext] ?? 'application/octet-stream');
+			: mimeTypeForPath(filename);
 
 	const timestamp = Date.now();
 	const relativePath = `uploads/${timestamp}-${filename}`;

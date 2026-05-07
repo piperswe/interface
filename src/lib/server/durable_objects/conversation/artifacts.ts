@@ -1,4 +1,6 @@
 import { now as nowMs, uuid } from '../../clock';
+import { parseJson } from './parts';
+import { execRows } from './sql';
 import type { Artifact, ArtifactType } from '$lib/types/conversation';
 
 export type AddArtifactInput = {
@@ -12,9 +14,11 @@ export type AddArtifactInput = {
 export async function insertArtifact(sql: SqlStorage, input: AddArtifactInput): Promise<Artifact> {
 	const id = uuid();
 	const now = nowMs();
-	const versionRow = sql
-		.exec('SELECT MAX(version) AS v FROM artifacts WHERE message_id = ?', input.messageId)
-		.toArray() as unknown as Array<{ v: number | null }>;
+	const versionRow = execRows<{ v: number | null }>(
+		sql,
+		'SELECT MAX(version) AS v FROM artifacts WHERE message_id = ?',
+		input.messageId,
+	);
 	const version = (versionRow[0]?.v ?? 0) + 1;
 	sql.exec(
 		`INSERT INTO artifacts (id, message_id, type, name, language, version, content, created_at)
@@ -29,17 +33,12 @@ export async function insertArtifact(sql: SqlStorage, input: AddArtifactInput): 
 		now,
 	);
 	// Update artifact_ids on the parent message.
-	const existing = sql.exec('SELECT artifact_ids FROM messages WHERE id = ?', input.messageId).toArray() as unknown as Array<{
-		artifact_ids: string | null;
-	}>;
-	let ids: string[] = [];
-	if (existing[0]?.artifact_ids) {
-		try {
-			ids = JSON.parse(existing[0].artifact_ids) as string[];
-		} catch {
-			ids = [];
-		}
-	}
+	const existing = execRows<{ artifact_ids: string | null }>(
+		sql,
+		'SELECT artifact_ids FROM messages WHERE id = ?',
+		input.messageId,
+	);
+	const ids: string[] = parseJson<string[]>(existing[0]?.artifact_ids ?? null) ?? [];
 	ids.push(id);
 	sql.exec('UPDATE messages SET artifact_ids = ? WHERE id = ?', JSON.stringify(ids), input.messageId);
 
