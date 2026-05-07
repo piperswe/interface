@@ -59,6 +59,26 @@ export const sendMessage = form(
 	},
 );
 
+// Command form of sendMessage for callers that can't use a real <form>
+// — specifically the conversational-mode controller, which sends voice
+// turns from JS without going through the textarea form. Mirrors the
+// validation the form does. No `attachments_trailer` (voice turns
+// never have file attachments).
+export const sendMessageRpc = command(
+	'unchecked',
+	async (input: { conversationId: string; content: string; model: string }) => {
+		const stub = stubFor(input.conversationId);
+		const result = await stub.addUserMessage(input.conversationId, input.content, input.model);
+		if (result.status === 'busy') {
+			error(409, 'Conversation busy: a generation is already in progress');
+		}
+		if (result.status === 'invalid') {
+			error(400, `Invalid: ${result.reason}`);
+		}
+		return { ok: true as const };
+	},
+);
+
 // Command: regenerate the conversation title (LLM round-trip on the DO).
 // Triggered by the "↻" button next to the title. Returns once the title is
 // persisted; the SSE stream's `refresh` event reloads the page client-side.
