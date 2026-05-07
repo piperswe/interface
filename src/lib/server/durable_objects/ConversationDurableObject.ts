@@ -22,6 +22,7 @@ import type { MessagePart, ToolCallRecord as RecordedToolCall } from '$lib/types
 import { runMigrations } from './conversation/migrations';
 import { parseJson, normalizeParts, trimTrailingPartialOutput, partsToMessages, dedupeCitationsByUrl } from './conversation/parts';
 import { buildHistory, buildHistoryWithRowIds, hydrateRowParts } from './conversation/history';
+import { execRows } from './conversation/sql';
 import { partsFromJson, partsToJson } from './conversation/blob-store';
 import { resolveReasoningConfig } from './conversation/reasoning';
 import { composeSystemPrompt } from './conversation/system-prompt';
@@ -105,9 +106,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			// where the dead generation left off so the user doesn't have to
 			// retry. Resume also runs lazily on `subscribe` / `addUserMessage`;
 			// the alarm is a backstop for the no-traffic case.
-			const interrupted = this.#sql.exec("SELECT id FROM messages WHERE status = 'streaming' LIMIT 1").toArray() as unknown as Array<{
-				id: string;
-			}>;
+			const interrupted = execRows<{ id: string }>(this.#sql, "SELECT id FROM messages WHERE status = 'streaming' LIMIT 1");
 			if (interrupted.length > 0) {
 				await ctx.storage.setAlarm(Date.now() + 200);
 			}
@@ -127,7 +126,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	// one-way).
 	#getConversationId(): string | null {
 		if (this.#conversationId) return this.#conversationId;
-		const row = this.#sql.exec("SELECT value FROM _meta WHERE key = 'conversation_id'").toArray() as unknown as Array<{ value: string }>;
+		const row = execRows<{ value: string }>(this.#sql, "SELECT value FROM _meta WHERE key = 'conversation_id'");
 		this.#conversationId = row[0]?.value ?? null;
 		return this.#conversationId;
 	}
@@ -213,9 +212,10 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	// `addUserMessage`.
 	async #detectAndResume(): Promise<void> {
 		if (this.#resumePromise || this.#inProgress) return;
-		const rows = this.#sql
-			.exec("SELECT id, model FROM messages WHERE status = 'streaming' ORDER BY created_at ASC")
-			.toArray() as unknown as Array<{ id: string; model: string | null }>;
+		const rows = execRows<{ id: string; model: string | null }>(
+			this.#sql,
+			"SELECT id, model FROM messages WHERE status = 'streaming' ORDER BY created_at ASC",
+		);
 		if (rows.length === 0) return;
 
 		// Defensive: if more than one streaming row exists (shouldn't happen
@@ -267,9 +267,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		// partial text/thinking (those followed the last completed tool round
 		// and were unflushed when the DO died) and normalize any orphan
 		// tool_use blocks so the LLM history is valid.
-		const row = this.#sql.exec('SELECT parts FROM messages WHERE id = ?', messageId).toArray() as unknown as Array<{
-			parts: string | null;
-		}>;
+		const row = execRows<{ parts: string | null }>(this.#sql, 'SELECT parts FROM messages WHERE id = ?', messageId);
 		const persistedParts = (await partsFromJson(row[0]?.parts ?? null, this.env)) ?? [];
 		const trimmed = trimTrailingPartialOutput(persistedParts);
 		normalizeParts(trimmed, 'Generation interrupted by Durable Object restart; retrying.');
@@ -414,9 +412,10 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 
 	async regenerateTitle(conversationId: string): Promise<void> {
 		this.#setConversationId(conversationId);
-		const history = this.#sql
-			.exec(`SELECT role, content FROM messages WHERE ${COMPLETE_PREDICATE} ORDER BY created_at ASC`)
-			.toArray() as unknown as Array<{ role: string; content: string }>;
+		const history = execRows<{ role: string; content: string }>(
+			this.#sql,
+			`SELECT role, content FROM messages WHERE ${COMPLETE_PREDICATE} ORDER BY created_at ASC`,
+		);
 		const transcript = history.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n\n');
 		await writeTitle(
 			this.env,
@@ -491,15 +490,17 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		this.#setConversationId(conversationId);
 		if (this.#inProgress || this.#resumePromise) return { compacted: false, droppedCount: 0 };
 
-		const lastModelRow = this.#sql
-			.exec(`SELECT model FROM messages WHERE role = 'assistant' AND ${COMPLETE_PREDICATE} ORDER BY created_at DESC LIMIT 1`)
-			.toArray() as unknown as Array<{ model: string | null }>;
+		const lastModelRow = execRows<{ model: string | null }>(
+			this.#sql,
+			`SELECT model FROM messages WHERE role = 'assistant' AND ${COMPLETE_PREDICATE} ORDER BY created_at DESC LIMIT 1`,
+		);
 		const model = lastModelRow[0]?.model;
 		if (!model) return { compacted: false, droppedCount: 0 };
 
-		const historyRaw = this.#sql
-			.exec(`SELECT id, role, content, parts FROM messages WHERE ${COMPLETE_PREDICATE} ORDER BY created_at ASC`)
-			.toArray() as unknown as Array<{ id: string; role: string; content: string; parts: string | null }>;
+		const historyRaw = execRows<{ id: string; role: string; content: string; parts: string | null }>(
+			this.#sql,
+			`SELECT id, role, content, parts FROM messages WHERE ${COMPLETE_PREDICATE} ORDER BY created_at ASC`,
+		);
 		const history = await hydrateRowParts(historyRaw, this.env);
 
 		const { messages, rowIdAtIndex: rowIdAtLLMIndex } = buildHistoryWithRowIds(history);
@@ -700,10 +701,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		return null;
 	}
 
-	async #routeLLM(
-		globalId: string,
-		opts: { purpose?: 'main' | 'title' } = {},
-	): Promise<{ model: string; providerID: string; chat(req: ChatRequest): AsyncIterable<StreamEvent> }> {
+	async #routeLLM(globalId: string, opts: { purpose?: 'main' | 'title' } = {}): Promise<LLM> {
 		const isTitle = opts.purpose === 'title';
 		const script = isTitle ? this.__titleLLMOverrideScript : this.__llmOverrideScript;
 		if (script) {
@@ -800,9 +798,11 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		try {
 			let currentModel = model;
 			let llm = await this.#routeLLM(model);
-			const historyRaw = this.#sql
-				.exec(`SELECT role, content, parts FROM messages WHERE id != ? AND ${COMPLETE_PREDICATE} ORDER BY created_at ASC`, assistantId)
-				.toArray() as unknown as Array<{ role: string; content: string; parts: string | null }>;
+			const historyRaw = execRows<{ role: string; content: string; parts: string | null }>(
+				this.#sql,
+				`SELECT role, content, parts FROM messages WHERE id != ? AND ${COMPLETE_PREDICATE} ORDER BY created_at ASC`,
+				assistantId,
+			);
 			const history = await hydrateRowParts(historyRaw, this.env);
 			let messages: Message[] = buildHistory(history);
 
@@ -821,9 +821,10 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			// (`inputTokens`/`cacheReadInputTokens`) since round 1; the older
 			// OpenRouter-style `{promptTokens, promptTokensDetails}` shape is
 			// kept as a fallback for legacy rows.
-			const lastUsageRow = this.#sql
-				.exec(`SELECT usage_json FROM messages WHERE role = 'assistant' AND ${COMPLETE_PREDICATE} ORDER BY created_at DESC LIMIT 1`)
-				.toArray() as unknown as Array<{ usage_json: string | null }>;
+			const lastUsageRow = execRows<{ usage_json: string | null }>(
+				this.#sql,
+				`SELECT usage_json FROM messages WHERE role = 'assistant' AND ${COMPLETE_PREDICATE} ORDER BY created_at DESC LIMIT 1`,
+			);
 			const lastUsage = lastUsageRow[0]?.usage_json
 				? (parseJson<{
 						inputTokens?: number;
@@ -839,7 +840,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 					}
 				: null;
 			const compaction = await compactHistory(messages, model, this.env, usageForCompaction, {
-				llm: (_env, id) => this.#routeLLM(id) as unknown as Promise<LLM>,
+				llm: (_env, id) => this.#routeLLM(id),
 			});
 			if (compaction.wasCompacted) {
 				const infoPart: MessagePart = {

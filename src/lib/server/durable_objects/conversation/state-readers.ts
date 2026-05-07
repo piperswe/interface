@@ -1,15 +1,10 @@
 import type { Artifact, ArtifactType, MessageRow, MessagePart, MetaSnapshot } from '$lib/types/conversation';
 import { partsFromJson, type BlobEnv } from './blob-store';
+import { parseJson } from './parts';
+import { execRows } from './sql';
 
 export async function readMessages(sql: SqlStorage, env: BlobEnv): Promise<MessageRow[]> {
-	const rows = sql
-		.exec(
-			`SELECT id, role, content, model, status, error, created_at, started_at, first_token_at, last_chunk_json, usage_json, thinking, parts
-			 FROM messages
-			 WHERE deleted_at IS NULL
-			 ORDER BY created_at ASC`,
-		)
-		.toArray() as unknown as Array<{
+	const rows = execRows<{
 		id: string;
 		role: string;
 		content: string;
@@ -23,7 +18,13 @@ export async function readMessages(sql: SqlStorage, env: BlobEnv): Promise<Messa
 		usage_json: string | null;
 		thinking: string | null;
 		parts: string | null;
-	}>;
+	}>(
+		sql,
+		`SELECT id, role, content, model, status, error, created_at, started_at, first_token_at, last_chunk_json, usage_json, thinking, parts
+		 FROM messages
+		 WHERE deleted_at IS NULL
+		 ORDER BY created_at ASC`,
+	);
 	const artifactsByMessage = readArtifactsByMessage(sql);
 	return Promise.all(
 		rows.map(async (r) => {
@@ -65,11 +66,7 @@ function stripHtml(parts: MessagePart[]): MessagePart[] {
 }
 
 export function readArtifactsByMessage(sql: SqlStorage): Map<string, Artifact[]> {
-	const rows = sql
-		.exec(
-			`SELECT id, message_id, type, name, language, version, content, created_at FROM artifacts ORDER BY created_at ASC`,
-		)
-		.toArray() as unknown as Array<{
+	const rows = execRows<{
 		id: string;
 		message_id: string;
 		type: string;
@@ -78,7 +75,10 @@ export function readArtifactsByMessage(sql: SqlStorage): Map<string, Artifact[]>
 		version: number;
 		content: string;
 		created_at: number;
-	}>;
+	}>(
+		sql,
+		`SELECT id, message_id, type, name, language, version, content, created_at FROM artifacts ORDER BY created_at ASC`,
+	);
 	const map = new Map<string, Artifact[]>();
 	for (const r of rows) {
 		const list = map.get(r.message_id) ?? [];
@@ -104,22 +104,10 @@ export function deriveMeta(
 	usageJson: string | null,
 ): MetaSnapshot | null {
 	if (!startedAt && !lastChunkJson && !usageJson) return null;
-	let lastChunk: unknown | null = null;
-	let usage: MetaSnapshot['usage'] = null;
-	try {
-		if (lastChunkJson) lastChunk = JSON.parse(lastChunkJson) as unknown;
-	} catch {
-		/* keep null */
-	}
-	try {
-		if (usageJson) usage = JSON.parse(usageJson) as MetaSnapshot['usage'];
-	} catch {
-		/* keep null */
-	}
 	return {
 		startedAt: startedAt ?? 0,
 		firstTokenAt: firstTokenAt ?? 0,
-		lastChunk,
-		usage,
+		lastChunk: parseJson<unknown>(lastChunkJson),
+		usage: parseJson<NonNullable<MetaSnapshot['usage']>>(usageJson),
 	};
 }
