@@ -76,6 +76,16 @@ export async function getKagiCostPer1000Searches(
 	return n;
 }
 
+// ---- TTS voice ------------------------------------------------------------------------
+
+import { DEFAULT_TTS_VOICE, isValidTtsVoice, type TtsVoice } from './tts';
+
+export async function getTtsVoice(env: Env, userId: number = SINGLE_USER_ID): Promise<TtsVoice> {
+	const raw = await getSetting(env, 'tts_voice', userId);
+	if (raw && isValidTtsVoice(raw)) return raw;
+	return DEFAULT_TTS_VOICE;
+}
+
 // ---- System prompt / user bio helpers -------------------------------------------------
 
 export async function getSystemPrompt(env: Env, userId: number = SINGLE_USER_ID): Promise<string | null> {

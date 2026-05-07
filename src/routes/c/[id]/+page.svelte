@@ -433,6 +433,7 @@
 									<Message
 										message={m}
 										{timestamp}
+										conversationId={data.conversation.id}
 										onSelectArtifact={selectArtifact}
 										{modelPricing}
 										kagiCostPer1000Searches={data.kagiCostPer1000Searches}

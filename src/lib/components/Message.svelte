@@ -8,17 +8,20 @@
 	import Artifact from './Artifact.svelte';
 	import MetaPanel from './MetaPanel.svelte';
 	import MessagePart from './MessagePart.svelte';
+	import SpeakButton from './SpeakButton.svelte';
 	import WorkBundle from './WorkBundle.svelte';
 
 	let {
 		message,
 		timestamp,
+		conversationId,
 		onSelectArtifact,
 		modelPricing = null,
 		kagiCostPer1000Searches = 25,
 	}: {
 		message: MessageRow;
 		timestamp?: number;
+		conversationId: string;
 		onSelectArtifact?: (id: string) => void;
 		modelPricing?: {
 			inputCostPerMillionTokens: number | null;
@@ -86,12 +89,15 @@
 		<div class="message-spinner d-flex align-items-center gap-2 small text-muted" aria-label="Generating response…"><span class="spinner"></span></div>
 	{/if}
 	{#if isAssistant && !isStreaming}
-		<MetaPanel
-			snapshot={message.meta}
-			{modelPricing}
-			parts={message.parts ?? null}
-			{kagiCostPer1000Searches}
-		/>
+		<div class="message-actions d-flex align-items-center gap-1 flex-wrap">
+			<SpeakButton {conversationId} messageId={message.id} />
+			<MetaPanel
+				snapshot={message.meta}
+				{modelPricing}
+				parts={message.parts ?? null}
+				{kagiCostPer1000Searches}
+			/>
+		</div>
 	{/if}
 </div>
 

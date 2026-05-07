@@ -1,6 +1,7 @@
 import { form, getRequestEvent } from '$app/server';
 import { error, redirect } from '@sveltejs/kit';
 import { setSetting } from '$lib/server/settings';
+import { isValidTtsVoice } from '$lib/server/tts';
 import { createMcpServer, deleteMcpServer } from '$lib/server/mcp_servers';
 import {
 	createSubAgent,
@@ -28,6 +29,7 @@ const ALLOWED_SETTING_KEYS = new Set([
 	'default_model',
 	'title_model',
 	'kagi_cost_per_1000_searches',
+	'tts_voice',
 ]);
 
 type Theme = 'system' | 'light' | 'dark';
@@ -69,6 +71,9 @@ export const saveSetting = form(
 		}
 		if (key === 'kagi_cost_per_1000_searches' && !isValidNonNegativeNumber(value)) {
 			error(400, 'Kagi cost per 1000 searches must be a non-negative number');
+		}
+		if (key === 'tts_voice' && value !== '' && !isValidTtsVoice(value)) {
+			error(400, `Invalid TTS voice: ${value}`);
 		}
 		await setSetting(getEnv(), key, value);
 		if (key === 'theme') invalidateThemeCache();

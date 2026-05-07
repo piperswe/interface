@@ -71,6 +71,9 @@
 	"images": {
 		"binding": "IMAGES",
 	},
+	"ai": {
+		"binding": "AI",
+	},
 	"worker_loaders": [
 		{
 			"binding": "RUN_JS_LOADER",
