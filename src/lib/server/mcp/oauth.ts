@@ -10,24 +10,52 @@
 // Tokens are stored in D1 (`mcp_servers.oauth_*`); these helpers are pure
 // (no D1 IO) so they're easy to unit-test.
 
+import { z } from 'zod';
+import { validateOrThrow } from '$lib/zod-utils';
+
 const AUTH_STATE_TTL_MS = 10 * 60 * 1000;
 
-export type ProtectedResourceMetadata = {
-	authorization_servers?: string[];
-	scopes_supported?: string[];
-	resource?: string;
-};
+const protectedResourceMetadataSchema = z
+	.object({
+		authorization_servers: z.array(z.string()).optional(),
+		scopes_supported: z.array(z.string()).optional(),
+		resource: z.string().optional(),
+	})
+	.passthrough();
 
-export type AuthorizationServerMetadata = {
-	issuer?: string;
-	authorization_endpoint: string;
-	token_endpoint: string;
-	registration_endpoint?: string;
-	scopes_supported?: string[];
-	code_challenge_methods_supported?: string[];
-	grant_types_supported?: string[];
-	token_endpoint_auth_methods_supported?: string[];
-};
+const authorizationServerMetadataSchema = z
+	.object({
+		issuer: z.string().optional(),
+		authorization_endpoint: z.string(),
+		token_endpoint: z.string(),
+		registration_endpoint: z.string().optional(),
+		scopes_supported: z.array(z.string()).optional(),
+		code_challenge_methods_supported: z.array(z.string()).optional(),
+		grant_types_supported: z.array(z.string()).optional(),
+		token_endpoint_auth_methods_supported: z.array(z.string()).optional(),
+	})
+	.passthrough();
+
+const dynamicRegistrationResponseSchema = z
+	.object({
+		client_id: z.string().optional(),
+		client_secret: z.string().optional(),
+	})
+	.passthrough();
+
+const tokenResponseSchema = z
+	.object({
+		access_token: z.string(),
+		token_type: z.string(),
+		expires_in: z.number().optional(),
+		refresh_token: z.string().optional(),
+		scope: z.string().optional(),
+	})
+	.passthrough();
+
+export type ProtectedResourceMetadata = z.infer<typeof protectedResourceMetadataSchema>;
+
+export type AuthorizationServerMetadata = z.infer<typeof authorizationServerMetadataSchema>;
 
 export type DiscoveredOauthEndpoints = {
 	authorizationServer: string;
@@ -37,13 +65,7 @@ export type DiscoveredOauthEndpoints = {
 	scopes: string | null;
 };
 
-export type TokenResponse = {
-	access_token: string;
-	token_type: string;
-	expires_in?: number;
-	refresh_token?: string;
-	scope?: string;
-};
+export type TokenResponse = z.infer<typeof tokenResponseSchema>;
 
 export class OauthDiscoveryError extends Error {
 	constructor(message: string) {
@@ -66,7 +88,11 @@ export async function discoverProtectedResource(serverUrl: string): Promise<Prot
 	try {
 		const res = await fetch(candidate, { headers: { Accept: 'application/json' } });
 		if (!res.ok) return null;
-		return (await res.json()) as ProtectedResourceMetadata;
+		return validateOrThrow(
+			protectedResourceMetadataSchema,
+			await res.json(),
+			`protected resource metadata at ${candidate}`,
+		);
 	} catch {
 		return null;
 	}
@@ -89,7 +115,16 @@ export async function discoverAuthorizationServer(asUrl: string): Promise<Author
 			`Authorization server metadata unavailable at ${candidate} (${res.status})`,
 		);
 	}
-	const meta = (await res.json()) as AuthorizationServerMetadata;
+	let meta: AuthorizationServerMetadata;
+	try {
+		meta = validateOrThrow(
+			authorizationServerMetadataSchema,
+			await res.json(),
+			`authorization server metadata at ${candidate}`,
+		);
+	} catch (e) {
+		throw new OauthDiscoveryError(e instanceof Error ? e.message : String(e));
+	}
 	if (!meta.authorization_endpoint || !meta.token_endpoint) {
 		throw new OauthDiscoveryError('Authorization server metadata missing endpoints');
 	}
@@ -140,7 +175,11 @@ export async function dynamicallyRegister(
 		const detail = await res.text().catch(() => '');
 		throw new Error(`Dynamic client registration failed (${res.status}): ${detail.slice(0, 200)}`);
 	}
-	const data = (await res.json()) as { client_id?: string; client_secret?: string };
+	const data = validateOrThrow(
+		dynamicRegistrationResponseSchema,
+		await res.json(),
+		`dynamic client registration response from ${registrationEndpoint}`,
+	);
 	if (!data.client_id) throw new Error('Registration response missing client_id');
 	return { clientId: data.client_id, clientSecret: data.client_secret ?? null };
 }
@@ -249,7 +288,7 @@ async function tokenRequest(endpoint: string, params: URLSearchParams): Promise<
 		const detail = await res.text().catch(() => '');
 		throw new Error(`Token endpoint error (${res.status}): ${detail.slice(0, 200)}`);
 	}
-	return (await res.json()) as TokenResponse;
+	return validateOrThrow(tokenResponseSchema, await res.json(), `token response from ${endpoint}`);
 }
 
 export function expiresAtFromResponse(token: TokenResponse, now: number): number | null {

@@ -1,6 +1,26 @@
 // Fetch available models from provider APIs for auto-populating presets.
 
+import { z } from 'zod';
+import { validateOrThrow } from '$lib/zod-utils';
 import type { CuratedModel } from './presets';
+
+const openRouterModelSchema = z
+	.object({
+		id: z.string(),
+		name: z.string().optional(),
+		context_length: z.number().optional(),
+		top_provider: z
+			.object({ context_length: z.number().optional() })
+			.passthrough()
+			.nullable()
+			.optional(),
+		description: z.string().optional(),
+	})
+	.passthrough();
+
+const openRouterModelsResponseSchema = z
+	.object({ data: z.array(openRouterModelSchema).optional() })
+	.passthrough();
 
 // OpenRouter's public model endpoint requires no authentication.
 export async function fetchOpenRouterModels(apiKey?: string): Promise<CuratedModel[]> {
@@ -10,15 +30,11 @@ export async function fetchOpenRouterModels(apiKey?: string): Promise<CuratedMod
 	const res = await fetch('https://openrouter.ai/api/v1/models', { headers });
 	if (!res.ok) throw new Error(`OpenRouter API error: ${res.status}`);
 
-	const data = (await res.json()) as {
-		data?: Array<{
-			id: string;
-			name?: string;
-			context_length?: number;
-			top_provider?: { context_length?: number } | null;
-			description?: string;
-		}>;
-	};
+	const data = validateOrThrow(
+		openRouterModelsResponseSchema,
+		await res.json(),
+		'OpenRouter models response',
+	);
 
 	const models = data.data ?? [];
 	return models.map((m) => {

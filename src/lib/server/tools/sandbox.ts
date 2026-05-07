@@ -1,8 +1,35 @@
 import { getSandbox, parseSSEStream } from '@cloudflare/sandbox';
 import type { Sandbox, ExecEvent, ExecResult } from '@cloudflare/sandbox';
+import { z } from 'zod';
+import { safeValidate } from '$lib/zod-utils';
 import type { Tool, ToolContext, ToolExecutionResult } from './registry';
 import type { ProviderModel } from '../providers/types';
 import { parseGlobalModelId } from '../providers/types';
+
+// Zod schemas for validating LLM-supplied tool arguments. Each tool's
+// `definition.inputSchema` is the JSON schema the LLM sees; these run on
+// the parsed JSON it produces.
+const execArgsSchema = z.object({
+	command: z.string(),
+	cwd: z.string().optional(),
+	env: z.record(z.string(), z.string()).optional(),
+	stdin: z.string().optional(),
+	timeout: z.number().optional(),
+});
+const runCodeArgsSchema = z.object({
+	code: z.string(),
+	language: z.enum(['python', 'javascript', 'typescript']).optional(),
+	timeout: z.number().optional(),
+});
+const pathOnlyArgsSchema = z.object({ path: z.string() });
+const writeFileArgsSchema = z.object({ path: z.string(), content: z.string() });
+const mkdirArgsSchema = z.object({ path: z.string(), recursive: z.boolean().optional() });
+const createArtifactArgsSchema = z.object({
+	path: z.string(),
+	type: z.enum(['code', 'markdown', 'html', 'svg', 'mermaid']).optional(),
+	name: z.string().optional(),
+	language: z.string().optional(),
+});
 
 // ---------------------------------------------------------------------------
 // Helper: resolve a sandbox instance scoped to the current conversation.
@@ -182,16 +209,11 @@ export const sandboxExecTool: Tool = {
 		inputSchema: execInputSchema,
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
-		const args = (input ?? {}) as {
-			command?: string;
-			cwd?: string;
-			env?: Record<string, string>;
-			stdin?: string;
-			timeout?: number;
-		};
-		if (!args.command || typeof args.command !== 'string') {
-			return { content: 'Missing required parameter: command', isError: true };
+		const parsed = safeValidate(execArgsSchema, input);
+		if (!parsed.ok) {
+			return { content: `Invalid input: ${parsed.error}`, isError: true, errorCode: 'invalid_input' };
 		}
+		const args = parsed.value;
 		const cwd = args.cwd ?? '/workspace';
 		try {
 			await ensureWorkspaceMount(ctx);
@@ -280,18 +302,12 @@ export const sandboxRunCodeTool: Tool = {
 		inputSchema: runCodeInputSchema,
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
-		const args = (input ?? {}) as {
-			code?: string;
-			language?: string;
-			timeout?: number;
-		};
-		if (!args.code || typeof args.code !== 'string') {
-			return { content: 'Missing required parameter: code', isError: true };
+		const parsed = safeValidate(runCodeArgsSchema, input);
+		if (!parsed.ok) {
+			return { content: `Invalid input: ${parsed.error}`, isError: true, errorCode: 'invalid_input' };
 		}
-		const language = (args.language ?? 'python') as 'python' | 'javascript' | 'typescript';
-		if (!['python', 'javascript', 'typescript'].includes(language)) {
-			return { content: `Unsupported language: ${language}`, isError: true };
-		}
+		const args = parsed.value;
+		const language = args.language ?? 'python';
 		try {
 			await ensureWorkspaceMount(ctx);
 			await ensureSshKey(ctx);
@@ -360,10 +376,11 @@ export const sandboxReadFileTool: Tool = {
 		inputSchema: readFileInputSchema,
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
-		const args = (input ?? {}) as { path?: string };
-		if (!args.path || typeof args.path !== 'string') {
-			return { content: 'Missing required parameter: path', isError: true };
+		const parsed = safeValidate(pathOnlyArgsSchema, input);
+		if (!parsed.ok) {
+			return { content: `Invalid input: ${parsed.error}`, isError: true, errorCode: 'invalid_input' };
 		}
+		const args = parsed.value;
 		try {
 			await ensureWorkspaceMount(ctx);
 			const sandbox = getConversationSandbox(ctx);
@@ -404,13 +421,11 @@ export const sandboxWriteFileTool: Tool = {
 		inputSchema: writeFileInputSchema,
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
-		const args = (input ?? {}) as { path?: string; content?: string };
-		if (!args.path || typeof args.path !== 'string') {
-			return { content: 'Missing required parameter: path', isError: true };
+		const parsed = safeValidate(writeFileArgsSchema, input);
+		if (!parsed.ok) {
+			return { content: `Invalid input: ${parsed.error}`, isError: true, errorCode: 'invalid_input' };
 		}
-		if (args.content === undefined || typeof args.content !== 'string') {
-			return { content: 'Missing required parameter: content', isError: true };
-		}
+		const args = parsed.value;
 		try {
 			await ensureWorkspaceMount(ctx);
 			const sandbox = getConversationSandbox(ctx);
@@ -443,10 +458,11 @@ export const sandboxDeleteFileTool: Tool = {
 		inputSchema: deleteFileInputSchema,
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
-		const args = (input ?? {}) as { path?: string };
-		if (!args.path || typeof args.path !== 'string') {
-			return { content: 'Missing required parameter: path', isError: true };
+		const parsed = safeValidate(pathOnlyArgsSchema, input);
+		if (!parsed.ok) {
+			return { content: `Invalid input: ${parsed.error}`, isError: true, errorCode: 'invalid_input' };
 		}
+		const args = parsed.value;
 		try {
 			await ensureWorkspaceMount(ctx);
 			const sandbox = getConversationSandbox(ctx);
@@ -484,10 +500,11 @@ export const sandboxMkdirTool: Tool = {
 		inputSchema: mkdirInputSchema,
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
-		const args = (input ?? {}) as { path?: string; recursive?: boolean };
-		if (!args.path || typeof args.path !== 'string') {
-			return { content: 'Missing required parameter: path', isError: true };
+		const parsed = safeValidate(mkdirArgsSchema, input);
+		if (!parsed.ok) {
+			return { content: `Invalid input: ${parsed.error}`, isError: true, errorCode: 'invalid_input' };
 		}
+		const args = parsed.value;
 		try {
 			await ensureWorkspaceMount(ctx);
 			const sandbox = getConversationSandbox(ctx);
@@ -520,10 +537,11 @@ export const sandboxExistsTool: Tool = {
 		inputSchema: existsInputSchema,
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
-		const args = (input ?? {}) as { path?: string };
-		if (!args.path || typeof args.path !== 'string') {
-			return { content: 'Missing required parameter: path', isError: true };
+		const parsed = safeValidate(pathOnlyArgsSchema, input);
+		if (!parsed.ok) {
+			return { content: `Invalid input: ${parsed.error}`, isError: true, errorCode: 'invalid_input' };
 		}
+		const args = parsed.value;
 		try {
 			await ensureWorkspaceMount(ctx);
 			const sandbox = getConversationSandbox(ctx);
@@ -633,15 +651,11 @@ export const sandboxCreateArtifactTool: Tool = {
 		inputSchema: createArtifactInputSchema,
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
-		const args = (input ?? {}) as {
-			path?: string;
-			type?: 'code' | 'markdown' | 'html' | 'svg' | 'mermaid';
-			name?: string;
-			language?: string;
-		};
-		if (!args.path || typeof args.path !== 'string') {
-			return { content: 'Missing required parameter: path', isError: true };
+		const parsed = safeValidate(createArtifactArgsSchema, input);
+		if (!parsed.ok) {
+			return { content: `Invalid input: ${parsed.error}`, isError: true, errorCode: 'invalid_input' };
 		}
+		const args = parsed.value;
 		try {
 			await ensureWorkspaceMount(ctx);
 			const sandbox = getConversationSandbox(ctx);
@@ -728,11 +742,11 @@ export function createSandboxLoadImageTool(deps: SandboxLoadImageDeps): Tool {
 			inputSchema: loadImageInputSchema,
 		},
 		async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
-			const args = (input ?? {}) as { path?: string };
-			if (!args.path || typeof args.path !== 'string') {
-				return { content: 'Missing required parameter: path', isError: true, errorCode: 'invalid_input' };
+			const parsed = safeValidate(pathOnlyArgsSchema, input);
+			if (!parsed.ok) {
+				return { content: `Invalid input: ${parsed.error}`, isError: true, errorCode: 'invalid_input' };
 			}
-			const path = args.path;
+			const path = parsed.value.path;
 			if (!path.startsWith('/workspace/')) {
 				return {
 					content: 'Path must start with /workspace/.',

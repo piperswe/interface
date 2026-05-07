@@ -11,6 +11,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
+	import { z } from 'zod';
 	import { createNewConversation, archive } from '$lib/conversations.remote';
 	import { pushToast } from '$lib/toasts';
 	import SearchPalette from './SearchPalette.svelte';
@@ -146,7 +147,9 @@
 	function restoreWidth() {
 		try {
 			const saved = window.localStorage.getItem('sidebarWidth');
-			if (saved) setSidebarWidth(parseInt(saved, 10));
+			if (saved == null) return;
+			const parsed = z.coerce.number().int().finite().safeParse(saved);
+			if (parsed.success) setSidebarWidth(parsed.data);
 		} catch {
 			// ignore
 		}

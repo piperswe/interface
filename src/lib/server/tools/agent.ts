@@ -7,11 +7,19 @@
 // their own loop (handled in `createAgentTool`'s `innerToolRegistry` filter),
 // so a sub-agent cannot delegate again.
 
+import { z } from 'zod';
+import { safeValidate } from '$lib/zod-utils';
 import { routeLLMByGlobalId } from '../llm/route';
 import type { ChatRequest, ContentBlock, Message, ToolDefinition } from '../llm/LLM';
 import type LLM from '../llm/LLM';
 import { getSubAgentByName, type SubAgentRow } from '../sub_agents';
 import { ToolRegistry, type Tool, type ToolArtifactSpec, type ToolCitation, type ToolContext, type ToolExecutionResult } from './registry';
+
+const inputArgsSchema = z.object({
+	subagent_type: z.string(),
+	prompt: z.string(),
+	model: z.string(),
+});
 
 const DEFAULT_MAX_INNER_ITERATIONS = 5;
 const AGENT_TOOL_NAME = 'agent';
@@ -85,14 +93,12 @@ export function createAgentTool(deps: AgentToolDeps, subAgents: SubAgentRow[]): 
 			inputSchema,
 		},
 		async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
-			const args = (input ?? {}) as { subagent_type?: string; prompt?: string; model?: string };
-			if (!args.subagent_type || typeof args.subagent_type !== 'string') {
-				return { content: 'Missing required parameter: subagent_type', isError: true };
+			const parsed = safeValidate(inputArgsSchema, input);
+			if (!parsed.ok) {
+				return { content: `Invalid input: ${parsed.error}`, isError: true, errorCode: 'invalid_input' };
 			}
-			if (!args.prompt || typeof args.prompt !== 'string') {
-				return { content: 'Missing required parameter: prompt', isError: true };
-			}
-			if (!args.model || typeof args.model !== 'string' || !args.model.trim()) {
+			const args = parsed.value;
+			if (!args.model.trim()) {
 				return {
 					content:
 						'Missing required parameter: model. Ask the user which model the sub-agent should run on (use `get_models` to see options) and try again.',

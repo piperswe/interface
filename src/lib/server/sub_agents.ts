@@ -2,7 +2,11 @@
 // to via the built-in `agent` tool. Storage is D1; the inner agent loop lives
 // in `tools/agent.ts`. See migration 0004.
 
+import { z } from 'zod';
+import { parseJsonWith } from '$lib/zod-utils';
 import { now as nowMs } from './clock';
+
+const allowedToolsSchema = z.array(z.string());
 
 const SINGLE_USER_ID = 1;
 
@@ -39,14 +43,9 @@ type Row = {
 
 function parseTools(json: string | null): string[] | null {
 	if (!json) return null;
-	try {
-		const v = JSON.parse(json);
-		if (!Array.isArray(v)) return null;
-		const names = v.filter((x): x is string => typeof x === 'string');
-		return names.length > 0 ? names : null;
-	} catch {
-		return null;
-	}
+	const parsed = parseJsonWith(allowedToolsSchema, json);
+	if (!parsed || parsed.length === 0) return null;
+	return parsed;
 }
 
 function rowToSubAgent(r: Row): SubAgentRow {

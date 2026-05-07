@@ -12,7 +12,7 @@ describe('fetch_url tool', () => {
 	it('rejects missing url', async () => {
 		const result = await fetchUrlTool.execute(ctx, {});
 		expect(result.isError).toBe(true);
-		expect(result.content).toMatch(/Missing/);
+		expect(result.content).toMatch(/url/);
 	});
 
 	it('rejects malformed url', async () => {

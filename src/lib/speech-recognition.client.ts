@@ -2,6 +2,11 @@
 // blob to /transcribe, and returns the transcribed text. The server side
 // runs Workers AI Whisper (`@cf/openai/whisper-large-v3-turbo`).
 
+import { z } from 'zod';
+import { safeValidate } from '$lib/zod-utils';
+
+const transcribeResponseSchema = z.object({ text: z.string().optional() }).passthrough();
+
 const PREFERRED_MIME_TYPES = [
 	'audio/webm;codecs=opus',
 	'audio/webm',
@@ -113,6 +118,9 @@ export async function transcribe(blob: Blob): Promise<string> {
 		const detail = await res.text().catch(() => `${res.status}`);
 		throw new Error(detail || `Transcription failed (${res.status})`);
 	}
-	const data = (await res.json()) as { text?: string };
-	return (data.text ?? '').trim();
+	const validated = safeValidate(transcribeResponseSchema, await res.json());
+	if (!validated.ok) {
+		throw new Error(`Unexpected /transcribe response shape: ${validated.error}`);
+	}
+	return (validated.value.text ?? '').trim();
 }

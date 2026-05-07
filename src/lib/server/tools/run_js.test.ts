@@ -9,7 +9,7 @@ describe('run_js tool', () => {
 		const result = await runJsTool.execute(ctx, {});
 		expect(result.isError).toBe(true);
 		expect(result.errorCode).toBe('invalid_input');
-		expect(result.content).toMatch(/Missing/);
+		expect(result.content).toMatch(/code/);
 	});
 
 	it('returns the value of the snippet', async () => {
