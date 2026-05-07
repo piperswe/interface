@@ -72,3 +72,4 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /workspace
+RUN git config --global user.name "Interface" && git config --global user.email "interface@piperswe.me"
