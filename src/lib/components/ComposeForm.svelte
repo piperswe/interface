@@ -17,6 +17,18 @@
 		ConversationModeSnapshot,
 	} from '$lib/conversation-mode.client';
 	import ConversationModeButton from './ConversationModeButton.svelte';
+	import {
+		ArrowUp,
+		Brain,
+		ChevronDown,
+		Circle,
+		Eye,
+		Loader,
+		Mic,
+		Paperclip,
+		Square,
+		TriangleAlert,
+	} from 'lucide-svelte';
 
 	let {
 		conversationId,
@@ -345,9 +357,6 @@
 		}
 	}
 
-	const micGlyph = $derived(
-		recState === 'recording' ? '⏺' : recState === 'transcribing' ? '⏳' : recState === 'error' ? '⚠' : '🎤',
-	);
 	const micLabel = $derived(
 		recState === 'recording'
 			? 'Stop recording'
@@ -430,9 +439,9 @@
 					{#if a.status === 'uploading'}
 						<span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
 					{:else if a.status === 'error'}
-						<span aria-hidden="true">⚠</span>
+						<TriangleAlert size={14} aria-hidden="true" />
 					{:else}
-						<span aria-hidden="true">📎</span>
+						<Paperclip size={14} aria-hidden="true" />
 					{/if}
 					<span class="attachment-name text-truncate">{a.filename}</span>
 					{#if a.status === 'done' && a.size != null}
@@ -450,7 +459,7 @@
 	{/if}
 	{#if showVisionWarning}
 		<div class="vision-warning d-flex align-items-center gap-2" role="status">
-			<span aria-hidden="true">⚠</span>
+			<TriangleAlert size={16} aria-hidden="true" />
 			<span>
 				This model can't see images. The image{historyHasImages ? 's' : ''} already in this conversation will be hidden until you switch back to a vision-capable model.
 			</span>
@@ -462,18 +471,7 @@
 				<span class="compose-options-model">{currentLabel}</span>
 				<span class="compose-options-sep" aria-hidden="true">·</span>
 				<span class="compose-options-meta">Thinking: {budgetSummary}</span>
-				<svg
-					viewBox="0 0 24 24"
-					fill="none"
-					stroke="currentColor"
-					stroke-width="2"
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					aria-hidden="true"
-					class="compose-options-chevron"
-				>
-					<polyline points="6 9 12 15 18 9" />
-				</svg>
+				<ChevronDown class="compose-options-chevron" size={14} aria-hidden="true" />
 			</summary>
 			<div class="compose-options-panel" role="menu">
 				<div class="compose-options-section">
@@ -494,10 +492,14 @@
 										/>
 										<span class="flex-grow-1">{m.name}</span>
 										{#if m.supportsImageInput}
-											<span class="capability-badge" title="Accepts image input" aria-label="Accepts image input">👁</span>
+											<span class="capability-badge" title="Accepts image input" aria-label="Accepts image input">
+												<Eye size={14} aria-hidden="true" />
+											</span>
 										{/if}
 										{#if m.reasoningType != null}
-											<span class="capability-badge" title="Supports extended thinking" aria-label="Supports extended thinking">🧠</span>
+											<span class="capability-badge" title="Supports extended thinking" aria-label="Supports extended thinking">
+												<Brain size={14} aria-hidden="true" />
+											</span>
 										{/if}
 									</label>
 								</li>
@@ -571,9 +573,7 @@
 				aria-label="Attach files"
 				title="Attach files"
 			>
-				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width: 18px; height: 18px">
-					<path d="M21.44 11.05l-9.19 9.19a6 6 0 1 1-8.49-8.49l9.19-9.19a4 4 0 1 1 5.66 5.66l-9.2 9.19a2 2 0 1 1-2.83-2.83l8.49-8.48"/>
-				</svg>
+				<Paperclip size={18} aria-hidden="true" />
 			</button>
 			{#if recSupported && !conversationModeActive}
 				<button
@@ -588,7 +588,15 @@
 					aria-pressed={recState === 'recording'}
 					title={recError ?? micLabel}
 				>
-					<span aria-hidden="true">{micGlyph}</span>
+					{#if recState === 'recording'}
+						<Circle size={18} fill="currentColor" strokeWidth={0} aria-hidden="true" />
+					{:else if recState === 'transcribing'}
+						<Loader class="spin" size={18} aria-hidden="true" />
+					{:else if recState === 'error'}
+						<TriangleAlert size={18} aria-hidden="true" />
+					{:else}
+						<Mic size={18} aria-hidden="true" />
+					{/if}
 				</button>
 			{/if}
 			{#if conversationMode}
@@ -619,16 +627,11 @@
 			{/if}
 			{#if busy}
 				<button type="button" class="send btn btn-primary rounded-circle d-flex align-items-center justify-content-center flex-shrink-0" onclick={onStop} aria-label="Stop">
-					<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="width: 18px; height: 18px">
-						<rect x="6" y="6" width="12" height="12" rx="2" />
-					</svg>
+					<Square size={18} fill="currentColor" strokeWidth={0} aria-hidden="true" />
 				</button>
 			{:else}
 				<button type="submit" class="send btn btn-primary rounded-circle d-flex align-items-center justify-content-center flex-shrink-0" disabled={busy} aria-label="Send">
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width: 18px; height: 18px">
-						<line x1="12" y1="19" x2="12" y2="5" />
-						<polyline points="5 12 12 5 19 12" />
-					</svg>
+					<ArrowUp size={18} strokeWidth={2.5} aria-hidden="true" />
 				</button>
 			{/if}
 		</div>
@@ -719,14 +722,12 @@
 		white-space: nowrap;
 	}
 
-	.compose-options-chevron {
-		width: 14px;
-		height: 14px;
+	.compose-options-button :global(.compose-options-chevron) {
 		flex-shrink: 0;
 		transition: transform 120ms ease;
 	}
 
-	.compose-options[open] .compose-options-chevron {
+	.compose-options[open] :global(.compose-options-chevron) {
 		transform: rotate(180deg);
 	}
 
@@ -1004,6 +1005,14 @@
 
 	.mic-button.error {
 		color: var(--error-fg, #c00);
+	}
+
+	.mic-button :global(.spin) {
+		animation: mic-spin 1s linear infinite;
+	}
+
+	@keyframes mic-spin {
+		to { transform: rotate(360deg); }
 	}
 
 	@keyframes mic-pulse {

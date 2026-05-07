@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
+	import { Play, Pause, Loader, TriangleAlert } from 'lucide-svelte';
 
 	let { conversationId, messageId }: { conversationId: string; messageId: string } = $props();
 
@@ -73,9 +74,6 @@
 						? 'Retry'
 						: 'Read aloud',
 	);
-	const glyph = $derived(
-		phase === 'playing' ? '⏸' : phase === 'loading' ? '⏳' : phase === 'error' ? '⚠' : '▶',
-	);
 </script>
 
 <button
@@ -85,7 +83,15 @@
 	aria-label={label}
 	title={errorMessage ?? label}
 >
-	<span aria-hidden="true">{glyph}</span>
+	{#if phase === 'playing'}
+		<Pause size={14} aria-hidden="true" />
+	{:else if phase === 'loading'}
+		<Loader class="spin" size={14} aria-hidden="true" />
+	{:else if phase === 'error'}
+		<TriangleAlert size={14} aria-hidden="true" />
+	{:else}
+		<Play size={14} aria-hidden="true" />
+	{/if}
 </button>
 
 <style>
@@ -104,5 +110,11 @@
 	.speak-button:hover:not([disabled]) {
 		background: var(--bs-secondary-bg);
 		color: var(--accent);
+	}
+	.speak-button :global(.spin) {
+		animation: speak-spin 1s linear infinite;
+	}
+	@keyframes speak-spin {
+		to { transform: rotate(360deg); }
 	}
 </style>

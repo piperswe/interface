@@ -3,6 +3,7 @@
 	import { saveCustomTool, removeCustomTool, toggleCustomTool } from '$lib/custom-tools.remote';
 	import { toastSubmit, confirmToastSubmit } from '$lib/form-actions';
 	import MonacoEditor from '$lib/components/MonacoEditor.svelte';
+	import { ArrowLeft } from 'lucide-svelte';
 
 	let { data }: { data: PageData } = $props();
 	const tool = $derived(data.tool);
@@ -62,7 +63,7 @@
 
 <div class="settings-toolbar">
 	<div class="d-flex flex-column">
-		<a href="/settings#tools" class="small text-muted text-decoration-none">← Back to settings</a>
+		<a href="/settings#tools" class="small text-muted text-decoration-none d-inline-flex align-items-center gap-1"><ArrowLeft size={12} aria-hidden="true" /> Back to settings</a>
 		<h2 class="h5 mb-1 mt-1">Edit tool · <code>{tool.name}</code></h2>
 		<p class="small text-muted mb-0">
 			Available to the agent as

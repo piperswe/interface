@@ -4,6 +4,7 @@
 	import { tagConversation, createAndTagConversation } from '$lib/tags.remote';
 	import { clickOutside } from '$lib/click-outside';
 	import { pushToast } from '$lib/toasts';
+	import { Check } from 'lucide-svelte';
 
 	let {
 		conversationId,
@@ -86,7 +87,9 @@
 							onclick={(e) => toggle(t, e)}
 							disabled={busy}
 						>
-							<span class="tag-picker-check" aria-hidden="true">{checked ? '✓' : ''}</span>
+							<span class="tag-picker-check" aria-hidden="true">
+								{#if checked}<Check size={12} aria-hidden="true" />{/if}
+							</span>
 							<span class="tag-picker-name" data-color={t.color ?? 'gray'}>{t.name}</span>
 						</button>
 					</li>

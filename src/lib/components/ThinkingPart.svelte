@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { ThinkingPart } from '$lib/types/conversation';
+	import { ChevronRight } from 'lucide-svelte';
 
 	let {
 		part,
@@ -11,6 +12,7 @@
 {#if part.text}
 	<details class="thinking{nested ? ' nested' : ''}" open={isCurrent}>
 		<summary>
+			<ChevronRight class="chevron" size={12} aria-hidden="true" />
 			<span class="thinking-label">Thinking</span>
 			{#if isCurrent}<span class="streaming-indicator" aria-hidden="true">●</span>{/if}
 		</summary>
@@ -47,15 +49,13 @@
 		content: '';
 	}
 
-	details.thinking summary::before {
-		content: '▸';
-		font-size: 0.7em;
+	details.thinking summary :global(.chevron) {
 		color: var(--muted-2);
 		transition: transform 100ms ease;
-		display: inline-block;
+		flex-shrink: 0;
 	}
 
-	details.thinking[open] summary::before {
+	details.thinking[open] summary :global(.chevron) {
 		transform: rotate(90deg);
 	}
 

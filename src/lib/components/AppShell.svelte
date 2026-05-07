@@ -15,6 +15,7 @@
 	import { createNewConversation, archive } from '$lib/conversations.remote';
 	import { pushToast } from '$lib/toasts';
 	import SearchPalette from './SearchPalette.svelte';
+	import { Search, Archive, Menu } from 'lucide-svelte';
 
 	let {
 		conversations,
@@ -177,10 +178,7 @@
 				aria-label="Open search"
 				title={isMacLike ? '⌘K to search' : 'Ctrl+K to search'}
 			>
-				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-					<circle cx="11" cy="11" r="8" />
-					<line x1="21" y1="21" x2="16.65" y2="16.65" />
-				</svg>
+				<Search size={14} aria-hidden="true" />
 				<span class="flex-fill text-start text-muted">Search…</span>
 				<kbd class="sidebar-search-kbd">{isMacLike ? '⌘K' : 'Ctrl+K'}</kbd>
 			</button>
@@ -262,11 +260,7 @@
 												aria-label="Archive conversation"
 												title="Archive"
 											>
-												<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-													<polyline points="21 8 21 21 3 21 3 8" />
-													<rect x="1" y="3" width="22" height="5" />
-													<line x1="10" y1="12" x2="14" y2="12" />
-												</svg>
+												<Archive size={14} aria-hidden="true" />
 											</button>
 										</form>
 									</li>
@@ -291,7 +285,7 @@
 	<SearchPalette bind:open={searchOpen} />
 	<main class="app-main position-relative d-flex flex-column h-100 overflow-hidden min-vw-0">
 		<div class="app-main-header">
-			<label for="sidebar-toggle" class="sidebar-toggle-button" aria-label="Toggle sidebar">☰</label>
+			<label for="sidebar-toggle" class="sidebar-toggle-button" aria-label="Toggle sidebar"><Menu size={18} aria-hidden="true" /></label>
 		</div>
 		<div class="app-main-content d-flex flex-column flex-fill overflow-auto min-h-0">
 			{@render children()}

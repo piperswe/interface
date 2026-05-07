@@ -14,6 +14,7 @@
 	import { pushToast } from '$lib/toasts';
 	import { computeConversationCost, type ModelPricing } from '$lib/cost';
 	import { fmtUsd } from '$lib/formatters';
+	import { RotateCcw, Menu } from 'lucide-svelte';
 	import {
 		ConversationMode,
 		isConversationModeSupported,
@@ -384,18 +385,18 @@
 			type="button"
 			title="Regenerate title"
 			disabled={busy}
-			class="title-action-button btn btn-sm"
+			class="title-action-button btn btn-sm d-inline-flex align-items-center"
 			onclick={onRegenerate}
 			aria-label="Regenerate title"
-		>↻</button>
+		><RotateCcw size={14} aria-hidden="true" /></button>
 		<button
 			type="button"
 			title="Toggle side panel"
-			class="title-action-button btn btn-sm"
+			class="title-action-button btn btn-sm d-inline-flex align-items-center"
 			onclick={() => sidePanelOpen ? closeSidePanel() : openSidePanel()}
 			aria-label="Toggle side panel"
 			aria-expanded={sidePanelOpen}
-		>☰</button>
+		><Menu size={14} aria-hidden="true" /></button>
 		<TagPicker
 			conversationId={data.conversation.id}
 			availableTags={data.tags ?? []}

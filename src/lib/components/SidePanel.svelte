@@ -3,6 +3,7 @@
 	import SidePanelArtifacts from './SidePanelArtifacts.svelte';
 	import SandboxFileBrowser from './SandboxFileBrowser.svelte';
 	import SandboxPreview from './SandboxPreview.svelte';
+	import { X } from 'lucide-svelte';
 
 	let {
 		conversationId,
@@ -47,7 +48,7 @@
 				</button>
 			{/each}
 		</div>
-		<button type="button" class="close-btn btn btn-sm btn-ghost" onclick={onClose} aria-label="Close panel">✕</button>
+		<button type="button" class="close-btn btn btn-sm btn-ghost d-inline-flex align-items-center" onclick={onClose} aria-label="Close panel" title="Close"><X size={14} aria-hidden="true" /></button>
 	</div>
 	<div
 		class="side-panel-body flex-fill overflow-hidden"

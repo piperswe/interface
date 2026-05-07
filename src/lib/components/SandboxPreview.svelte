@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { getSandboxPreviewPorts } from '$lib/sandbox.remote';
+	import { RotateCcw } from 'lucide-svelte';
 
 	let {
 		conversationId,
@@ -40,7 +41,7 @@
 <div class="preview-tab d-flex flex-column h-100">
 	<div class="preview-header d-flex align-items-center justify-content-between px-2 py-1 border-bottom">
 		<span class="small fw-medium">Preview ports</span>
-		<button type="button" class="btn btn-sm btn-ghost" onclick={loadPorts} title="Refresh">↻</button>
+		<button type="button" class="btn btn-sm btn-ghost d-inline-flex align-items-center" onclick={loadPorts} title="Refresh" aria-label="Refresh"><RotateCcw size={14} aria-hidden="true" /></button>
 	</div>
 	<div class="ports-list flex-shrink-0 border-bottom">
 		{#if loading && ports.length === 0}

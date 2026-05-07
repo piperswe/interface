@@ -3,6 +3,16 @@
 		ConversationMode,
 		ConversationModeSnapshot,
 	} from '$lib/conversation-mode.client';
+	import {
+		Headphones,
+		Circle,
+		PenLine,
+		Send,
+		MessageCircle,
+		Volume2,
+		CircleStop,
+		Mic,
+	} from 'lucide-svelte';
 
 	let { mode, disabled = false }: { mode: ConversationMode; disabled?: boolean } = $props();
 
@@ -14,24 +24,23 @@
 	const phase = $derived(snapshot?.phase ?? 'idle');
 	const active = $derived(snapshot?.active === true);
 
-	const phaseLabel = $derived(
+	const phaseText = $derived(
 		phase === 'listening'
-			? '🎧 Listening…'
+			? 'Listening…'
 			: phase === 'recording'
-				? '⏺ Recording'
+				? 'Recording'
 				: phase === 'transcribing'
-					? '✍ Transcribing'
+					? 'Transcribing'
 					: phase === 'sending'
-						? '📤 Sending'
+						? 'Sending'
 						: phase === 'thinking'
-							? '💭 Thinking'
+							? 'Thinking'
 							: phase === 'speaking'
-								? '🔊 Speaking'
+								? 'Speaking'
 								: '',
 	);
 
 	const toggleLabel = $derived(active ? 'Stop conversation mode' : 'Start conversation mode');
-	const toggleGlyph = $derived(active ? '🛑' : '🎙️');
 
 	async function onToggle() {
 		await mode.toggle();
@@ -52,12 +61,31 @@
 	aria-label={toggleLabel}
 	title={toggleLabel}
 >
-	<span aria-hidden="true">{toggleGlyph}</span>
+	{#if active}
+		<CircleStop size={18} aria-hidden="true" />
+	{:else}
+		<Mic size={18} aria-hidden="true" />
+	{/if}
 </button>
 
 {#if active}
 	<div class="cm-status" role="status" aria-live="polite">
-		<span class="cm-pill">{phaseLabel}</span>
+		<span class="cm-pill">
+			{#if phase === 'listening'}
+				<Headphones size={14} aria-hidden="true" />
+			{:else if phase === 'recording'}
+				<Circle size={14} fill="currentColor" strokeWidth={0} aria-hidden="true" />
+			{:else if phase === 'transcribing'}
+				<PenLine size={14} aria-hidden="true" />
+			{:else if phase === 'sending'}
+				<Send size={14} aria-hidden="true" />
+			{:else if phase === 'thinking'}
+				<MessageCircle size={14} aria-hidden="true" />
+			{:else if phase === 'speaking'}
+				<Volume2 size={14} aria-hidden="true" />
+			{/if}
+			<span>{phaseText}</span>
+		</span>
 		{#if phase === 'recording'}
 			<button type="button" class="cm-stop-turn" onclick={onStopTurn} title="End your turn now">
 				End turn
@@ -115,6 +143,7 @@
 	.cm-pill {
 		display: inline-flex;
 		align-items: center;
+		gap: 0.35rem;
 		padding: 0.2rem 0.6rem;
 		font-size: 0.8125rem;
 		background: var(--bs-secondary-bg);

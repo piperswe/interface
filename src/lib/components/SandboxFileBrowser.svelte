@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { Folder, FileText, FileArchive, Download, X, ArrowUp } from 'lucide-svelte';
 
 	const _markdownMod = import('$lib/markdown.client');
 
@@ -118,7 +119,7 @@
 
 <div class="files-tab d-flex flex-column h-100">
 	<div class="files-header d-flex align-items-center gap-2 px-2 py-1 border-bottom">
-		<button type="button" class="btn btn-sm btn-ghost" onclick={navigateUp} disabled={currentPath === '/'} title="Go up">↑</button>
+		<button type="button" class="btn btn-sm btn-ghost d-inline-flex align-items-center" onclick={navigateUp} disabled={currentPath === '/'} title="Go up" aria-label="Go up"><ArrowUp size={14} aria-hidden="true" /></button>
 		<span class="current-path small text-truncate">{currentPath}</span>
 	</div>
 	<div class="files-list flex-fill overflow-auto">
@@ -134,26 +135,36 @@
 					{#if node.type === 'directory'}
 						<button
 							type="button"
-							class="directory-link text-start border-0 bg-transparent small flex-fill text-truncate"
+							class="directory-link text-start border-0 bg-transparent small flex-fill text-truncate d-inline-flex align-items-center gap-2"
 							onclick={() => loadFiles(node.path)}
 						>
-							📁 {node.path.split('/').pop()}
+							<Folder size={14} aria-hidden="true" />
+							<span class="text-truncate">{node.path.split('/').pop()}</span>
 						</button>
 					{:else}
 						<button
 							type="button"
-							class="file-link text-start border-0 bg-transparent small flex-fill text-truncate"
+							class="file-link text-start border-0 bg-transparent small flex-fill text-truncate d-inline-flex align-items-center gap-2"
 							onclick={() => isTextFile(node.path) ? viewFile(node.path) : null}
 							disabled={!isTextFile(node.path)}
 							title={isTextFile(node.path) ? 'View file' : 'Binary file — download only'}
 						>
-							{isTextFile(node.path) ? '📄' : '📦'} {node.path.split('/').pop()}
+							{#if isTextFile(node.path)}
+								<FileText size={14} aria-hidden="true" />
+							{:else}
+								<FileArchive size={14} aria-hidden="true" />
+							{/if}
+							<span class="text-truncate">{node.path.split('/').pop()}</span>
 						</button>
 						<a
 							href="/c/{conversationId}/sandbox/file?path={encodeURIComponent(node.path)}&download=1"
-							class="download-link small text-decoration-none"
+							class="download-link small text-decoration-none d-inline-flex align-items-center"
 							download
-						>⬇</a>
+							aria-label="Download {node.path.split('/').pop()}"
+							title="Download"
+						>
+							<Download size={14} aria-hidden="true" />
+						</a>
 					{/if}
 				</div>
 			{/each}
@@ -163,7 +174,7 @@
 		<div class="file-viewer flex-shrink-0 border-top">
 			<div class="file-viewer-header d-flex align-items-center justify-content-between px-2 py-1 border-bottom small">
 				<span class="text-truncate">{selectedFile.split('/').pop()}</span>
-				<button type="button" class="btn btn-sm btn-ghost" onclick={closeViewer}>✕</button>
+				<button type="button" class="btn btn-sm btn-ghost d-inline-flex align-items-center" onclick={closeViewer} aria-label="Close file viewer" title="Close"><X size={14} aria-hidden="true" /></button>
 			</div>
 			<div class="file-viewer-body overflow-auto">
 				{#if fileLoading}
