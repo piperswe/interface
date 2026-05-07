@@ -602,6 +602,56 @@
 					</form>
 				</section>
 
+				<section class="settings-card">
+					<div class="settings-card-head">
+						<h2 class="h6 mb-0">Workspace I/O mode</h2>
+						<p class="small text-muted mb-0">
+							How <code>/workspace</code> inside the sandbox is backed by R2. Snapshot mode is dramatically
+							faster for compilers and git but has a ~15s durability window during long-running tasks.
+						</p>
+					</div>
+					<form
+						{...saveSetting.for('workspace_io_mode').enhance(toastSubmit('Workspace I/O mode saved'))}
+						class="d-flex flex-column gap-2"
+					>
+						<input type="hidden" name="key" value="workspace_io_mode" />
+						<label class="form-check d-flex gap-2 align-items-start mb-0">
+							<input
+								type="radio"
+								name="value"
+								value="snapshot"
+								class="form-check-input mt-1"
+								checked={data.workspaceIoMode === 'snapshot'}
+								onchange={(e) => (e.currentTarget as HTMLInputElement).form?.requestSubmit()}
+							/>
+							<span>
+								<strong>Snapshot</strong> <span class="badge text-bg-secondary">recommended</span>
+								<span class="d-block small text-muted">
+									Hydrate <code>/workspace</code> from R2 on first use; sync deltas back every 15s and
+									on every modify-tool boundary. Native ext4 speed for git, npm, compilers.
+								</span>
+							</span>
+						</label>
+						<label class="form-check d-flex gap-2 align-items-start mb-0">
+							<input
+								type="radio"
+								name="value"
+								value="rclone-mount"
+								class="form-check-input mt-1"
+								checked={data.workspaceIoMode === 'rclone-mount'}
+								onchange={(e) => (e.currentTarget as HTMLInputElement).form?.requestSubmit()}
+							/>
+							<span>
+								<strong>Live mount (rclone)</strong>
+								<span class="d-block small text-muted">
+									FUSE mount via rclone with a 4 GB local VFS cache. Reads always go through the
+									mount; writes are flushed back after each modify-tool call.
+								</span>
+							</span>
+						</label>
+					</form>
+				</section>
+
 				<section class="settings-card span-2">
 					<div class="settings-card-head">
 						<h2 class="h6 mb-0">Worker secrets</h2>

@@ -10,6 +10,7 @@ import {
 	getTtsVoice,
 	getUserBio,
 	getSetting,
+	getWorkspaceIoMode,
 } from '$lib/server/settings';
 import { TTS_VOICES } from '$lib/server/tts';
 import { listSubAgents } from '$lib/server/sub_agents';
@@ -45,6 +46,7 @@ export const load: PageServerLoad = async ({ platform }) => {
 		conversations,
 		kagiCostPer1000Searches,
 		ttsVoice,
+		workspaceIoMode,
 		customTools,
 	] = await Promise.all([
 		listMcpServers(env),
@@ -64,6 +66,7 @@ export const load: PageServerLoad = async ({ platform }) => {
 		listConversations(env),
 		getKagiCostPer1000Searches(env),
 		getTtsVoice(env),
+		getWorkspaceIoMode(env),
 		listCustomTools(env),
 	]);
 	return {
@@ -88,6 +91,7 @@ export const load: PageServerLoad = async ({ platform }) => {
 		kagiCostPer1000Searches,
 		ttsVoice,
 		ttsVoices: TTS_VOICES,
+		workspaceIoMode,
 		customTools,
 		hasWorkerLoader: !!env.RUN_JS_LOADER,
 	};

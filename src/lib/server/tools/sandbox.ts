@@ -2,6 +2,7 @@ import { getSandbox, parseSSEStream } from '@cloudflare/sandbox';
 import type { Sandbox, ExecEvent, ExecResult } from '@cloudflare/sandbox';
 import { z } from 'zod';
 import { safeValidate } from '$lib/zod-utils';
+import { getWorkspaceIoMode, type WorkspaceIoMode } from '$lib/server/settings';
 import type { Tool, ToolContext, ToolExecutionResult } from './registry';
 import type { ProviderModel } from '../providers/types';
 import { parseGlobalModelId } from '../providers/types';
@@ -104,32 +105,52 @@ async function ensureSshKey(ctx: ToolContext): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// R2 /workspace mount
+// R2-backed /workspace
 // ---------------------------------------------------------------------------
-// When `WORKSPACE_BUCKET` is bound, mount it at /workspace so files written
-// there sync to R2. Each conversation gets its own bucket prefix so files
-// are isolated across conversations.
+// Each conversation gets its own R2 prefix (`conversations/{id}/`) so files
+// are isolated across conversations. We support two strategies, chosen by the
+// `workspace_io_mode` user setting:
 //
-// We prefer FUSE mode (s3fs inside the container) whenever R2 S3-API
-// credentials are configured. FUSE talks directly to R2 from the container
-// process — there are no background loops in the Durable Object that can
-// die when the DO is evicted. The earlier `localBucket: true` mode looked
-// nicer (no secrets needed) but its bidirectional sync ran setTimeout/SSE
-// loops inside the Sandbox DO, which Cloudflare evicts from memory shortly
-// after the originating RPC returns; the loops never made it past the next
-// tick, so container→R2 uploads never happened in production.
+// - 'snapshot' (default, fastest): /workspace is a native ext4 directory
+//   inside the container. On first use we hydrate it from R2 with
+//   `rclone copy`. A background daemon inside the container syncs deltas back
+//   every 15s, and every modify-tool RPC also runs `rclone sync` synchronously
+//   before returning — so files become durable on every tool boundary, with a
+//   bounded ~15s window of risk during long-running tool calls.
 //
-// `localBucket: true` is retained as a fallback for `wrangler dev`, where
-// the DO process is long-lived and the sync loops actually get to run.
+// - 'rclone-mount': /workspace is a FUSE mount via `rclone mount` with a 4 GB
+//   local VFS cache (`--vfs-cache-mode=full`). Reads always go through the
+//   live mount; writes are buffered locally and pushed to R2 by rclone's
+//   write-back loop (~1s lag). Modify-tool RPCs flush dirty pages with
+//   `sync && sleep 2` so subsequent file-browser reads see fresh data.
 //
-// The mount lives on the Sandbox Durable Object (the SDK tracks it in
-// `activeMounts`), and the DO can be evicted independently of this Worker
-// isolate — so we must NOT cache "already mounted" at the Worker level.
-// Always call `mountBucket`; the SDK throws a tolerable
-// "Mount path already in use" error when the mount is already live.
+// Why we no longer use the SDK's `mountBucket()` (s3fs):
+//
+//   s3fs translates every POSIX syscall to an S3 API call. `git status` over
+//   a working tree, `npm install`, and compilation became unusable because
+//   each `stat`/`open`/`read` paid a network round-trip. The container's
+//   native FS is fast — the FUSE-to-R2 indirection was the bottleneck.
+//
+// Dev fallback: when R2 S3-API credentials aren't configured (typical for
+// `wrangler dev`), we fall back to the SDK's `mountBucket('WORKSPACE_BUCKET',
+// { localBucket: true })`. localBucket runs setTimeout/SSE sync loops inside
+// the Sandbox DO; that's broken in production (DO eviction kills the loops
+// before they upload) but works under the long-lived `wrangler dev` DO.
+
 // Default matches `r2_buckets[0].bucket_name` in wrangler.jsonc. Override
 // via the `R2_WORKSPACE_BUCKET_NAME` secret if you renamed the bucket.
 const DEFAULT_R2_BUCKET_NAME = 'interface-workspace';
+
+const RCLONE_CONFIG_PATH = '/root/.config/rclone/rclone.conf';
+const RCLONE_REMOTE = 'r2';
+const WORKSPACE_PATH = '/workspace';
+const MODE_MARKER_PATH = '/var/lib/sandbox/workspace-mode';
+const SYNC_DAEMON_PID_PATH = '/var/run/sandbox-rclone-sync.pid';
+const SNAPSHOT_SYNC_INTERVAL_SECONDS = 15;
+// rclone's remote-control HTTP API for the FUSE mount. Used by the
+// mount-mode flush path (currently we just `sync && sleep` but the address is
+// reserved for future `rclone rc` calls if we need finer-grained flush).
+const RCLONE_RC_ADDR = '127.0.0.1:5572';
 
 function r2Endpoint(env: Env): string | undefined {
 	if (env.R2_ENDPOINT) return env.R2_ENDPOINT;
@@ -137,30 +158,204 @@ function r2Endpoint(env: Env): string | undefined {
 	return undefined;
 }
 
-export async function ensureWorkspaceMount(ctx: ToolContext): Promise<void> {
-	if (!ctx.env.WORKSPACE_BUCKET) return;
-	const sandbox = getConversationSandbox(ctx);
-	const prefix = `/conversations/${ctx.conversationId}`;
+type R2Config = {
+	endpoint: string;
+	accessKeyId: string;
+	secretAccessKey: string;
+	bucketName: string;
+	prefix: string;
+};
+
+function r2ConfigFromEnv(ctx: ToolContext): R2Config | null {
 	const endpoint = r2Endpoint(ctx.env);
 	const accessKeyId = ctx.env.R2_ACCESS_KEY_ID;
 	const secretAccessKey = ctx.env.R2_SECRET_ACCESS_KEY;
-	const bucketName = ctx.env.R2_WORKSPACE_BUCKET_NAME ?? DEFAULT_R2_BUCKET_NAME;
+	if (!endpoint || !accessKeyId || !secretAccessKey) return null;
+	return {
+		endpoint,
+		accessKeyId,
+		secretAccessKey,
+		bucketName: ctx.env.R2_WORKSPACE_BUCKET_NAME ?? DEFAULT_R2_BUCKET_NAME,
+		prefix: `conversations/${ctx.conversationId}`,
+	};
+}
+
+function rcloneConfigFile(cfg: R2Config): string {
+	// Anchor secrets to keys; rclone reads the [r2] section by name only, so
+	// the values can contain arbitrary characters as long as they're on a
+	// single line (rclone strips trailing whitespace). R2 access/secret keys
+	// are hex/base64 with no embedded newlines, which is safe.
+	return [
+		`[${RCLONE_REMOTE}]`,
+		'type = s3',
+		'provider = Other',
+		`endpoint = ${cfg.endpoint}`,
+		`access_key_id = ${cfg.accessKeyId}`,
+		`secret_access_key = ${cfg.secretAccessKey}`,
+		'acl = private',
+		'no_check_bucket = true',
+		'',
+	].join('\n');
+}
+
+function r2Remote(cfg: R2Config): string {
+	return `${RCLONE_REMOTE}:${cfg.bucketName}/${cfg.prefix}`;
+}
+
+function isMountAlreadyError(e: unknown): boolean {
+	return e instanceof Error && /(already (mount|in use))|not empty/i.test(e.message);
+}
+
+async function callMountBucketTolerant(
+	sandbox: ReturnType<typeof getSandbox>,
+	bindingOrName: string,
+	target: string,
+	options: Parameters<ReturnType<typeof getSandbox>['mountBucket']>[2],
+): Promise<void> {
 	try {
-		if (endpoint && accessKeyId && secretAccessKey) {
-			await sandbox.mountBucket(bucketName, '/workspace', {
-				endpoint,
-				provider: 'r2',
-				credentials: { accessKeyId, secretAccessKey },
-				prefix,
-			});
-		} else {
-			await sandbox.mountBucket('WORKSPACE_BUCKET', '/workspace', {
-				localBucket: true,
-				prefix,
-			});
-		}
+		await sandbox.mountBucket(bindingOrName, target, options);
 	} catch (e) {
-		if (!(e instanceof Error) || !/(already (mount|in use))|not empty/i.test(e.message)) throw e;
+		if (!isMountAlreadyError(e)) throw e;
+	}
+}
+
+// Reads the current workspace mode marker from inside the container. The
+// marker lives on the container's local FS so it's automatically cleared on
+// container restart (forcing a fresh init) but persists across Worker isolate
+// cycles within one container.
+async function readWorkspaceMode(sandbox: ReturnType<typeof getSandbox>): Promise<WorkspaceIoMode | null> {
+	try {
+		const file = await sandbox.readFile(MODE_MARKER_PATH);
+		const v = file.content.trim();
+		if (v === 'snapshot' || v === 'rclone-mount') return v;
+		return null;
+	} catch {
+		return null;
+	}
+}
+
+async function writeWorkspaceMode(sandbox: ReturnType<typeof getSandbox>, mode: WorkspaceIoMode): Promise<void> {
+	await sandbox.writeFile(MODE_MARKER_PATH, mode);
+}
+
+async function writeRcloneConfig(sandbox: ReturnType<typeof getSandbox>, cfg: R2Config): Promise<void> {
+	await sandbox.writeFile(RCLONE_CONFIG_PATH, rcloneConfigFile(cfg));
+	await sandbox.exec(`chmod 600 ${RCLONE_CONFIG_PATH}`);
+}
+
+async function execOrThrow(sandbox: ReturnType<typeof getSandbox>, command: string): Promise<void> {
+	const result = await sandbox.exec(command);
+	if (!result.success) {
+		throw new Error(`Sandbox command failed (exit ${result.exitCode}): ${command}\nstderr: ${result.stderr}`);
+	}
+}
+
+async function initSnapshotMode(sandbox: ReturnType<typeof getSandbox>, cfg: R2Config): Promise<void> {
+	const remote = r2Remote(cfg);
+	// Hydrate /workspace from R2, then start the periodic background sync
+	// daemon. setsid + nohup detaches the daemon so it survives the parent
+	// shell exiting at exec-RPC return; the daemon dies with the container.
+	await execOrThrow(
+		sandbox,
+		`set -e; mkdir -p ${WORKSPACE_PATH}; rclone copy ${JSON.stringify(remote)}/ ${WORKSPACE_PATH} --transfers 32 --checkers 32 --fast-list 2>&1 | tail -50 || true`,
+	);
+	const daemonScript = `while true; do rclone sync ${WORKSPACE_PATH} ${JSON.stringify(remote)}/ --transfers 32 --checkers 32 --fast-list >> /var/log/rclone-sync.log 2>&1; sleep ${SNAPSHOT_SYNC_INTERVAL_SECONDS}; done`;
+	await execOrThrow(
+		sandbox,
+		`set -e; nohup setsid bash -c ${JSON.stringify(daemonScript)} </dev/null >/dev/null 2>&1 & echo $! > ${SYNC_DAEMON_PID_PATH}; disown; true`,
+	);
+}
+
+async function teardownSnapshotMode(sandbox: ReturnType<typeof getSandbox>, cfg: R2Config): Promise<void> {
+	const remote = r2Remote(cfg);
+	// Final flush, kill the daemon, then empty /workspace so the next mode can
+	// repopulate cleanly.
+	await execOrThrow(
+		sandbox,
+		`set -e; rclone sync ${WORKSPACE_PATH} ${JSON.stringify(remote)}/ --transfers 32 --checkers 32 --fast-list 2>&1 | tail -20 || true; PID=$(cat ${SYNC_DAEMON_PID_PATH} 2>/dev/null || true); if [ -n "$PID" ]; then kill -- -"$PID" 2>/dev/null || kill "$PID" 2>/dev/null || true; fi; rm -f ${SYNC_DAEMON_PID_PATH}; find ${WORKSPACE_PATH} -mindepth 1 -delete 2>/dev/null || true`,
+	);
+}
+
+async function initRcloneMountMode(sandbox: ReturnType<typeof getSandbox>, cfg: R2Config): Promise<void> {
+	const remote = r2Remote(cfg);
+	// Best-effort cleanup of any leftover mount, then mount fresh. --daemon
+	// returns once the mount is ready; --vfs-write-back 1s bounds the lag
+	// between local writes and R2 uploads.
+	await execOrThrow(
+		sandbox,
+		`set -e; mkdir -p ${WORKSPACE_PATH} /var/cache/rclone-vfs; fusermount -u ${WORKSPACE_PATH} 2>/dev/null || true; rclone mount ${JSON.stringify(remote)}/ ${WORKSPACE_PATH} --vfs-cache-mode full --vfs-cache-max-size 4G --vfs-cache-max-age 24h --vfs-write-back 1s --transfers 32 --dir-cache-time 5s --rc --rc-no-auth --rc-addr ${RCLONE_RC_ADDR} --cache-dir /var/cache/rclone-vfs --daemon`,
+	);
+}
+
+async function teardownRcloneMountMode(sandbox: ReturnType<typeof getSandbox>): Promise<void> {
+	await execOrThrow(
+		sandbox,
+		`set -e; fusermount -u ${WORKSPACE_PATH} 2>/dev/null || umount -l ${WORKSPACE_PATH} 2>/dev/null || true; find ${WORKSPACE_PATH} -mindepth 1 -delete 2>/dev/null || true`,
+	);
+}
+
+export async function ensureWorkspaceReady(ctx: ToolContext): Promise<void> {
+	if (!ctx.env.WORKSPACE_BUCKET) return;
+	const sandbox = getConversationSandbox(ctx);
+	const cfg = r2ConfigFromEnv(ctx);
+
+	if (!cfg) {
+		// Dev fallback: SDK-managed localBucket. Cloudflare evicts the DO
+		// shortly after the originating RPC returns in production so the sync
+		// loops never run, but the wrangler dev DO is long-lived enough for
+		// it to work locally.
+		await callMountBucketTolerant(sandbox, 'WORKSPACE_BUCKET', WORKSPACE_PATH, {
+			localBucket: true,
+			prefix: `/conversations/${ctx.conversationId}`,
+		});
+		return;
+	}
+
+	const desiredMode = await getWorkspaceIoMode(ctx.env);
+	const currentMode = await readWorkspaceMode(sandbox);
+	if (currentMode === desiredMode) return;
+
+	// Mode change (or first init): tear down old, set up new.
+	if (currentMode === 'snapshot') {
+		await teardownSnapshotMode(sandbox, cfg);
+	} else if (currentMode === 'rclone-mount') {
+		await teardownRcloneMountMode(sandbox);
+	}
+	await writeRcloneConfig(sandbox, cfg);
+	if (desiredMode === 'snapshot') {
+		await initSnapshotMode(sandbox, cfg);
+	} else {
+		await initRcloneMountMode(sandbox, cfg);
+	}
+	await writeWorkspaceMode(sandbox, desiredMode);
+}
+
+// Synchronously push pending /workspace writes to R2. Runs at the end of every
+// modify-tool RPC so file-browser reads (which hit R2 directly via the
+// WORKSPACE_BUCKET binding, not the FUSE mount) see fresh data and so the
+// session is durable on tool-call boundaries even if the DO is evicted between
+// calls. Failures are non-fatal — the snapshot daemon (15s) or rclone's
+// write-back (~1s) will eventually catch up.
+export async function flushWorkspaceToR2(ctx: ToolContext): Promise<void> {
+	if (!ctx.env.WORKSPACE_BUCKET) return;
+	const cfg = r2ConfigFromEnv(ctx);
+	if (!cfg) return;
+	const sandbox = getConversationSandbox(ctx);
+	const mode = await readWorkspaceMode(sandbox);
+	try {
+		if (mode === 'snapshot') {
+			await execOrThrow(
+				sandbox,
+				`rclone sync ${WORKSPACE_PATH} ${JSON.stringify(r2Remote(cfg))}/ --transfers 32 --checkers 32 --fast-list 2>&1 | tail -20`,
+			);
+		} else if (mode === 'rclone-mount') {
+			// Force kernel buffers out and wait one --vfs-write-back cycle
+			// (configured to 1s above) to let rclone push the writes to R2.
+			await execOrThrow(sandbox, 'sync; sleep 2');
+		}
+	} catch {
+		// Eventual consistency is acceptable here. The background sync loop
+		// (snapshot) or VFS write-back (mount) will retry on the next tick.
 	}
 }
 
@@ -216,7 +411,7 @@ export const sandboxExecTool: Tool = {
 		const args = parsed.value;
 		const cwd = args.cwd ?? '/workspace';
 		try {
-			await ensureWorkspaceMount(ctx);
+			await ensureWorkspaceReady(ctx);
 			await ensureSshKey(ctx);
 			const sandbox = getConversationSandbox(ctx);
 			if (ctx.emitToolOutput) {
@@ -255,6 +450,7 @@ export const sandboxExecTool: Tool = {
 					if (stderr) partial.push('', '--- stderr ---', stderr);
 					return { content: partial.join('\n'), isError: true };
 				}
+				await flushWorkspaceToR2(ctx);
 				return formatExecResult({ success: exitCode === 0, exitCode, stdout, stderr });
 			}
 			const result = await sandbox.exec(args.command, {
@@ -263,6 +459,7 @@ export const sandboxExecTool: Tool = {
 				...(args.stdin ? { stdin: args.stdin } : {}),
 				...(args.timeout ? { timeout: args.timeout } : {}),
 			});
+			await flushWorkspaceToR2(ctx);
 			return formatExecResult(result);
 		} catch (e) {
 			return {
@@ -309,13 +506,14 @@ export const sandboxRunCodeTool: Tool = {
 		const args = parsed.value;
 		const language = args.language ?? 'python';
 		try {
-			await ensureWorkspaceMount(ctx);
+			await ensureWorkspaceReady(ctx);
 			await ensureSshKey(ctx);
 			const sandbox = getConversationSandbox(ctx);
 			const result = await sandbox.runCode(args.code, {
 				language,
 				...(args.timeout ? { timeout: args.timeout } : {}),
 			});
+			await flushWorkspaceToR2(ctx);
 			const lines: string[] = [];
 
 			if (result.logs.stdout.length > 0) {
@@ -382,7 +580,7 @@ export const sandboxReadFileTool: Tool = {
 		}
 		const args = parsed.value;
 		try {
-			await ensureWorkspaceMount(ctx);
+			await ensureWorkspaceReady(ctx);
 			const sandbox = getConversationSandbox(ctx);
 			const file = await sandbox.readFile(args.path);
 			return {
@@ -427,9 +625,10 @@ export const sandboxWriteFileTool: Tool = {
 		}
 		const args = parsed.value;
 		try {
-			await ensureWorkspaceMount(ctx);
+			await ensureWorkspaceReady(ctx);
 			const sandbox = getConversationSandbox(ctx);
 			await sandbox.writeFile(args.path, args.content);
+			await flushWorkspaceToR2(ctx);
 			return { content: `Wrote ${args.path}` };
 		} catch (e) {
 			return {
@@ -464,9 +663,10 @@ export const sandboxDeleteFileTool: Tool = {
 		}
 		const args = parsed.value;
 		try {
-			await ensureWorkspaceMount(ctx);
+			await ensureWorkspaceReady(ctx);
 			const sandbox = getConversationSandbox(ctx);
 			await sandbox.deleteFile(args.path);
+			await flushWorkspaceToR2(ctx);
 			return { content: `Deleted ${args.path}` };
 		} catch (e) {
 			return {
@@ -506,9 +706,10 @@ export const sandboxMkdirTool: Tool = {
 		}
 		const args = parsed.value;
 		try {
-			await ensureWorkspaceMount(ctx);
+			await ensureWorkspaceReady(ctx);
 			const sandbox = getConversationSandbox(ctx);
 			await sandbox.mkdir(args.path, { recursive: !!args.recursive });
+			await flushWorkspaceToR2(ctx);
 			return { content: `Created directory ${args.path}` };
 		} catch (e) {
 			return {
@@ -543,7 +744,7 @@ export const sandboxExistsTool: Tool = {
 		}
 		const args = parsed.value;
 		try {
-			await ensureWorkspaceMount(ctx);
+			await ensureWorkspaceReady(ctx);
 			const sandbox = getConversationSandbox(ctx);
 			const result = await sandbox.exists(args.path);
 			return { content: result.exists ? 'true' : 'false' };
@@ -657,7 +858,7 @@ export const sandboxCreateArtifactTool: Tool = {
 		}
 		const args = parsed.value;
 		try {
-			await ensureWorkspaceMount(ctx);
+			await ensureWorkspaceReady(ctx);
 			const sandbox = getConversationSandbox(ctx);
 			const file = await sandbox.readFile(args.path);
 			const type = args.type ?? inferArtifactType(args.path);

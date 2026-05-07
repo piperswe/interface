@@ -66,10 +66,11 @@ RUN apt-get update \
     ffmpeg \
     xdotool \
     imagemagick \
-    s3fs \
+    rclone \
+    fuse3 \
     libimage-exiftool-perl \
  && apt-get clean -y \
  && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir -p /workspace
+RUN mkdir -p /workspace /var/cache/rclone-vfs /var/lib/sandbox /root/.config/rclone
 RUN git config --global user.name "Interface" && git config --global user.email "interface@piperswe.me"
