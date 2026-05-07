@@ -27,13 +27,14 @@ export const GET: RequestHandler = async ({ params, platform }) => {
 	if (!text) error(422, 'no speakable text in message');
 
 	const voice = await getTtsVoice(platform.env);
-	const upstream = await synthesizeSpeech(platform.env, text, voice);
-	if (!upstream.ok || !upstream.body) {
-		const detail = await upstream.text().catch(() => '');
-		error(502, `TTS upstream ${upstream.status}${detail ? `: ${detail.slice(0, 200)}` : ''}`);
+	let audio: Response;
+	try {
+		audio = await synthesizeSpeech(platform.env, text, voice);
+	} catch (err) {
+		error(502, err instanceof Error ? err.message : String(err));
 	}
 
-	return new Response(upstream.body, {
+	return new Response(audio.body, {
 		headers: {
 			'Content-Type': 'audio/mpeg',
 			'Cache-Control': 'private, max-age=3600',

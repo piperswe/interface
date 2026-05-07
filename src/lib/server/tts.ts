@@ -3,8 +3,10 @@
 // `extractSpeakableText` walks a message's parts and yields a clean prose
 // string suitable for TTS — skipping thinking, tool calls, and tool results,
 // and stripping markdown structure that would otherwise be vocalised as
-// punctuation noise. `synthesizeSpeech` calls the Workers AI binding and
-// returns the raw audio Response so callers can stream it through.
+// punctuation noise. `synthesizeSpeech` chunks the input on sentence
+// boundaries (Aura caps each request at 2000 chars) and concatenates the
+// resulting MP3 streams — MP3 frames are self-contained, so byte-level
+// concatenation produces a valid stream.
 
 import type { MessagePart, MessageRow } from '$lib/types/conversation';
 
@@ -23,7 +25,12 @@ export function isValidTtsVoice(v: string): v is TtsVoice {
 	return (TTS_VOICES as readonly string[]).includes(v);
 }
 
-const MAX_TTS_CHARS = 3000;
+// Aura caps each request at 2000 characters. Stay under that with a small
+// margin so a sentence-boundary cut never overshoots.
+const TTS_CHUNK_CHARS = 1900;
+// Hard upper bound on the total spoken text. Past this we truncate to keep
+// latency and cost bounded — a 50k-char essay is not what the button is for.
+const MAX_TTS_CHARS = 50_000;
 
 function stripMarkdown(s: string): string {
 	return s
@@ -65,8 +72,36 @@ export function extractSpeakableText(message: Pick<MessageRow, 'content' | 'part
 	return stripped.slice(0, MAX_TTS_CHARS).trimEnd() + ' [truncated]';
 }
 
-// Hits Workers AI and returns the raw audio Response. Encoding defaults to
-// MP3 with no container so we can stream straight to the browser's <audio>.
+// Split text into chunks that fit Aura's 2000-char per-request cap. Prefers
+// sentence boundaries; falls back to the last whitespace, then a hard cut.
+export function splitForTts(text: string, maxChunk: number = TTS_CHUNK_CHARS): string[] {
+	const chunks: string[] = [];
+	let remaining = text.trim();
+	while (remaining.length > maxChunk) {
+		const window = remaining.slice(0, maxChunk);
+		// Prefer a sentence terminator close to the end of the window. Look
+		// only in the back half so we don't make tiny chunks for short
+		// sentences early in the text.
+		const halfway = Math.floor(maxChunk / 2);
+		let cut = -1;
+		for (const re of [/[.!?][\s)\]"']/g, /[,;:][\s)\]"']/g, /\s/g]) {
+			let last = -1;
+			let m: RegExpExecArray | null;
+			re.lastIndex = halfway;
+			while ((m = re.exec(window)) !== null) last = m.index + 1;
+			if (last > halfway) { cut = last; break; }
+		}
+		if (cut <= 0) cut = maxChunk;
+		const piece = remaining.slice(0, cut).trim();
+		if (piece) chunks.push(piece);
+		remaining = remaining.slice(cut).trim();
+	}
+	if (remaining.length > 0) chunks.push(remaining);
+	return chunks;
+}
+
+// Hits Workers AI and returns the synthesised MP3 as a single Response.
+// Long inputs are chunked and the per-chunk MP3 streams are concatenated.
 export async function synthesizeSpeech(
 	env: Env,
 	text: string,
@@ -74,12 +109,31 @@ export async function synthesizeSpeech(
 ): Promise<Response> {
 	const ai = (env as unknown as { AI: Ai }).AI;
 	if (!ai) throw new Error('Workers AI binding (env.AI) not configured');
-	// Aura rejects `container` when `encoding=mp3` (the MP3 stream has no
-	// outer container). Pass only the encoding and let the model use its
-	// default sample/bit rate.
-	return ai.run(
-		'@cf/deepgram/aura-2-en',
-		{ text, speaker: voice, encoding: 'mp3' },
-		{ returnRawResponse: true },
-	);
+	const chunks = splitForTts(text);
+	if (chunks.length === 0) throw new Error('no text to synthesise');
+
+	// Aura rejects `container` with `encoding=mp3` (no outer container);
+	// pass only the encoding.
+	const buffers: Uint8Array[] = [];
+	for (const chunk of chunks) {
+		const res = await ai.run(
+			'@cf/deepgram/aura-2-en',
+			{ text: chunk, speaker: voice, encoding: 'mp3' },
+			{ returnRawResponse: true },
+		);
+		if (!res.ok) {
+			const detail = await res.text().catch(() => '');
+			throw new Error(`TTS upstream ${res.status}${detail ? `: ${detail.slice(0, 200)}` : ''}`);
+		}
+		buffers.push(new Uint8Array(await res.arrayBuffer()));
+	}
+
+	const total = buffers.reduce((n, b) => n + b.byteLength, 0);
+	const merged = new Uint8Array(total);
+	let offset = 0;
+	for (const b of buffers) {
+		merged.set(b, offset);
+		offset += b.byteLength;
+	}
+	return new Response(merged, { headers: { 'Content-Type': 'audio/mpeg' } });
 }

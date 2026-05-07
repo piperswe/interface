@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_TTS_VOICE, extractSpeakableText, isValidTtsVoice, TTS_VOICES } from './tts';
+import { DEFAULT_TTS_VOICE, extractSpeakableText, isValidTtsVoice, splitForTts, TTS_VOICES } from './tts';
 import type { MessagePart } from '$lib/types/conversation';
 
 describe('extractSpeakableText', () => {
@@ -49,10 +49,10 @@ describe('extractSpeakableText', () => {
 		expect(got).toBe('This is bold and italic.');
 	});
 
-	it('truncates output longer than the cap and appends [truncated]', () => {
-		const long = 'a'.repeat(5000);
+	it('truncates output past the hard cap and appends [truncated]', () => {
+		const long = 'a'.repeat(60_000);
 		const got = extractSpeakableText({ content: long, parts: undefined });
-		expect(got.length).toBeLessThanOrEqual(3000 + ' [truncated]'.length);
+		expect(got.length).toBeLessThanOrEqual(50_000 + ' [truncated]'.length);
 		expect(got.endsWith('[truncated]')).toBe(true);
 	});
 
@@ -61,6 +61,45 @@ describe('extractSpeakableText', () => {
 			{ type: 'tool_use', id: 't1', name: 'x', input: {} },
 		];
 		expect(extractSpeakableText({ content: '', parts })).toBe('');
+	});
+});
+
+describe('splitForTts', () => {
+	it('returns the input unchanged when it fits in one chunk', () => {
+		const got = splitForTts('Short.', 1900);
+		expect(got).toEqual(['Short.']);
+	});
+
+	it('keeps every chunk under the cap', () => {
+		const text = ('Sentence one. Sentence two? Sentence three! ' + 'word '.repeat(500)).trim();
+		const got = splitForTts(text, 200);
+		expect(got.length).toBeGreaterThan(1);
+		for (const c of got) expect(c.length).toBeLessThanOrEqual(200);
+	});
+
+	it('prefers sentence terminators when splitting', () => {
+		// Build text with a clear sentence boundary near the cap.
+		const a = 'a'.repeat(150) + '. ';
+		const b = 'b'.repeat(150) + '. ';
+		const got = splitForTts(a + b, 200);
+		expect(got[0].endsWith('.')).toBe(true);
+		// Regression: the first chunk shouldn't contain any of the second
+		// sentence's `b` characters — that would mean we cut mid-sentence
+		// when a clean boundary was available.
+		expect(got[0]).not.toContain('b');
+	});
+
+	it('preserves the entire input across chunks', () => {
+		const text = 'one two three four five six seven eight nine ten '.repeat(40).trim();
+		const got = splitForTts(text, 100);
+		expect(got.join(' ').replace(/\s+/g, ' ')).toBe(text);
+	});
+
+	it('falls back to a hard cut when no whitespace exists', () => {
+		const text = 'x'.repeat(500);
+		const got = splitForTts(text, 100);
+		expect(got.length).toBeGreaterThanOrEqual(5);
+		for (const c of got) expect(c.length).toBeLessThanOrEqual(100);
 	});
 });
 
