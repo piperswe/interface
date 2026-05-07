@@ -643,18 +643,16 @@ export const sandboxExecTool: Tool = {
 					if (stderr) partial.push('', '--- stderr ---', stderr);
 					return { content: partial.join('\n'), isError: true };
 				}
-				// Race flushWorkspaceToR2 against a 30s timeout so a stuck
-				// rclone sync can't reproduce the same "tool never returns"
-				// symptom we just fixed in the streaming path. Failures and
-				// timeouts are surfaced via withFlushWarning; the 15s
-				// background daemon catches up either way.
-				const streamFlush = await Promise.race<FlushResult>([
-					flushWorkspaceToR2(ctx),
-					new Promise<FlushResult>((r) =>
-						setTimeout(() => r({ warning: 'workspace flush timed out after 30s; background sync will catch up' }), 30_000),
-					),
-				]);
-				return withFlushWarning(formatExecResult({ success: exitCode === 0, exitCode, stdout, stderr }), streamFlush);
+				// Streaming exec deliberately skips the synchronous
+				// flushWorkspaceToR2 the other modify-tool branches do.
+				// Empirically the post-stream sandbox.exec for rclone wedges
+				// on the same RPC-stream-cancel propagation issue we worked
+				// around upstairs (the tool would otherwise sit at the flush
+				// for many minutes even with a 2-file workspace). The
+				// snapshot-mode background daemon syncs every 15s, so files
+				// are durable within that window without a tool-boundary
+				// flush.
+				return formatExecResult({ success: exitCode === 0, exitCode, stdout, stderr });
 			}
 			const result = await sandbox.exec(args.command, {
 				cwd,
