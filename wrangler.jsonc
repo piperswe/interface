@@ -31,7 +31,7 @@
 			"class_name": "Sandbox",
 			"image": "./Dockerfile",
 			"instance_type": "standard-2",
-			"max_instances": 10,
+			"max_instances": 100,
 			"constraints": {
 				// keep it close to the R2 bucket
 				"regions": ["WNAM"],
