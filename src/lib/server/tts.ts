@@ -100,8 +100,30 @@ export function splitForTts(text: string, maxChunk: number = TTS_CHUNK_CHARS): s
 	return chunks;
 }
 
-// Hits Workers AI and returns the synthesised MP3 as a single Response.
-// Long inputs are chunked and the per-chunk MP3 streams are concatenated.
+async function runChunk(ai: Ai, chunk: string, voice: TtsVoice): Promise<Response> {
+	// Aura rejects `container` with `encoding=mp3` (no outer container);
+	// pass only the encoding.
+	return ai.run(
+		'@cf/deepgram/aura-2-en',
+		{ text: chunk, speaker: voice, encoding: 'mp3' },
+		{ returnRawResponse: true },
+	);
+}
+
+async function pipeBody(body: ReadableStream<Uint8Array>, controller: ReadableStreamDefaultController<Uint8Array>): Promise<void> {
+	const reader = body.getReader();
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) return;
+		if (value) controller.enqueue(value);
+	}
+}
+
+// Hits Workers AI and returns a streaming Response so the browser can start
+// playing the first chunk's MP3 frames before the later chunks finish
+// synthesising. The first chunk is awaited eagerly so an upstream HTTP error
+// surfaces as a real status code (502 from the caller) before any bytes hit
+// the wire; subsequent chunks pipe lazily through the body stream.
 export async function synthesizeSpeech(
 	env: Env,
 	text: string,
@@ -112,28 +134,30 @@ export async function synthesizeSpeech(
 	const chunks = splitForTts(text);
 	if (chunks.length === 0) throw new Error('no text to synthesise');
 
-	// Aura rejects `container` with `encoding=mp3` (no outer container);
-	// pass only the encoding.
-	const buffers: Uint8Array[] = [];
-	for (const chunk of chunks) {
-		const res = await ai.run(
-			'@cf/deepgram/aura-2-en',
-			{ text: chunk, speaker: voice, encoding: 'mp3' },
-			{ returnRawResponse: true },
-		);
-		if (!res.ok) {
-			const detail = await res.text().catch(() => '');
-			throw new Error(`TTS upstream ${res.status}${detail ? `: ${detail.slice(0, 200)}` : ''}`);
-		}
-		buffers.push(new Uint8Array(await res.arrayBuffer()));
+	const first = await runChunk(ai, chunks[0], voice);
+	if (!first.ok || !first.body) {
+		const detail = await first.text().catch(() => '');
+		throw new Error(`TTS upstream ${first.status}${detail ? `: ${detail.slice(0, 200)}` : ''}`);
 	}
+	const firstBody = first.body;
 
-	const total = buffers.reduce((n, b) => n + b.byteLength, 0);
-	const merged = new Uint8Array(total);
-	let offset = 0;
-	for (const b of buffers) {
-		merged.set(b, offset);
-		offset += b.byteLength;
-	}
-	return new Response(merged, { headers: { 'Content-Type': 'audio/mpeg' } });
+	const stream = new ReadableStream<Uint8Array>({
+		async start(controller) {
+			try {
+				await pipeBody(firstBody, controller);
+				for (let i = 1; i < chunks.length; i++) {
+					const res = await runChunk(ai, chunks[i], voice);
+					if (!res.ok || !res.body) {
+						const detail = await res.text().catch(() => '');
+						throw new Error(`TTS upstream ${res.status}${detail ? `: ${detail.slice(0, 200)}` : ''}`);
+					}
+					await pipeBody(res.body, controller);
+				}
+				controller.close();
+			} catch (err) {
+				controller.error(err);
+			}
+		},
+	});
+	return new Response(stream, { headers: { 'Content-Type': 'audio/mpeg' } });
 }
