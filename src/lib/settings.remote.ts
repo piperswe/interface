@@ -30,11 +30,17 @@ const ALLOWED_SETTING_KEYS = new Set([
 	'title_model',
 	'kagi_cost_per_1000_searches',
 	'tts_voice',
+	'workspace_io_mode',
 ]);
 
 type Theme = 'system' | 'light' | 'dark';
 function isTheme(v: string): v is Theme {
 	return v === 'system' || v === 'light' || v === 'dark';
+}
+
+type WorkspaceIoMode = 'snapshot' | 'rclone-mount';
+function isWorkspaceIoMode(v: string): v is WorkspaceIoMode {
+	return v === 'snapshot' || v === 'rclone-mount';
 }
 
 function isValidThreshold(v: string): boolean {
@@ -74,6 +80,9 @@ export const saveSetting = form(
 		}
 		if (key === 'tts_voice' && value !== '' && !isValidTtsVoice(value)) {
 			error(400, `Invalid TTS voice: ${value}`);
+		}
+		if (key === 'workspace_io_mode' && !isWorkspaceIoMode(value)) {
+			error(400, `Invalid workspace I/O mode: ${value}`);
 		}
 		await setSetting(getEnv(), key, value);
 		if (key === 'theme') invalidateThemeCache();

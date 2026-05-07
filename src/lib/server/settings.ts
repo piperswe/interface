@@ -76,6 +76,24 @@ export async function getKagiCostPer1000Searches(
 	return n;
 }
 
+// ---- Workspace I/O mode ----------------------------------------------------------------
+
+// Controls how /workspace inside the sandbox is backed by R2:
+//  - 'snapshot' (default, fastest): native ext4 directory hydrated from R2 on
+//    first use; deltas sync back every 15s and on every modify-tool boundary.
+//  - 'rclone-mount': FUSE mount via rclone with a local VFS cache. Slightly
+//    slower than snapshot mode (FUSE overhead) but reads always go through
+//    the live mount.
+export type WorkspaceIoMode = 'snapshot' | 'rclone-mount';
+
+export const DEFAULT_WORKSPACE_IO_MODE: WorkspaceIoMode = 'snapshot';
+
+export async function getWorkspaceIoMode(env: Env, userId: number = SINGLE_USER_ID): Promise<WorkspaceIoMode> {
+	const raw = await getSetting(env, 'workspace_io_mode', userId);
+	if (raw === 'snapshot' || raw === 'rclone-mount') return raw;
+	return DEFAULT_WORKSPACE_IO_MODE;
+}
+
 // ---- TTS voice ------------------------------------------------------------------------
 
 import { DEFAULT_TTS_VOICE, isValidTtsVoice, type TtsVoice } from './tts';

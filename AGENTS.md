@@ -154,13 +154,26 @@ otherwise files written in the sandbox will not sync to R2:
 | `R2_ACCESS_KEY_ID` | R2 API token access key id. Generate at R2 → Manage R2 API Tokens. |
 | `R2_SECRET_ACCESS_KEY` | R2 API token secret. |
 
-When all three are set, the sandbox mounts `/workspace` via s3fs-FUSE
-inside the container, so writes go straight to R2. Without them the
-mount falls back to the SDK's `localBucket` mode which only works under
-`wrangler dev` — Cloudflare evicts the Sandbox DO before its background
-sync loops can run, and container→R2 uploads silently never happen.
-Override `R2_WORKSPACE_BUCKET_NAME` only if you renamed the bucket from
-the `bucket_name` declared in `wrangler.jsonc`.
+When all three are set, the sandbox uses `rclone` inside the container to
+talk to R2. The `workspace_io_mode` user setting (Settings → General)
+picks between two strategies:
+
+- `snapshot` (default, fastest): `/workspace` is a native ext4 directory
+  hydrated from R2 with `rclone copy` on first use. A background daemon
+  inside the container syncs deltas back every 15s, and every modify-tool
+  RPC also runs `rclone sync` synchronously before returning. Native FS
+  speed for git, npm, and compilers; up to ~15s of in-flight build output
+  is at risk if the Sandbox DO is evicted mid-tool-call.
+- `rclone-mount`: `/workspace` is a FUSE mount via `rclone mount` with a
+  4 GB `--vfs-cache-mode=full` local cache. Reads always go through the
+  live mount; writes are pushed back to R2 by rclone within ~1s.
+
+Without R2 credentials the helper falls back to the SDK's `localBucket`
+mode, which only works under `wrangler dev` — Cloudflare evicts the
+Sandbox DO before its background sync loops can run, and container→R2
+uploads silently never happen. Override `R2_WORKSPACE_BUCKET_NAME` only
+if you renamed the bucket from the `bucket_name` declared in
+`wrangler.jsonc`.
 
 # Cloudflare Workers
 
