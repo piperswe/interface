@@ -82,6 +82,7 @@ describe('ConversationDurableObject — subscribe / destroy / parts', () => {
 		// Reader should observe stream end once destroy() closes the controller.
 		const next = await reader.read();
 		expect(next.done).toBe(true);
+		await reader.cancel();
 	});
 
 	it('parts column drives the rendered timeline', async () => {

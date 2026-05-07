@@ -10,9 +10,9 @@
 		"deploy": "node --loader ./node-loader.mjs node_modules/.bin/vite build && wrangler deploy",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json && node scripts/check-remote-form-usage.mjs",
 		"typecheck": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json && node scripts/check-remote-form-usage.mjs",
-		"test": "svelte-kit sync && vitest run",
+		"test": "svelte-kit sync && node scripts/run-tests.mjs",
 		"test:watch": "svelte-kit sync && vitest",
-		"test:coverage": "svelte-kit sync && vitest run --coverage",
+		"test:coverage": "svelte-kit sync && node scripts/run-tests.mjs --coverage",
 		"cf-typegen": "wrangler types",
 		"migrate": "wrangler d1 migrations apply interface --remote"
 	},
