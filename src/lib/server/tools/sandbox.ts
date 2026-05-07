@@ -703,7 +703,7 @@ const IMAGE_EXTENSIONS: Record<string, string> = {
 // Cap the in-context image size. Provider request bodies and token
 // economy both suffer when an image is too large; agents should resize
 // via `sandbox_exec` (e.g. ImageMagick) before reloading.
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 3584 * 1024;
 
 const loadImageInputSchema = {
 	type: 'object',
@@ -738,7 +738,7 @@ export function createSandboxLoadImageTool(deps: SandboxLoadImageDeps): Tool {
 		definition: {
 			name: 'sandbox_load_image',
 			description:
-				"Load an image from the conversation's /workspace into the model's context as a vision-readable image. Supported formats: PNG, JPEG, GIF, WEBP. The current model must accept image input — for non-vision models, this tool returns text guidance pointing you at sandbox_read_file or sandbox_exec instead. Images larger than 5 MB are automatically resized when the image processing service is configured; otherwise use sandbox_exec (e.g. ImageMagick) to resize before loading.",
+				"Load an image from the conversation's /workspace into the model's context as a vision-readable image. Supported formats: PNG, JPEG, GIF, WEBP. The current model must accept image input — for non-vision models, this tool returns text guidance pointing you at sandbox_read_file or sandbox_exec instead. Images larger than 3.5 MB are automatically resized when the image processing service is configured; otherwise use sandbox_exec (e.g. ImageMagick) to resize before loading.",
 			inputSchema: loadImageInputSchema,
 		},
 		async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
@@ -793,7 +793,7 @@ export function createSandboxLoadImageTool(deps: SandboxLoadImageDeps): Tool {
 			const tooBig = size > MAX_IMAGE_BYTES;
 			const mb = (size / (1024 * 1024)).toFixed(1);
 			const tooBigError = {
-				content: `Image too large to load (${mb} MB > 5 MB). Use sandbox_exec to resize the image (e.g. \`convert ${path} -resize 1024x1024\\> ${path.replace(/(\.[^.]+)$/, '.small$1')}\`) and load the resized copy.`,
+				content: `Image too large to load (${mb} MB > 3.5 MB). Use sandbox_exec to resize the image (e.g. \`convert ${path} -resize 1024x1024\\> ${path.replace(/(\.[^.]+)$/, '.small$1')}\`) and load the resized copy.`,
 				isError: true as const,
 			};
 
