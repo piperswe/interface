@@ -12,6 +12,11 @@
 	import { clickOutside } from '$lib/click-outside';
 	import type { Preset } from './thinking-presets';
 	import type { Recorder } from '$lib/speech-recognition.client';
+	import type {
+		ConversationMode,
+		ConversationModeSnapshot,
+	} from '$lib/conversation-mode.client';
+	import ConversationModeButton from './ConversationModeButton.svelte';
 
 	let {
 		conversationId,
@@ -21,6 +26,7 @@
 		busy,
 		contextUsed = 0,
 		historyHasImages = false,
+		conversationMode,
 		onOptimisticSubmit,
 		onOptimisticRevert,
 	}: {
@@ -31,9 +37,23 @@
 		busy: boolean;
 		contextUsed?: number;
 		historyHasImages?: boolean;
+		conversationMode?: ConversationMode | null;
 		onOptimisticSubmit?: (content: string, model: string) => void;
 		onOptimisticRevert?: () => void;
 	} = $props();
+
+	let conversationModeSnapshot = $state<ConversationModeSnapshot | null>(null);
+	$effect(() => {
+		const cm = conversationMode;
+		if (!cm) {
+			conversationModeSnapshot = null;
+			return;
+		}
+		return cm.subscribe((s) => {
+			conversationModeSnapshot = s;
+		});
+	});
+	const conversationModeActive = $derived(conversationModeSnapshot?.active === true);
 
 	let formEl: HTMLFormElement | null = $state(null);
 	let textareaEl: HTMLTextAreaElement | null = $state(null);
@@ -393,13 +413,15 @@
 	<textarea
 		bind:this={textareaEl}
 		name="content"
-		placeholder="Send a message…"
-		required={attachments.filter((a) => a.status === 'done').length === 0}
+		placeholder={conversationModeActive ? 'Conversation mode — speak instead' : 'Send a message…'}
+		required={attachments.filter((a) => a.status === 'done').length === 0 && !conversationModeActive}
 		disabled={busy}
+		readonly={conversationModeActive}
 		rows={1}
 		onkeydown={onKeyDown}
 		oninput={resizeTextarea}
 		class="form-control border-0 shadow-none bg-transparent p-1"
+		class:cm-readonly={conversationModeActive}
 	></textarea>
 	{#if attachments.length > 0}
 		<ul class="attachment-list list-unstyled m-0 p-0 d-flex flex-wrap gap-2">
@@ -553,7 +575,7 @@
 					<path d="M21.44 11.05l-9.19 9.19a6 6 0 1 1-8.49-8.49l9.19-9.19a4 4 0 1 1 5.66 5.66l-9.2 9.19a2 2 0 1 1-2.83-2.83l8.49-8.48"/>
 				</svg>
 			</button>
-			{#if recSupported}
+			{#if recSupported && !conversationModeActive}
 				<button
 					type="button"
 					class="mic-button"
@@ -568,6 +590,9 @@
 				>
 					<span aria-hidden="true">{micGlyph}</span>
 				</button>
+			{/if}
+			{#if conversationMode}
+				<ConversationModeButton mode={conversationMode} disabled={busy && !conversationModeActive} />
 			{/if}
 			{#if showMeter}
 				<button
@@ -635,6 +660,11 @@
 
 	.compose textarea::placeholder {
 		color: var(--muted-2);
+	}
+
+	.compose textarea.cm-readonly {
+		opacity: 0.55;
+		cursor: default;
 	}
 
 	.compose-options {

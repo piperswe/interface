@@ -14,6 +14,10 @@
 	import { pushToast } from '$lib/toasts';
 	import { computeConversationCost, type ModelPricing } from '$lib/cost';
 	import { fmtUsd } from '$lib/formatters';
+	import {
+		ConversationMode,
+		isConversationModeSupported,
+	} from '$lib/conversation-mode.client';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -190,6 +194,54 @@
 			return false;
 		}),
 	);
+
+	// Conversation mode controller — created lazily on mount when the
+	// browser supports it, recreated whenever the conversation id
+	// changes so the controller's deps close over the right state.
+	let conversationModeSupported = $state(false);
+	let conversationMode: ConversationMode | null = $state(null);
+	let lastSpokenMessageId = $state<string | null>(null);
+
+	onMount(() => {
+		conversationModeSupported = isConversationModeSupported();
+	});
+
+	$effect(() => {
+		if (!conversationModeSupported) return;
+		const id = data.conversation.id;
+		const controller = new ConversationMode({
+			conversationId: id,
+			getModel: () => lastModel,
+			onOptimisticSubmit: (content, model) => pushOptimisticUserMessage(content, model),
+			onOptimisticRevert: () => revertOptimisticUserMessage(),
+			onToast: (msg) => pushToast(msg, 'error'),
+		});
+		conversationMode = controller;
+		// Seed the tracker so existing assistant messages aren't replayed.
+		const last = untrack(() => convState.messages.at(-1));
+		lastSpokenMessageId =
+			last && last.role === 'assistant' && last.status === 'complete' && !last.id.startsWith('optimistic-')
+				? last.id
+				: null;
+		return () => {
+			controller.dispose();
+			conversationMode = null;
+		};
+	});
+
+	// When a fresh assistant message finishes, hand it to the mode
+	// controller. The controller itself decides whether to actually
+	// play it (only in the `thinking` phase, i.e. immediately after a
+	// voice turn), so this fires unconditionally on every completion.
+	$effect(() => {
+		const last = convState.messages.at(-1);
+		if (!last || last.role !== 'assistant' || last.status !== 'complete') return;
+		if (last.id.startsWith('optimistic-')) return;
+		if (convState.inProgress !== null) return;
+		if (last.id === lastSpokenMessageId) return;
+		lastSpokenMessageId = last.id;
+		conversationMode?.speakAssistant(last.id);
+	});
 	const contextUsed = $derived(
 		[...convState.messages].reverse().find((m) => m.role === 'assistant' && m.meta?.usage?.inputTokens)?.meta?.usage?.inputTokens ?? 0,
 	);
@@ -469,6 +521,7 @@
 						{busy}
 						{contextUsed}
 						{historyHasImages}
+						{conversationMode}
 						onOptimisticSubmit={pushOptimisticUserMessage}
 						onOptimisticRevert={revertOptimisticUserMessage}
 					/>
