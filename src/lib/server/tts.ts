@@ -74,9 +74,12 @@ export async function synthesizeSpeech(
 ): Promise<Response> {
 	const ai = (env as unknown as { AI: Ai }).AI;
 	if (!ai) throw new Error('Workers AI binding (env.AI) not configured');
+	// Aura rejects `container` when `encoding=mp3` (the MP3 stream has no
+	// outer container). Pass only the encoding and let the model use its
+	// default sample/bit rate.
 	return ai.run(
 		'@cf/deepgram/aura-2-en',
-		{ text, speaker: voice, encoding: 'mp3', container: 'none' },
+		{ text, speaker: voice, encoding: 'mp3' },
 		{ returnRawResponse: true },
 	);
 }
