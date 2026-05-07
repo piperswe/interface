@@ -22,12 +22,21 @@ export default defineConfig({
 				wrangler: { configPath: './wrangler.test.jsonc' },
 				miniflare: {
 					bindings: { TEST_MIGRATIONS: migrations },
+					// Per-runner D1: miniflare keys D1 storage by database id, so a
+					// fixed id in wrangler.test.jsonc would force every parallel
+					// runner to share one SQLite file and race on `DELETE FROM`
+					// cleanups. A unique id per runner gives each test file its
+					// own database; `test/setup.ts` migrates it in beforeAll.
+					d1Databases: { DB: crypto.randomUUID() },
 				},
 			};
 		}),
 	],
 	test: {
 		setupFiles: ['./test/setup.ts'],
+		fileParallelism: true,
+		maxWorkers: '125%',
+		minWorkers: 1,
 		// Tests target server-side modules under `src/lib/server/`. Component
 		// behaviour is exercised through the integration tests that drive the
 		// Durable Object end-to-end; we don't run a Svelte SSR test runner here.
