@@ -73,7 +73,7 @@ export const runJsTool: Tool = {
 	definition: {
 		name: 'run_js',
 		description:
-			"Run JavaScript in a fresh, isolated Cloudflare Worker (v8 isolate). The code is executed as the body of an async function — use `await` and `return` freely; the returned value is reported back JSON-serialized when possible, and `console.log` / `warn` / `error` are captured. The isolate has network access (`fetch`) but no project bindings or secrets, and no state is preserved across calls. Prefer this over `sandbox_run_code` for quick computation, parsing, transforms, or hitting public HTTP APIs — it spins up much faster.",
+			"Run JavaScript in a fresh, isolated Cloudflare Worker (v8 isolate). The code is executed as the body of an async function — use `await` and `return` freely; the returned value is reported back JSON-serialized when possible, and `console.log` / `warn` / `error` are captured. The isolate has network access (`fetch`) but no project bindings or secrets, and no state is preserved across calls. Prefer this over `sandbox_run_code` for most computation, parsing, transforms, or hitting public HTTP APIs — it spins up much faster. Only use `sandbox_run_code` if you need a filesystem.",
 		inputSchema,
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
