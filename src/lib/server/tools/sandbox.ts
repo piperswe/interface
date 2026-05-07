@@ -427,30 +427,121 @@ export const sandboxExecTool: Tool = {
 					...(args.stdin ? { stdin: args.stdin } : {}),
 					...(args.timeout ? { timeout: args.timeout } : {}),
 				});
+
+				// Regression: previously this branch did
+				//   `for await (const ev of parseSSEStream(stream, ctx.signal))`
+				// and broke on `complete`. The for-await's break runs the
+				// generator's `finally` which does `await reader.cancel()`.
+				// `stream` is an HTTP response body proxied across the
+				// Sandbox-DO -> Conversation-DO RPC boundary; cancel
+				// propagation across that boundary stalls in some cases, so
+				// the awaited cancel() in the generator's finally never
+				// resolves and the tool call hung forever (UI stuck in
+				// STREAMING). The fix runs the consumer as a floating task
+				// and resolves the outer function as soon as we see
+				// `complete` (or an error / idle / outer-abort), without
+				// awaiting generator teardown. Also covers streams that
+				// never emit `complete` via the idle watchdog.
+				const callAc = new AbortController();
+				const onOuterAbort = () => callAc.abort();
+				if (ctx.signal) {
+					if (ctx.signal.aborted) callAc.abort();
+					else ctx.signal.addEventListener('abort', onOuterAbort, { once: true });
+				}
+
+				const IDLE_MS = 60_000;
+				let idleTimer: ReturnType<typeof setTimeout> | undefined;
+				let idledOut = false;
+				const armIdle = () => {
+					if (idleTimer) clearTimeout(idleTimer);
+					idleTimer = setTimeout(() => {
+						idledOut = true;
+						callAc.abort();
+					}, IDLE_MS);
+				};
+				armIdle();
+
 				let stdout = '';
 				let stderr = '';
 				let exitCode: number | undefined;
-				for await (const ev of parseSSEStream<ExecEvent>(stream, ctx.signal)) {
-					if (ev.type === 'stdout' || ev.type === 'stderr') {
-						if (ev.data) {
-							if (ev.type === 'stdout') stdout += ev.data;
-							if (ev.type === 'stderr') stderr += ev.data;
-							ctx.emitToolOutput(ev.data);
-						}
-					} else if (ev.type === 'complete') {
-						exitCode = ev.exitCode;
-						break;
-					} else if (ev.type === 'error') {
-						return { content: ev.data ?? ev.error ?? 'Exec stream error', isError: true };
+				let streamError: string | undefined;
+				let resolved = false;
+				let resolveOuter!: () => void;
+				const outerDone = new Promise<void>((r) => {
+					resolveOuter = r;
+				});
+				const finish = () => {
+					if (!resolved) {
+						resolved = true;
+						resolveOuter();
 					}
+				};
+
+				// Float the consumer. We never await it — parseSSEStream's
+				// finally does `await reader.cancel()` on the RPC-piped
+				// upstream stream and that can hang. The container's idle
+				// timeout will eventually clean up.
+				void (async () => {
+					try {
+						for await (const ev of parseSSEStream<ExecEvent>(stream, callAc.signal)) {
+							armIdle();
+							if (resolved) continue; // suppress late chunks
+							if (ev.type === 'stdout' || ev.type === 'stderr') {
+								if (ev.data) {
+									if (ev.type === 'stdout') stdout += ev.data;
+									else stderr += ev.data;
+									ctx.emitToolOutput!(ev.data);
+								}
+							} else if (ev.type === 'complete') {
+								exitCode = ev.exitCode;
+								callAc.abort(); // best-effort: nudge upstream cancel
+								finish();
+								return;
+							} else if (ev.type === 'error') {
+								streamError = ev.data ?? ev.error ?? 'Exec stream error';
+								callAc.abort();
+								finish();
+								return;
+							}
+						}
+						// Stream closed without a `complete` event.
+						finish();
+					} catch (e) {
+						if (!callAc.signal.aborted && !resolved) {
+							streamError = e instanceof Error ? e.message : String(e);
+						}
+						finish();
+					}
+				})().catch(() => {
+					// Belt-and-suspenders: the inner try/catch already swallows.
+				});
+
+				await outerDone;
+				if (idleTimer) clearTimeout(idleTimer);
+				if (ctx.signal) ctx.signal.removeEventListener('abort', onOuterAbort);
+
+				if (ctx.signal?.aborted) {
+					return { content: 'Tool execution aborted', isError: true };
+				}
+				if (streamError !== undefined) {
+					return { content: streamError, isError: true };
 				}
 				if (exitCode === undefined) {
-					const partial = ['Exec stream ended without completion'];
+					const partial = [
+						idledOut
+							? `Exec stream stalled (no output for ${IDLE_MS / 1000}s)`
+							: 'Exec stream ended without completion',
+					];
 					if (stdout) partial.push('', '--- stdout ---', stdout);
 					if (stderr) partial.push('', '--- stderr ---', stderr);
 					return { content: partial.join('\n'), isError: true };
 				}
-				await flushWorkspaceToR2(ctx);
+
+				// flushWorkspaceToR2 has no internal timeout and swallows
+				// errors; race it so a hung rclone sync can't reproduce the
+				// same "tool never returns" symptom. The 15s background
+				// daemon catches up if we race out.
+				await Promise.race([flushWorkspaceToR2(ctx), new Promise<void>((r) => setTimeout(r, 30_000))]);
 				return formatExecResult({ success: exitCode === 0, exitCode, stdout, stderr });
 			}
 			const result = await sandbox.exec(args.command, {

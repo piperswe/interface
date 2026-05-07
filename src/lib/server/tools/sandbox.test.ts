@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ensureWorkspaceReady, flushWorkspaceToR2, sandboxExecTool, sandboxReadFileTool, sandboxWriteFileTool } from './sandbox';
-import type { ToolContext } from './registry';
+import type { ToolContext, ToolExecutionResult } from './registry';
 
 // Regression: an earlier implementation mounted /workspace via s3fs-FUSE.
 // Every file syscall paid an S3 round-trip, so `git status`, `npm install`,
@@ -273,5 +273,116 @@ describe('sandbox_exec — default cwd', () => {
 		const desc = sandboxExecTool.definition.description ?? '';
 		expect(desc).toMatch(/\/workspace/);
 		expect(desc).toMatch(/persist/i);
+	});
+});
+
+describe('sandbox_exec — streaming hang regression', () => {
+	const sseFrame = (obj: unknown): Uint8Array => new TextEncoder().encode(`data: ${JSON.stringify(obj)}\n\n`);
+
+	function makeExecCtx(sandbox: MockSandbox, overrides: Partial<ToolContext> = {}): ToolContext {
+		// Already-in-snapshot-mode marker so ensureWorkspaceReady is a no-op.
+		return {
+			...makeCtx(sandbox, PROD_R2_OVERRIDES),
+			emitToolOutput: vi.fn(),
+			...overrides,
+		};
+	}
+
+	// Regression: previously, the streaming branch broke out of the for-await
+	// on `complete`, which ran parseSSEStream's finally → `await reader.cancel()`.
+	// `stream` is piped across the Sandbox-DO -> Conversation-DO RPC boundary;
+	// cancel propagation can stall there, so the awaited cancel sat forever
+	// and the tool call never returned (UI stuck in STREAMING for trivial
+	// commands like `echo hello`). Fix: float the consumer; resolve the outer
+	// function on `complete` without awaiting generator teardown.
+	it('returns promptly after `complete` even if the upstream stream cancel hangs', async () => {
+		const stream = new ReadableStream<Uint8Array>({
+			start(c) {
+				c.enqueue(sseFrame({ type: 'stdout', data: 'hello\n' }));
+				c.enqueue(sseFrame({ type: 'complete', exitCode: 0 }));
+			},
+			pull() {
+				// Reads after the initial buffered chunks block forever.
+				return new Promise<void>(() => {});
+			},
+			cancel() {
+				// Reproduces the actual symptom: cancel propagation hangs.
+				return new Promise<void>(() => {});
+			},
+		});
+		const sandbox = makeMockSandbox({
+			readFile: vi.fn().mockResolvedValue({ content: 'snapshot', encoding: 'utf-8' }),
+			execStream: vi.fn().mockResolvedValue(stream),
+		});
+		const ctx = makeExecCtx(sandbox);
+
+		const result = await Promise.race<ToolExecutionResult | 'TIMEOUT'>([
+			sandboxExecTool.execute(ctx, { command: 'echo hello' }),
+			new Promise<'TIMEOUT'>((r) => setTimeout(() => r('TIMEOUT'), 2000)),
+		]);
+		expect(result).not.toBe('TIMEOUT');
+		const r = result as ToolExecutionResult;
+		expect(r.isError).not.toBe(true);
+		expect(r.content).toMatch(/exitCode: 0/);
+		expect(r.content).toMatch(/hello/);
+	});
+
+	// Regression: companion to the above — when the stream emits nothing and
+	// never closes (no `complete`, no chunks), the tool used to hang forever
+	// on the read. The idle watchdog now bails out with an error after the
+	// configured idle window so the agent loop can move on.
+	it('idle watchdog returns an error if no events arrive', async () => {
+		vi.useFakeTimers();
+		try {
+			const stream = new ReadableStream<Uint8Array>({
+				pull() {
+					return new Promise<void>(() => {});
+				},
+				cancel() {
+					// Hanging cancel is fine — we don't await consume teardown.
+					return new Promise<void>(() => {});
+				},
+			});
+			const sandbox = makeMockSandbox({
+				readFile: vi.fn().mockResolvedValue({ content: 'snapshot', encoding: 'utf-8' }),
+				execStream: vi.fn().mockResolvedValue(stream),
+			});
+			const ctx = makeExecCtx(sandbox);
+
+			const promise = sandboxExecTool.execute(ctx, { command: 'sleep 9999' });
+			// Advance past IDLE_MS (60s) so the watchdog fires.
+			await vi.advanceTimersByTimeAsync(61_000);
+			const result = await promise;
+			expect(result.isError).toBe(true);
+			expect(result.content as string).toMatch(/stalled/i);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	// Regression: the consumer must keep streaming output to the UI before
+	// `complete` arrives — i.e. the floating-consumer refactor must not
+	// regress the live-output UX.
+	it('streams stdout chunks to emitToolOutput before complete', async () => {
+		const stream = new ReadableStream<Uint8Array>({
+			start(c) {
+				c.enqueue(sseFrame({ type: 'stdout', data: 'one\n' }));
+				c.enqueue(sseFrame({ type: 'stdout', data: 'two\n' }));
+				c.enqueue(sseFrame({ type: 'complete', exitCode: 0 }));
+				c.close();
+			},
+		});
+		const sandbox = makeMockSandbox({
+			readFile: vi.fn().mockResolvedValue({ content: 'snapshot', encoding: 'utf-8' }),
+			execStream: vi.fn().mockResolvedValue(stream),
+		});
+		const emit = vi.fn();
+		const ctx = makeExecCtx(sandbox, { emitToolOutput: emit });
+		const r = await sandboxExecTool.execute(ctx, { command: 'printf one\\\\ntwo\\\\n' });
+		expect(r.isError).not.toBe(true);
+		// emit got both stdout chunks live (in order)
+		const emitted = emit.mock.calls.map((c) => c[0]);
+		expect(emitted).toEqual(['one\n', 'two\n']);
+		expect(r.content).toMatch(/one\ntwo/);
 	});
 });
