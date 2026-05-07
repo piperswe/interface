@@ -25,6 +25,7 @@
 		thinkingBudget,
 		busy,
 		contextUsed = 0,
+		historyHasImages = false,
 		conversationMode,
 		onOptimisticSubmit,
 		onOptimisticRevert,
@@ -35,6 +36,7 @@
 		thinkingBudget: number | null;
 		busy: boolean;
 		contextUsed?: number;
+		historyHasImages?: boolean;
 		conversationMode?: ConversationMode | null;
 		onOptimisticSubmit?: (content: string, model: string) => void;
 		onOptimisticRevert?: () => void;
@@ -192,6 +194,7 @@
 	const currentLabel = $derived(currentModel?.name ?? selectedModel);
 	const budgetSummary = $derived(describeBudget(thinkingBudget));
 	const selectedReasoning = $derived(currentModel?.reasoningType);
+	const showVisionWarning = $derived(historyHasImages && currentModel != null && !currentModel.supportsImageInput);
 
 	// Group models by provider for the dropdown
 	const modelsByProvider = $derived(() => {
@@ -445,6 +448,14 @@
 			{/each}
 		</ul>
 	{/if}
+	{#if showVisionWarning}
+		<div class="vision-warning d-flex align-items-center gap-2" role="status">
+			<span aria-hidden="true">⚠</span>
+			<span>
+				This model can't see images. The image{historyHasImages ? 's' : ''} already in this conversation will be hidden until you switch back to a vision-capable model.
+			</span>
+		</div>
+	{/if}
 	<div class="d-flex align-items-center gap-2 flex-wrap">
 		<details bind:this={optionsEl} class="compose-options" use:clickOutside={closeOptions}>
 			<summary class="compose-options-button" aria-label="Model and options">
@@ -481,7 +492,13 @@
 											checked={globalId === selectedModel}
 											onchange={() => pickModel(globalId)}
 										/>
-										<span>{m.name}</span>
+										<span class="flex-grow-1">{m.name}</span>
+										{#if m.supportsImageInput}
+											<span class="capability-badge" title="Accepts image input" aria-label="Accepts image input">👁</span>
+										{/if}
+										{#if m.reasoningType != null}
+											<span class="capability-badge" title="Supports extended thinking" aria-label="Supports extended thinking">🧠</span>
+										{/if}
 									</label>
 								</li>
 							{/each}
@@ -776,6 +793,21 @@
 
 	.compose-options-preset-label {
 		flex: 1;
+	}
+
+	.capability-badge {
+		font-size: 0.85rem;
+		line-height: 1;
+		opacity: 0.75;
+	}
+
+	.vision-warning {
+		font-size: 0.8125rem;
+		color: var(--warning-fg, #92500e);
+		background: var(--warning-bg, rgba(255, 193, 7, 0.12));
+		border: 1px solid var(--warning-border, rgba(255, 193, 7, 0.4));
+		border-radius: var(--bs-border-radius);
+		padding: 0.4rem 0.6rem;
 	}
 
 	.compose-options-preset-meta {

@@ -2,6 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { routeLLM } from '../llm/route';
 import { compactHistory } from '../llm/context';
 import { formatError } from '../llm/errors';
+import { sanitizeHistoryForModel } from '../llm/sanitize';
 import type LLM from '../llm/LLM';
 import type { ChatRequest, ContentBlock, Message, StreamEvent, ToolDefinition, Usage } from '../llm/LLM';
 import type { ToolCitation } from '../tools/registry';
@@ -9,7 +10,7 @@ import { listMcpServers } from '../mcp_servers';
 import { listSubAgents } from '../sub_agents';
 import { listMemories } from '../memories';
 import { listStyles } from '../styles';
-import { getSystemPrompt, getUserBio } from '../settings';
+import { getSetting, getSystemPrompt, getUserBio } from '../settings';
 import { indexMessage as indexSearchMessage } from '../search';
 import { now as nowMs, uuid } from '../clock';
 import type { AddMessageResult, Artifact, ArtifactType, ConversationState, MessageRow, MetaSnapshot } from '$lib/types/conversation';
@@ -231,12 +232,6 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		}
 		const target = rows[rows.length - 1];
 		const messageId = target.id;
-		const model = target.model;
-		if (!model) {
-			this.#sql.exec("UPDATE messages SET status = 'error', error = ? WHERE id = ?", 'Cannot resume generation: model unknown.', messageId);
-			this.#subscribers.broadcast('refresh', {});
-			return;
-		}
 
 		const conversationId = this.#getConversationId();
 		if (!conversationId) {
@@ -249,6 +244,25 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			return;
 		}
 
+		// Resolve the model to use for resumption. The row's stored model is
+		// the first choice, but operators sometimes delete or rename models in
+		// `/settings` while a streaming row is alive. Fall back to the user's
+		// global `default_model` setting, then to any configured model, before
+		// giving up — anything's better than bricking the conversation with a
+		// permanent error row.
+		const resolvedResume = await this.#resolveResumeModel(target.model);
+		if (!resolvedResume) {
+			this.#sql.exec(
+				"UPDATE messages SET status = 'error', error = ? WHERE id = ?",
+				'Cannot resume generation: no usable model is configured. Add a model in /settings and retry.',
+				messageId,
+			);
+			this.#subscribers.broadcast('refresh', {});
+			return;
+		}
+		const model = resolvedResume.model;
+		const fellBackFrom = resolvedResume.fellBackFrom;
+
 		// Hydrate `#inProgress` from the persisted row. Trim any trailing
 		// partial text/thinking (those followed the last completed tool round
 		// and were unflushed when the DO died) and normalize any orphan
@@ -260,12 +274,28 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		const trimmed = trimTrailingPartialOutput(persistedParts);
 		normalizeParts(trimmed, 'Generation interrupted by Durable Object restart; retrying.');
 
+		// If we fell back to a different model, surface that in the timeline
+		// so the user can see why the response is now coming from a different
+		// model than they originally picked. Update the row's `model` column
+		// before resuming so all downstream code sees the new model.
+		if (fellBackFrom != null) {
+			const infoText =
+				fellBackFrom === ''
+					? `Resumed with model: ${model} (no model was recorded for this turn)`
+					: `Original model "${fellBackFrom}" is no longer configured; resumed with ${model}.`;
+			trimmed.push({ type: 'info', text: infoText });
+		}
+
 		this.#sql.exec(
-			"UPDATE messages SET content = '', thinking = NULL, parts = ?, started_at = ? WHERE id = ?",
+			"UPDATE messages SET content = '', thinking = NULL, model = ?, parts = ?, started_at = ? WHERE id = ?",
+			model,
 			await partsToJson(trimmed, this.env, this.#uploadedBlobHashes),
 			nowMs(),
 			messageId,
 		);
+		if (fellBackFrom != null) {
+			this.#subscribers.broadcast('model_switch', { messageId, model });
+		}
 
 		this.#inProgress = {
 			messageId,
@@ -637,6 +667,39 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		}
 	}
 
+	// Resolve the model to use for resumption when the streaming row's stored
+	// `model` may be stale (deleted from `/settings`) or null (legacy row).
+	// Returns the resolved global id and, when a fallback was applied, the
+	// original value so the caller can surface it in the timeline. Returns
+	// null only when no model resolves at all.
+	async #resolveResumeModel(stored: string | null): Promise<{ model: string; fellBackFrom: string | null } | null> {
+		// When tests inject a scripted LLM via __setLLMOverride, `#routeLLM`
+		// short-circuits without consulting D1, so a stored sentinel like
+		// "fake/model" looks unresolvable here. Trust the stored value when
+		// it's non-empty — the override decides what actually runs. Null
+		// `stored` still falls through to the resolve-or-fallback path so
+		// the bug "model column was never set" stays covered.
+		if (this.__llmOverrideScript && stored) {
+			return { model: stored, fellBackFrom: null };
+		}
+		if (stored) {
+			const direct = await getResolvedModel(this.env, stored).catch(() => null);
+			if (direct) return { model: stored, fellBackFrom: null };
+		}
+		const fallbackOriginal = stored ?? '';
+		const defaultModel = await getSetting(this.env, 'default_model').catch(() => null);
+		if (defaultModel) {
+			const resolvedDefault = await getResolvedModel(this.env, defaultModel).catch(() => null);
+			if (resolvedDefault) return { model: defaultModel, fellBackFrom: fallbackOriginal };
+		}
+		const all = await listAllModels(this.env).catch(() => []);
+		if (all.length > 0) {
+			const first = `${all[0].providerId}/${all[0].id}`;
+			return { model: first, fellBackFrom: fallbackOriginal };
+		}
+		return null;
+	}
+
 	async #routeLLM(
 		globalId: string,
 		opts: { purpose?: 'main' | 'title' } = {},
@@ -714,6 +777,21 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 				last.text += delta;
 			} else {
 				parts.push({ type: 'thinking', text: delta });
+			}
+		};
+		const attachThinkingSignature = (signature: string) => {
+			// Anthropic emits the signature once per thinking block at
+			// content_block_stop. Walk back to the most recent thinking part
+			// in this turn and stamp the signature so subsequent turns can
+			// round-trip it. If text was already streamed after the thinking
+			// block, the most recent thinking is still the right target — text
+			// blocks don't carry signatures.
+			for (let i = parts.length - 1; i >= 0; i--) {
+				const p = parts[i];
+				if (p.type === 'thinking' && !p.signature) {
+					p.signature = signature;
+					return;
+				}
 			}
 		};
 
@@ -812,6 +890,11 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			const tools: ToolDefinition[] | undefined = registry.definitions().length > 0 ? registry.definitions() : undefined;
 
 			ip.providerID = llm.providerID;
+			// `resolved` tracks the ResolvedModel for the current iteration so
+			// `sanitizeHistoryForModel` can filter incompatible content (images,
+			// thinking) before each chat call. Reset whenever `currentModel`
+			// changes via `switch_model`.
+			let resolvedForRoute: ResolvedModel | null = resolved;
 			let hitIterationCap = false;
 			for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
 				const turnToolCalls: RecordedToolCall[] = [];
@@ -820,7 +903,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 				const isLastIteration = iteration === MAX_TOOL_ITERATIONS - 1;
 
 				for await (const ev of llm.chat({
-					messages,
+					messages: sanitizeHistoryForModel(messages, resolvedForRoute),
 					systemPrompt,
 					signal,
 					...(tools ? { tools } : {}),
@@ -839,6 +922,9 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 						ip.thinking += ev.delta;
 						appendThinking(ev.delta);
 						this.#subscribers.broadcast('thinking_delta', { messageId: assistantId, content: ev.delta });
+						this.#scheduleFlush();
+					} else if (ev.type === 'thinking_signature') {
+						attachThinkingSignature(ev.signature);
 						this.#scheduleFlush();
 					} else if (ev.type === 'tool_call') {
 						turnToolCalls.push({ id: ev.id, name: ev.name, input: ev.input, thoughtSignature: ev.thoughtSignature });
@@ -1027,6 +1113,11 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 					currentModel = pendingModelSwitch;
 					llm = await this.#routeLLM(currentModel);
 					ip.providerID = llm.providerID;
+					// Refresh the resolved model so the next iteration's
+					// sanitize pass uses the new model's capabilities (e.g. a
+					// switch from a vision model to a text-only one strips
+					// images from history before the next chat call).
+					resolvedForRoute = await getResolvedModel(this.env, currentModel);
 					const infoPart: MessagePart = { type: 'info', text: `Switched to model: ${currentModel}` };
 					parts.push(infoPart);
 					this.#sql.exec(
