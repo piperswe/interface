@@ -643,15 +643,22 @@ export const sandboxExecTool: Tool = {
 					if (stderr) partial.push('', '--- stderr ---', stderr);
 					return { content: partial.join('\n'), isError: true };
 				}
-				// Race flushWorkspaceToR2 against a 30s timeout so a stuck
-				// rclone sync can't reproduce the same "tool never returns"
-				// symptom we just fixed in the streaming path. Failures and
-				// timeouts are surfaced via withFlushWarning; the 15s
-				// background daemon catches up either way.
+				// Race flushWorkspaceToR2 against a generous timeout so a
+				// stuck rclone sync can't reproduce the "tool never returns"
+				// symptom we just fixed in the streaming path. The ceiling is
+				// well above any reasonable sync time (rclone sync on a fresh
+				// workspace typically completes in seconds, but a populous
+				// tree like node_modules can legitimately take a minute or
+				// two to walk and compare against R2). Failures and timeouts
+				// are surfaced via withFlushWarning; the 15s background
+				// daemon catches up either way.
 				const streamFlush = await Promise.race<FlushResult>([
 					flushWorkspaceToR2(ctx),
 					new Promise<FlushResult>((r) =>
-						setTimeout(() => r({ warning: 'workspace flush timed out after 30s; background sync will catch up' }), 30_000),
+						setTimeout(
+							() => r({ warning: 'workspace flush exceeded 5m; background sync will catch up' }),
+							5 * 60_000,
+						),
 					),
 				]);
 				return withFlushWarning(formatExecResult({ success: exitCode === 0, exitCode, stdout, stderr }), streamFlush);
