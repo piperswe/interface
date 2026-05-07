@@ -11,7 +11,7 @@ function getConversationSandbox(ctx: ToolContext) {
 	if (!ctx.env.SANDBOX) {
 		throw new Error('Sandbox binding is not configured.');
 	}
-	return getSandbox(ctx.env.SANDBOX as unknown as DurableObjectNamespace<Sandbox>, ctx.conversationId);
+	return getSandbox(ctx.env.SANDBOX as unknown as DurableObjectNamespace<Sandbox>, ctx.conversationId, { sleepAfter: '1h' });
 }
 
 // ---------------------------------------------------------------------------
