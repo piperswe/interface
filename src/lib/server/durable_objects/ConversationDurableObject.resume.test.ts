@@ -41,6 +41,16 @@ describe('ConversationDurableObject — resume', () => {
 		// mirrors what the constructor does on a DO that boots into a
 		// streaming row, but without depending on test-runner DO recycling
 		// semantics.
+		//
+		// Regression: the alarm time must be far enough in the future that
+		// workerd's natural alarm scheduler doesn't fire it on its own
+		// before `runDurableObjectAlarm` runs. A short delay (e.g. +50ms)
+		// races with the RPCs below: if the natural scheduler wins,
+		// `runDurableObjectAlarm` finds no scheduled alarm and returns
+		// `false`, or — worse — the alarm fires before `setOverride` has
+		// landed and `#routeLLM` falls through to the real provider with an
+		// unknown 'fake/model'. A minute is plenty: tests never run that
+		// long, so the only path to alarm() is the explicit trigger below.
 		await runInDurableObject(stub, async (_instance, ctx) => {
 			ctx.storage.sql.exec(
 				"INSERT INTO messages (id, role, content, model, status, created_at) VALUES ('u1', 'user', 'hi', NULL, 'complete', 1)",
@@ -52,7 +62,7 @@ describe('ConversationDurableObject — resume', () => {
 				"INSERT OR REPLACE INTO _meta (key, value) VALUES ('conversation_id', ?)",
 				id,
 			);
-			await ctx.storage.setAlarm(Date.now() + 50);
+			await ctx.storage.setAlarm(Date.now() + 60_000);
 		});
 		await setOverride(stub, [textTurn('alarm-resumed').events]);
 
