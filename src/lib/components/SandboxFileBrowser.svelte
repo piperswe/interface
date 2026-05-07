@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 
+	const _markdownMod = import('$lib/markdown.client');
+
 	let {
 		conversationId,
 	}: {
@@ -15,7 +17,38 @@
 	let error = $state<string | null>(null);
 	let selectedFile = $state<string | null>(null);
 	let fileContent = $state<string | null>(null);
+	let fileContentHtml = $state<string | null>(null);
 	let fileLoading = $state(false);
+	let viewSeq = 0;
+
+	const EXT_LANG: Record<string, string> = {
+		ts: 'typescript',
+		tsx: 'tsx',
+		js: 'javascript',
+		mjs: 'javascript',
+		cjs: 'javascript',
+		jsx: 'jsx',
+		py: 'python',
+		rs: 'rust',
+		sql: 'sql',
+		sh: 'bash',
+		bash: 'bash',
+		env: 'bash',
+		json: 'json',
+		yaml: 'yaml',
+		yml: 'yaml',
+		md: 'markdown',
+		markdown: 'markdown',
+		html: 'html',
+		svg: 'html',
+		xml: 'html',
+		css: 'css',
+	};
+
+	function langForPath(path: string): string {
+		const ext = path.split('.').pop()?.toLowerCase() ?? '';
+		return EXT_LANG[ext] ?? 'text';
+	}
 
 	async function loadFiles(path: string) {
 		loading = true;
@@ -33,18 +66,38 @@
 	}
 
 	async function viewFile(path: string) {
+		const mySeq = ++viewSeq;
 		selectedFile = path;
 		fileContent = null;
+		fileContentHtml = null;
 		fileLoading = true;
 		try {
 			const res = await fetch(`/c/${conversationId}/sandbox/file?path=${encodeURIComponent(path)}`);
 			if (!res.ok) throw new Error(await res.text());
-			fileContent = await res.text();
+			const text = await res.text();
+			if (mySeq !== viewSeq) return;
+			fileContent = text;
+			try {
+				const mod = await _markdownMod;
+				const html = await mod.renderArtifactCodeClient(text, langForPath(path));
+				if (mySeq !== viewSeq) return;
+				fileContentHtml = html;
+			} catch {
+				// Fall back to the plain <pre><code> rendering below.
+			}
 		} catch (e) {
+			if (mySeq !== viewSeq) return;
 			fileContent = `Error: ${e instanceof Error ? e.message : String(e)}`;
 		} finally {
-			fileLoading = false;
+			if (mySeq === viewSeq) fileLoading = false;
 		}
+	}
+
+	function closeViewer() {
+		viewSeq++;
+		selectedFile = null;
+		fileContent = null;
+		fileContentHtml = null;
 	}
 
 	function navigateUp() {
@@ -110,11 +163,13 @@
 		<div class="file-viewer flex-shrink-0 border-top">
 			<div class="file-viewer-header d-flex align-items-center justify-content-between px-2 py-1 border-bottom small">
 				<span class="text-truncate">{selectedFile.split('/').pop()}</span>
-				<button type="button" class="btn btn-sm btn-ghost" onclick={() => { selectedFile = null; fileContent = null; }}>✕</button>
+				<button type="button" class="btn btn-sm btn-ghost" onclick={closeViewer}>✕</button>
 			</div>
 			<div class="file-viewer-body overflow-auto">
 				{#if fileLoading}
 					<div class="p-2 small text-muted">Loading…</div>
+				{:else if fileContentHtml !== null}
+					<div class="shiki-block">{@html fileContentHtml}</div>
 				{:else if fileContent !== null}
 					<pre class="m-0 p-2 small"><code>{fileContent}</code></pre>
 				{/if}
@@ -180,5 +235,19 @@
 	.file-viewer-body pre {
 		background: transparent;
 		color: var(--code-block-fg);
+	}
+
+	.shiki-block :global(pre.shiki) {
+		margin: 0;
+		padding: 0.5rem 0.6rem;
+		font-size: 0.82em;
+		overflow-x: auto;
+		background: transparent;
+	}
+
+	.shiki-block :global(pre.shiki code) {
+		background: none;
+		padding: 0;
+		font-size: inherit;
 	}
 </style>

@@ -230,12 +230,61 @@ describe('flushWorkspaceToR2', () => {
 		expect(cmd).not.toContain('rclone sync');
 	});
 
-	it('swallows flush errors so a failed sync does not break the tool RPC', async () => {
+	it('returns a warning (not throws) when sync fails so the tool RPC still succeeds', async () => {
+		// Regression: an earlier version silently swallowed flush errors so the
+		// operator had no way to see that R2 sync had stopped working. The fix
+		// returns the rclone error message as a warning that callers append to
+		// the tool result content.
 		const sandbox = makeMockSandbox({
 			readFile: vi.fn().mockResolvedValue({ content: 'snapshot', encoding: 'utf-8' }),
-			exec: vi.fn().mockResolvedValue({ exitCode: 1, success: false, stdout: '', stderr: 'boom' }),
+			exec: vi.fn().mockResolvedValue({ exitCode: 1, success: false, stdout: 'rclone: AccessDenied', stderr: '' }),
 		});
-		await expect(flushWorkspaceToR2(makeCtx(sandbox, PROD_R2_OVERRIDES))).resolves.toBeUndefined();
+		const result = await flushWorkspaceToR2(makeCtx(sandbox, PROD_R2_OVERRIDES));
+		expect(result.warning).toBeDefined();
+		// Both stdout (where 2>&1 redirects land) and stderr should appear in
+		// the warning so operators can debug from the tool result alone.
+		expect(result.warning).toMatch(/AccessDenied|rclone/);
+	});
+});
+
+describe('execOrThrow diagnostic surface', () => {
+	it("includes stdout in the thrown error so 2>&1-piped commands aren't silenced", async () => {
+		// Regression: Cloudflare dashboard previously showed `stderr:` blank
+		// because rclone commands used `2>&1 | tail` and folded stderr into
+		// stdout. The error must include both streams.
+		const sandbox = makeMockSandbox({
+			exec: vi.fn().mockResolvedValue({
+				exitCode: 1,
+				success: false,
+				stdout: 'AccessDenied: invalid R2 access key',
+				stderr: '',
+			}),
+		});
+		await expect(ensureWorkspaceReady(makeCtx(sandbox, PROD_R2_OVERRIDES))).rejects.toThrow(/AccessDenied/);
+	});
+
+	it('appends container log file tail to thrown errors', async () => {
+		// When rclone writes its real diagnostic output to a --log-file (mount
+		// mode does this), the helper reads that file back and includes its
+		// tail in the thrown error.
+		const readFile = vi.fn().mockImplementation(async (p: string) => {
+			if (p === '/var/lib/sandbox/workspace-mode') throw new Error('not found');
+			if (p.includes('rclone-init.log') || p.includes('rclone-mount.log')) {
+				return { content: 'ERROR: connection refused to r2.cloudflarestorage.com', encoding: 'utf-8' };
+			}
+			throw new Error('not found');
+		});
+		const sandbox = makeMockSandbox({
+			readFile,
+			exec: vi.fn().mockResolvedValue({
+				exitCode: 1,
+				success: false,
+				stdout: 'rclone mount did not become ready within 10s',
+				stderr: '',
+			}),
+		});
+		await setIoModeSetting('rclone-mount');
+		await expect(ensureWorkspaceReady(makeCtx(sandbox, PROD_R2_OVERRIDES))).rejects.toThrow(/connection refused/);
 	});
 });
 

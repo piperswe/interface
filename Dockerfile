@@ -72,5 +72,5 @@ RUN apt-get update \
  && apt-get clean -y \
  && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir -p /workspace /var/cache/rclone-vfs /var/lib/sandbox /root/.config/rclone
+RUN mkdir -p /workspace /var/cache/rclone-vfs /var/lib/sandbox /var/log/sandbox /root/.config/rclone
 RUN git config --global user.name "Interface" && git config --global user.email "interface@piperswe.me"
