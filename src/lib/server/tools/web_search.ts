@@ -44,12 +44,37 @@ export function createWebSearchTool(backend: WebSearchBackend): Tool {
 			}
 			const lines: string[] = [`Search results for "${args.query}":`];
 			const citations: ToolCitation[] = [];
-			response.results.forEach((r, i) => {
-				const idx = i + 1;
+			// Numbering is globally stable across the turn when `registerCitation`
+			// is provided (production path) — two `web_search` calls that hit the
+			// same URL share the same index, and the model can reuse the index
+			// inline. Without it (legacy / test path) we fall back to a per-call
+			// 1-based count, which still matches the result text but doesn't
+			// dedupe across calls.
+			const seenLocal = new Map<string, number>();
+			let localCounter = 0;
+			const fallbackRegister = (c: ToolCitation): number => {
+				const existing = seenLocal.get(c.url);
+				if (existing !== undefined) return existing;
+				localCounter += 1;
+				seenLocal.set(c.url, localCounter);
+				citations.push(c);
+				return localCounter;
+			};
+			const register = ctx.registerCitation ?? fallbackRegister;
+			for (const r of response.results) {
+				const c = { url: r.url, title: r.title, snippet: r.snippet };
+				const idx = register(c);
 				lines.push(`\n[${idx}] ${r.title}\n  ${r.url}\n  ${r.snippet}`);
-				citations.push({ url: r.url, title: r.title, snippet: r.snippet });
-			});
-			return { content: lines.join('\n'), citations };
+			}
+			lines.push(
+				'\nCite specific claims inline using the [N] markers above (e.g. "Paris is the capital [1].") so the user can map each fact back to its source.',
+			);
+			// `result.citations` is only set on the legacy path; the production
+			// path threads citations through `ctx.registerCitation`, which the
+			// loop accumulates directly.
+			return ctx.registerCitation
+				? { content: lines.join('\n') }
+				: { content: lines.join('\n'), citations };
 		},
 	};
 }

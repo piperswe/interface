@@ -8,6 +8,7 @@ import { Marked } from 'marked';
 import markedShiki from 'marked-shiki';
 import markedKatex from 'marked-katex-extension';
 import { markedKatexParen } from './marked-katex-paren';
+import { markedInlineCitation } from './marked-inline-citation';
 import {
 	createHighlighter,
 	type Highlighter,
@@ -51,6 +52,7 @@ const marked = new Marked({
 
 marked.use(markedKatex({ throwOnError: false, nonStandard: true }));
 marked.use(markedKatexParen({ throwOnError: false }));
+marked.use(markedInlineCitation());
 
 marked.use(
 	markedShiki({

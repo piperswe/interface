@@ -213,11 +213,30 @@ export function createAgentTool(deps: AgentToolDeps, subAgents: SubAgentRow[]): 
 							assistantMessageId: ctx.assistantMessageId,
 							modelId: model,
 							signal: ctx.signal,
+							// Forward the parent's `registerCitation` so a sub-agent
+							// that runs `web_search` shares the parent turn's global
+							// citation numbering. The sub-agent's own text becomes
+							// the parent's tool result content (not user-facing
+							// markdown), so inline `[N]` markers in it never get
+							// rendered as citations — but the parent reading the
+							// result can reference the same `[N]` indices in its own
+							// reply, and they'll resolve to the right Sources entry.
+							registerCitation: ctx.registerCitation,
 						},
 						call.name,
 						call.input,
 					);
-					if (result.citations) accumulatedCitations.push(...result.citations);
+					if (result.citations) {
+						// Legacy path for tools that don't use registerCitation.
+						// Forward to the parent if available (so they share the
+						// global namespace); otherwise just accumulate locally to
+						// surface to the parent via this tool's return value.
+						if (ctx.registerCitation) {
+							for (const c of result.citations) ctx.registerCitation(c);
+						} else {
+							accumulatedCitations.push(...result.citations);
+						}
+					}
 					if (result.artifacts) accumulatedArtifacts.push(...result.artifacts);
 					messages.push({
 						role: 'tool',
@@ -248,7 +267,12 @@ export function createAgentTool(deps: AgentToolDeps, subAgents: SubAgentRow[]): 
 			}
 			return {
 				content: `[${subAgent.name}] ${trimmed}`,
-				...(accumulatedCitations.length > 0 ? { citations: accumulatedCitations } : {}),
+				// When the parent provides `registerCitation`, sub-agent tool
+				// citations have already been merged into the parent's global
+				// list, so don't surface them here too.
+				...(!ctx.registerCitation && accumulatedCitations.length > 0
+					? { citations: accumulatedCitations }
+					: {}),
 				...(accumulatedArtifacts.length > 0 ? { artifacts: accumulatedArtifacts } : {}),
 			};
 		},

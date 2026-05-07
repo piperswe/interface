@@ -682,6 +682,24 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		// the parts shape (they're surfaced separately to the UI), so we
 		// accumulate them as the loop runs.
 		const accumulatedCitations: ToolCitation[] = [];
+		// Stable, 1-based global citation index by URL for this turn. Tools
+		// that emit citations call `ctx.registerCitation(c)` to get an index,
+		// then embed it as `[N]` in their result text. The agent learns to
+		// reference those same numbers inline ("Paris is the capital [1]."),
+		// and the markdown renderer turns each `[N]` into a link to the
+		// matching entry in the Sources block. Tools that return citations
+		// the legacy way (via `result.citations`) still get their entries
+		// merged into the same map below — those entries just won't have
+		// inline markers since the tool didn't know its index.
+		const citationIndexByUrl = new Map<string, number>();
+		const registerCitation = (c: ToolCitation): number => {
+			const existing = citationIndexByUrl.get(c.url);
+			if (existing !== undefined) return existing;
+			const idx = accumulatedCitations.length + 1;
+			accumulatedCitations.push(c);
+			citationIndexByUrl.set(c.url, idx);
+			return idx;
+		};
 		const appendText = (delta: string) => {
 			const last = parts[parts.length - 1];
 			if (last && last.type === 'text') {
@@ -919,6 +937,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 							switchModel: (newModelId: string) => {
 								pendingModelSwitch = newModelId;
 							},
+							registerCitation,
 						},
 						call.name,
 						call.input,
@@ -965,7 +984,12 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 						await partsToJson(parts, this.env, this.#uploadedBlobHashes),
 						assistantId,
 					);
-					if (result.citations) accumulatedCitations.push(...result.citations);
+					if (result.citations) {
+						// Legacy path: tools that didn't use registerCitation still
+						// surface citations via result.citations. Merge through the
+						// same dedup map so the Sources block is consistent.
+						for (const c of result.citations) registerCitation(c);
+					}
 					if (result.artifacts) {
 						for (const a of result.artifacts) {
 							this.addArtifact({

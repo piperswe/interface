@@ -5,14 +5,15 @@
 </script>
 
 {#if part.citations.length > 0}
-	<details class="citations-part rounded border">
+	<details class="citations-part rounded border" open>
 		<summary class="citations-summary px-2 py-1 small">
 			<span class="citations-label">Sources</span>
 			<span class="citations-count text-muted">({part.citations.length})</span>
 		</summary>
 		<ol class="citations-list list-unstyled m-0 p-2 d-flex flex-column gap-2">
 			{#each part.citations as c, i (`${i}-${c.url}`)}
-				<li class="citation small">
+				<li id={`cite-${i + 1}`} class="citation small" data-citation-index={i + 1}>
+					<span class="citation-num text-muted">[{i + 1}]</span>
 					<a
 						class="citation-link text-decoration-none"
 						href={c.url}
@@ -53,6 +54,20 @@
 
 	.citations-label {
 		font-weight: 500;
+	}
+
+	.citation {
+		scroll-margin-top: 1rem;
+	}
+
+	.citation:target {
+		background: var(--bs-secondary-bg);
+		border-radius: 4px;
+	}
+
+	.citation-num {
+		font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+		margin-right: 0.35rem;
 	}
 
 	.citation-link {

@@ -43,6 +43,16 @@ export type ToolContext = {
 	signal?: AbortSignal;
 	emitToolOutput?: (chunk: string) => void;
 	switchModel?: (newModelId: string) => void;
+	// Register a citation and get back its stable, 1-based global index for
+	// the current turn. Deduped by URL, so calling twice for the same URL
+	// returns the same index. Tools that surface citations should use this
+	// to number entries in their result text (`[N]`); the agent learns to
+	// reference those same numbers inline (`The capital is Paris [1].`),
+	// and the rendered markdown turns each `[N]` into a link to the
+	// Sources entry. Tools that don't call this can fall back to returning
+	// `result.citations`, in which case those entries are appended to the
+	// turn's citation list but no inline markers will resolve.
+	registerCitation?: (citation: ToolCitation) => number;
 };
 
 export interface Tool {
