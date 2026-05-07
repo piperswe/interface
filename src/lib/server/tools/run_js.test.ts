@@ -59,7 +59,7 @@ describe('run_js tool', () => {
 	it('rejects when the loader binding is missing', async () => {
 		const ctxWithoutLoader = {
 			...ctx,
-			env: { ...ctx.env, RUN_JS_LOADER: undefined } as typeof ctx.env,
+			env: { ...ctx.env, RUN_JS_LOADER: undefined } as unknown as typeof ctx.env,
 		};
 		const result = await runJsTool.execute(ctxWithoutLoader, { code: 'return 1;' });
 		expect(result.isError).toBe(true);

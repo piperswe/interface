@@ -558,6 +558,28 @@
 					<div class="form-text small mt-1">Kagi's API charges $25 per 1000 searches by default.</div>
 				</section>
 
+				<section class="settings-card">
+					<div class="settings-card-head">
+						<h2 class="h6 mb-0">Text-to-speech voice</h2>
+						<p class="small text-muted mb-0">
+							Voice used when reading assistant messages aloud (Workers AI <code>aura-2-en</code>).
+						</p>
+					</div>
+					<form
+						{...saveSetting.for('tts_voice').enhance(toastSubmit('TTS voice saved'))}
+						class="d-flex gap-2 align-items-center flex-wrap"
+					>
+						<input type="hidden" name="key" value="tts_voice" />
+						<label class="form-label small mb-0" for="tts-voice">Voice</label>
+						<select id="tts-voice" name="value" class="form-select form-select-sm w-auto">
+							{#each data.ttsVoices as v (v)}
+								<option value={v} selected={v === data.ttsVoice}>{v}</option>
+							{/each}
+						</select>
+						<button type="submit" class="btn btn-sm btn-outline-primary ms-auto">Save</button>
+					</form>
+				</section>
+
 				<section class="settings-card span-2">
 					<div class="settings-card-head">
 						<h2 class="h6 mb-0">Worker secrets</h2>

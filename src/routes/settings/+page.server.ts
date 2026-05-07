@@ -6,9 +6,11 @@ import {
 	getContextCompactionThreshold,
 	getKagiCostPer1000Searches,
 	getSystemPrompt,
+	getTtsVoice,
 	getUserBio,
 	getSetting,
 } from '$lib/server/settings';
+import { TTS_VOICES } from '$lib/server/tts';
 import { listSubAgents } from '$lib/server/sub_agents';
 import { listProviders } from '$lib/server/providers/store';
 import { listAllModels } from '$lib/server/providers/models';
@@ -41,6 +43,7 @@ export const load: PageServerLoad = async ({ platform }) => {
 		schedules,
 		conversations,
 		kagiCostPer1000Searches,
+		ttsVoice,
 	] = await Promise.all([
 		listMcpServers(env),
 		listSubAgents(env),
@@ -58,6 +61,7 @@ export const load: PageServerLoad = async ({ platform }) => {
 		listSchedules(env),
 		listConversations(env),
 		getKagiCostPer1000Searches(env),
+		getTtsVoice(env),
 	]);
 	return {
 		secretKeys: describeSecretKeys(env),
@@ -79,5 +83,7 @@ export const load: PageServerLoad = async ({ platform }) => {
 		schedules,
 		conversations,
 		kagiCostPer1000Searches,
+		ttsVoice,
+		ttsVoices: TTS_VOICES,
 	};
 };
