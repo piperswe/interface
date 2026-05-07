@@ -1,5 +1,7 @@
 import { error, json } from '@sveltejs/kit';
 import { Buffer } from 'node:buffer';
+import { z } from 'zod';
+import { validateOrThrow } from '$lib/zod-utils';
 import type { RequestHandler } from './$types';
 
 // Whisper-large-v3-turbo accepts audio up to ~25 MB. Cap at the same number
@@ -8,7 +10,7 @@ const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
 
 const WHISPER_MODEL = '@cf/openai/whisper-large-v3-turbo';
 
-type WhisperResponse = { text?: string };
+const whisperResponseSchema = z.object({ text: z.string().optional() }).passthrough();
 
 export const POST: RequestHandler = async ({ request, platform }) => {
 	if (!platform) error(500, 'Cloudflare platform bindings unavailable');
@@ -31,9 +33,13 @@ export const POST: RequestHandler = async ({ request, platform }) => {
 
 	const base64 = Buffer.from(buf).toString('base64');
 
-	let result: WhisperResponse;
+	let result: z.infer<typeof whisperResponseSchema>;
 	try {
-		result = (await ai.run(WHISPER_MODEL, { audio: base64 })) as WhisperResponse;
+		result = validateOrThrow(
+			whisperResponseSchema,
+			await ai.run(WHISPER_MODEL, { audio: base64 }),
+			'Workers AI whisper response',
+		);
 	} catch (err) {
 		error(502, err instanceof Error ? err.message : String(err));
 	}

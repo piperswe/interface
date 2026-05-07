@@ -1,5 +1,66 @@
 import * as ynab from 'ynab';
+import { z } from 'zod';
+import { safeValidate } from '$lib/zod-utils';
 import type { Tool, ToolContext, ToolExecutionResult } from './registry';
+
+// Zod schemas for validating LLM-supplied tool arguments. The JSON
+// schema declared on each Tool's `definition.inputSchema` is what the
+// LLM sees; these run on the parsed JSON it produces.
+const listBudgetsArgs = z.object({ include_accounts: z.boolean().optional() });
+const budgetOnlyArgs = z.object({ budget_id: z.string() });
+const listCategoriesArgs = z.object({
+	budget_id: z.string(),
+	include_hidden: z.boolean().optional(),
+});
+const getMonthArgs = z.object({ budget_id: z.string(), month: z.string() });
+const listTransactionsArgs = z.object({
+	budget_id: z.string(),
+	since_date: z.string().optional(),
+	type: z.enum(['uncategorized', 'unapproved']).optional(),
+	account_id: z.string().optional(),
+	category_id: z.string().optional(),
+	payee_id: z.string().optional(),
+	limit: z.number().optional(),
+});
+const cleared = z.enum(['cleared', 'uncleared', 'reconciled']);
+const flagColor = z.enum(['red', 'orange', 'yellow', 'green', 'blue', 'purple']);
+const createTransactionArgs = z.object({
+	budget_id: z.string(),
+	account_id: z.string(),
+	date: z.string().optional(),
+	amount: z.number().optional(),
+	amount_milliunits: z.number().optional(),
+	payee_id: z.string().optional(),
+	payee_name: z.string().optional(),
+	category_id: z.string().optional(),
+	memo: z.string().optional(),
+	cleared: cleared.optional(),
+	approved: z.boolean().optional(),
+	flag_color: flagColor.optional(),
+	import_id: z.string().optional(),
+});
+const updateTransactionArgs = z.object({
+	budget_id: z.string(),
+	transaction_id: z.string(),
+	account_id: z.string().optional(),
+	date: z.string().optional(),
+	amount: z.number().optional(),
+	amount_milliunits: z.number().optional(),
+	payee_id: z.string().optional(),
+	payee_name: z.string().optional(),
+	category_id: z.string().optional(),
+	memo: z.string().optional(),
+	cleared: cleared.optional(),
+	approved: z.boolean().optional(),
+	flag_color: flagColor.optional(),
+});
+const updateMonthCategoryArgs = z.object({
+	budget_id: z.string(),
+	month: z.string(),
+	category_id: z.string(),
+	amount: z.number().optional(),
+	amount_milliunits: z.number().optional(),
+});
 
 // YNAB amounts use "milliunits": 1000 milliunits == 1 unit of the plan's
 // currency (so $1.23 == 1230). For 2-decimal currencies — the common case —
@@ -207,7 +268,9 @@ function listBudgetsTool(token: string): Tool {
 			},
 		},
 		async execute(_ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
-			const args = (input ?? {}) as { include_accounts?: boolean };
+			const parsed = safeValidate(listBudgetsArgs, input);
+			if (!parsed.ok) return err(`Invalid input: ${parsed.error}`, 'invalid_input');
+			const args = parsed.value;
 			const api = makeApi(token);
 			const result = await call(() => api.plans.getPlans(args.include_accounts ?? false));
 			if (isError(result)) return err(result.__error);
@@ -257,10 +320,11 @@ function listAccountsTool(token: string): Tool {
 			},
 		},
 		async execute(_ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
-			const args = (input ?? {}) as { budget_id?: string };
-			if (!args.budget_id) return err('Missing required parameter: budget_id', 'invalid_input');
+			const parsed = safeValidate(budgetOnlyArgs, input);
+			if (!parsed.ok) return err(`Invalid input: ${parsed.error}`, 'invalid_input');
+			const args = parsed.value;
 			const api = makeApi(token);
-			const result = await call(() => api.accounts.getAccounts(args.budget_id!));
+			const result = await call(() => api.accounts.getAccounts(args.budget_id));
 			if (isError(result)) return err(result.__error);
 			return ok(result.data.accounts.map(slimAccount));
 		},
@@ -286,11 +350,12 @@ function listCategoriesTool(token: string): Tool {
 			},
 		},
 		async execute(_ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
-			const args = (input ?? {}) as { budget_id?: string; include_hidden?: boolean };
-			if (!args.budget_id) return err('Missing required parameter: budget_id', 'invalid_input');
+			const parsed = safeValidate(listCategoriesArgs, input);
+			if (!parsed.ok) return err(`Invalid input: ${parsed.error}`, 'invalid_input');
+			const args = parsed.value;
 			const includeHidden = args.include_hidden ?? false;
 			const api = makeApi(token);
-			const result = await call(() => api.categories.getCategories(args.budget_id!));
+			const result = await call(() => api.categories.getCategories(args.budget_id));
 			if (isError(result)) return err(result.__error);
 			const groups = result.data.category_groups
 				.filter((g) => !g.deleted && (includeHidden || !g.hidden))
@@ -326,11 +391,11 @@ function getMonthTool(token: string): Tool {
 			},
 		},
 		async execute(_ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
-			const args = (input ?? {}) as { budget_id?: string; month?: string };
-			if (!args.budget_id) return err('Missing required parameter: budget_id', 'invalid_input');
-			if (!args.month) return err('Missing required parameter: month', 'invalid_input');
+			const parsed = safeValidate(getMonthArgs, input);
+			if (!parsed.ok) return err(`Invalid input: ${parsed.error}`, 'invalid_input');
+			const args = parsed.value;
 			const api = makeApi(token);
-			const result = await call(() => api.months.getPlanMonth(args.budget_id!, args.month!));
+			const result = await call(() => api.months.getPlanMonth(args.budget_id, args.month));
 			if (isError(result)) return err(result.__error);
 			const m = result.data.month;
 			return ok({
@@ -359,10 +424,11 @@ function listPayeesTool(token: string): Tool {
 			},
 		},
 		async execute(_ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
-			const args = (input ?? {}) as { budget_id?: string };
-			if (!args.budget_id) return err('Missing required parameter: budget_id', 'invalid_input');
+			const parsed = safeValidate(budgetOnlyArgs, input);
+			if (!parsed.ok) return err(`Invalid input: ${parsed.error}`, 'invalid_input');
+			const args = parsed.value;
 			const api = makeApi(token);
-			const result = await call(() => api.payees.getPayees(args.budget_id!));
+			const result = await call(() => api.payees.getPayees(args.budget_id));
 			if (isError(result)) return err(result.__error);
 			const payees = result.data.payees
 				.filter((p) => !p.deleted)
@@ -410,16 +476,9 @@ function listTransactionsTool(token: string): Tool {
 			},
 		},
 		async execute(_ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
-			const args = (input ?? {}) as {
-				budget_id?: string;
-				since_date?: string;
-				type?: 'uncategorized' | 'unapproved';
-				account_id?: string;
-				category_id?: string;
-				payee_id?: string;
-				limit?: number;
-			};
-			if (!args.budget_id) return err('Missing required parameter: budget_id', 'invalid_input');
+			const parsed = safeValidate(listTransactionsArgs, input);
+			if (!parsed.ok) return err(`Invalid input: ${parsed.error}`, 'invalid_input');
+			const args = parsed.value;
 			const filterCount =
 				(args.account_id ? 1 : 0) + (args.category_id ? 1 : 0) + (args.payee_id ? 1 : 0);
 			if (filterCount > 1) {
@@ -530,23 +589,9 @@ function createTransactionTool(token: string): Tool {
 			},
 		},
 		async execute(_ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
-			const args = (input ?? {}) as {
-				budget_id?: string;
-				account_id?: string;
-				date?: string;
-				amount?: number;
-				amount_milliunits?: number;
-				payee_id?: string;
-				payee_name?: string;
-				category_id?: string;
-				memo?: string;
-				cleared?: 'cleared' | 'uncleared' | 'reconciled';
-				approved?: boolean;
-				flag_color?: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple';
-				import_id?: string;
-			};
-			if (!args.budget_id) return err('Missing required parameter: budget_id', 'invalid_input');
-			if (!args.account_id) return err('Missing required parameter: account_id', 'invalid_input');
+			const parsed = safeValidate(createTransactionArgs, input);
+			if (!parsed.ok) return err(`Invalid input: ${parsed.error}`, 'invalid_input');
+			const args = parsed.value;
 			if (args.amount == null && args.amount_milliunits == null) {
 				return err('Missing required parameter: provide either `amount` or `amount_milliunits`.', 'invalid_input');
 			}
@@ -615,23 +660,9 @@ function updateTransactionTool(token: string): Tool {
 			},
 		},
 		async execute(_ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
-			const args = (input ?? {}) as {
-				budget_id?: string;
-				transaction_id?: string;
-				account_id?: string;
-				date?: string;
-				amount?: number;
-				amount_milliunits?: number;
-				payee_id?: string;
-				payee_name?: string;
-				category_id?: string;
-				memo?: string;
-				cleared?: 'cleared' | 'uncleared' | 'reconciled';
-				approved?: boolean;
-				flag_color?: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple';
-			};
-			if (!args.budget_id) return err('Missing required parameter: budget_id', 'invalid_input');
-			if (!args.transaction_id) return err('Missing required parameter: transaction_id', 'invalid_input');
+			const parsed = safeValidate(updateTransactionArgs, input);
+			if (!parsed.ok) return err(`Invalid input: ${parsed.error}`, 'invalid_input');
+			const args = parsed.value;
 			const api = makeApi(token);
 
 			// YNAB's PUT replaces the whole transaction, so missing fields
@@ -717,16 +748,9 @@ function updateMonthCategoryTool(token: string): Tool {
 			},
 		},
 		async execute(_ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
-			const args = (input ?? {}) as {
-				budget_id?: string;
-				month?: string;
-				category_id?: string;
-				amount?: number;
-				amount_milliunits?: number;
-			};
-			if (!args.budget_id) return err('Missing required parameter: budget_id', 'invalid_input');
-			if (!args.month) return err('Missing required parameter: month', 'invalid_input');
-			if (!args.category_id) return err('Missing required parameter: category_id', 'invalid_input');
+			const parsed = safeValidate(updateMonthCategoryArgs, input);
+			if (!parsed.ok) return err(`Invalid input: ${parsed.error}`, 'invalid_input');
+			const args = parsed.value;
 			if (args.amount == null && args.amount_milliunits == null) {
 				return err('Missing required parameter: provide either `amount` or `amount_milliunits`.', 'invalid_input');
 			}

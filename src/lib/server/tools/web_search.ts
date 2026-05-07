@@ -1,5 +1,12 @@
+import { z } from 'zod';
+import { safeValidate } from '$lib/zod-utils';
 import type { WebSearchBackend } from '../search/types';
 import type { Tool, ToolCitation, ToolContext, ToolExecutionResult } from './registry';
+
+const inputArgsSchema = z.object({
+	query: z.string(),
+	count: z.number().optional(),
+});
 
 const inputSchema = {
 	type: 'object',
@@ -24,10 +31,11 @@ export function createWebSearchTool(backend: WebSearchBackend): Tool {
 			inputSchema,
 		},
 		async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
-			const args = (input ?? {}) as { query?: string; count?: number };
-			if (!args.query || typeof args.query !== 'string') {
-				return { content: 'Missing required parameter: query', isError: true, errorCode: 'invalid_input' };
+			const parsed = safeValidate(inputArgsSchema, input);
+			if (!parsed.ok) {
+				return { content: `Invalid input: ${parsed.error}`, isError: true, errorCode: 'invalid_input' };
 			}
+			const args = parsed.value;
 			// Schema says count ∈ [1, 10] but the model is free to ignore it.
 			// Clamp here so a bogus value never reaches the backend.
 			const requestedCount = Number.isFinite(args.count) ? Math.floor(args.count as number) : 5;

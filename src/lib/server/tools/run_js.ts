@@ -1,6 +1,13 @@
+import { z } from 'zod';
+import { safeValidate } from '$lib/zod-utils';
 import type { Tool, ToolContext, ToolExecutionResult } from './registry';
 
 const HOST_COMPAT_DATE = '2026-04-22';
+
+const inputArgsSchema = z.object({
+	code: z.string(),
+	timeout: z.number().optional(),
+});
 const DEFAULT_CPU_MS = 5000;
 const MAX_CPU_MS = 30_000;
 const DEFAULT_SUBREQUESTS = 50;
@@ -77,10 +84,11 @@ export const runJsTool: Tool = {
 		inputSchema,
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
-		const args = (input ?? {}) as { code?: string; timeout?: number };
-		if (!args.code || typeof args.code !== 'string') {
-			return { content: 'Missing required parameter: code', isError: true, errorCode: 'invalid_input' };
+		const parsed = safeValidate(inputArgsSchema, input);
+		if (!parsed.ok) {
+			return { content: `Invalid input: ${parsed.error}`, isError: true, errorCode: 'invalid_input' };
 		}
+		const args = parsed.value;
 		const loader = ctx.env.RUN_JS_LOADER;
 		if (!loader) {
 			return {

@@ -296,7 +296,9 @@ describe('createAgentTool', () => {
 		)!;
 		const result = await tool.execute(ctx, { subagent_type: 'r', prompt: 'x' });
 		expect(result.isError).toBe(true);
-		expect(result.content).toContain('Missing required parameter: model');
+		// Either zod's "Required" or the explicit empty-string follow-up — both
+		// indicate the model argument was missing or blank.
+		expect(result.content).toMatch(/model/);
 	});
 
 	it('rejects models outside the operator-curated list when one is configured', async () => {

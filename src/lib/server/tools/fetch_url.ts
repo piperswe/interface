@@ -1,8 +1,16 @@
 import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
+import { z } from 'zod';
+import { safeValidate } from '$lib/zod-utils';
 import type { Tool, ToolContext, ToolExecutionResult } from './registry';
 
 const MAX_BYTES = 256 * 1024;
+
+const inputArgsSchema = z.object({
+	url: z.string(),
+	max_bytes: z.number().optional(),
+	readability: z.boolean().optional(),
+});
 
 const fetchUrlInputSchema = {
 	type: 'object',
@@ -75,10 +83,11 @@ export const fetchUrlTool: Tool = {
 		inputSchema: fetchUrlInputSchema,
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
-		const args = (input ?? {}) as { url?: string; max_bytes?: number; readability?: boolean };
-		if (!args.url || typeof args.url !== 'string') {
-			return { content: 'Missing required parameter: url', isError: true };
+		const validated = safeValidate(inputArgsSchema, input);
+		if (!validated.ok) {
+			return { content: `Invalid input: ${validated.error}`, isError: true, errorCode: 'invalid_input' };
 		}
+		const args = validated.value;
 		let parsed: URL;
 		try {
 			parsed = new URL(args.url);

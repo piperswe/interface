@@ -1,8 +1,12 @@
+import { z } from 'zod';
+import { safeValidate } from '$lib/zod-utils';
 import type { Tool, ToolExecutionResult } from './registry';
 
 export type SwitchModelToolDeps = {
 	availableModelGlobalIds: string[];
 };
+
+const inputSchema = z.object({ model_id: z.string() });
 
 export function createSwitchModelTool(deps: SwitchModelToolDeps): Tool {
 	return {
@@ -23,7 +27,11 @@ export function createSwitchModelTool(deps: SwitchModelToolDeps): Tool {
 			},
 		},
 		async execute(ctx, input): Promise<ToolExecutionResult> {
-			const { model_id } = input as { model_id: string };
+			const parsed = safeValidate(inputSchema, input);
+			if (!parsed.ok) {
+				return { content: `Invalid input: ${parsed.error}`, isError: true, errorCode: 'invalid_input' };
+			}
+			const { model_id } = parsed.value;
 			if (!deps.availableModelGlobalIds.includes(model_id)) {
 				return {
 					content: `Unknown model: ${model_id}. Available: ${deps.availableModelGlobalIds.join(', ')}`,

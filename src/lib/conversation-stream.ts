@@ -3,6 +3,8 @@
 // what the previous React `useConversationStream` hook did, but built around
 // Svelte 5 runes.
 
+import { z } from 'zod';
+import { parseJsonWith } from '$lib/zod-utils';
 import type {
 	Artifact,
 	ConversationState,
@@ -12,6 +14,19 @@ import type {
 	MetaSnapshot,
 	ToolResultRecord,
 } from '$lib/types/conversation';
+
+// SSE frames are JSON over the wire — parse defensively. We only check the
+// outermost shape (presence of fields the apply* reducers rely on), since
+// the inner unions (MessagePart, MetaSnapshot, etc.) duplicated here would
+// drift and add zero value when both sides are owned by our codebase.
+const messageIdEventSchema = z.object({ messageId: z.string() }).passthrough();
+const syncEventSchema = z
+	.object({
+		lastMessageId: z.string(),
+		lastMessageStatus: z.enum(['complete', 'streaming', 'error']),
+		lastMessageContent: z.string(),
+	})
+	.passthrough();
 
 export type SyncEvent = {
 	lastMessageId: string;
@@ -196,14 +211,18 @@ export function attachConversationStream(
 
 	function handle<T>(apply: (state: ConversationState, ev: T) => ConversationState) {
 		return (event: MessageEvent) => {
-			const data = JSON.parse(event.data) as T;
-			setState(apply(getState(), data));
+			const eventData = typeof event.data === 'string' ? event.data : '';
+			const validated = parseJsonWith(messageIdEventSchema, eventData);
+			if (!validated) return;
+			setState(apply(getState(), validated as T));
 		};
 	}
 
 	const onSync = (event: MessageEvent) => {
-		const data = JSON.parse(event.data) as SyncEvent;
-		const next = applySync(getState(), data);
+		const eventData = typeof event.data === 'string' ? event.data : '';
+		const validated = parseJsonWith(syncEventSchema, eventData);
+		if (!validated) return;
+		const next = applySync(getState(), validated as SyncEvent);
 		if (next === 'reload') onReload();
 		else setState(next);
 	};

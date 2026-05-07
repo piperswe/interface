@@ -24,7 +24,15 @@
 // delete only drops its DO + D1 row; orphaned blobs persist). For the
 // immediate fix that's acceptable; a sweeper can come later.
 
+import { z } from 'zod';
+import { parseJsonWith } from '$lib/zod-utils';
 import type { MessagePart, ToolResultBlock } from '$lib/types/conversation';
+
+// `parts` is a structurally complex discriminated union; rather than mirror
+// the full type tree, we only verify the on-disk JSON parses to an array of
+// `{ type: string, ... }` records. A corrupted row therefore yields `null`
+// instead of crashing downstream consumers that destructure on `type`.
+const partsArrayShapeSchema = z.array(z.object({ type: z.string() }).passthrough());
 
 const BLOB_KEY_PREFIX = 'blobs/';
 const BLOB_SENTINEL_PREFIX = 'r2-blob:';
@@ -191,13 +199,9 @@ export async function partsFromJson(
 	env: BlobEnv,
 ): Promise<MessagePart[] | null> {
 	if (!json) return null;
-	let parsed: MessagePart[];
-	try {
-		parsed = JSON.parse(json) as MessagePart[];
-	} catch {
-		return null;
-	}
-	return resolveBlobRefs(parsed, env);
+	const parsed = parseJsonWith(partsArrayShapeSchema, json);
+	if (!parsed) return null;
+	return resolveBlobRefs(parsed as MessagePart[], env);
 }
 
 // Convenience wrapper used by every write site: offload large blobs and

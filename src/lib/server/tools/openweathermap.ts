@@ -1,3 +1,5 @@
+import { z } from 'zod';
+import { safeValidate } from '$lib/zod-utils';
 import type { Tool, ToolContext, ToolExecutionResult } from './registry';
 
 // OpenWeatherMap free-tier endpoints. All require an `appid` query
@@ -8,7 +10,29 @@ const REVERSE_GEOCODE_URL = 'https://api.openweathermap.org/geo/1.0/reverse';
 const CURRENT_URL = 'https://api.openweathermap.org/data/2.5/weather';
 const FORECAST_URL = 'https://api.openweathermap.org/data/2.5/forecast';
 
-type Units = 'standard' | 'metric' | 'imperial';
+const unitsZ = z.enum(['standard', 'metric', 'imperial']);
+const geocodeArgs = z.object({
+	query: z.string(),
+	limit: z.number().optional(),
+});
+const reverseGeocodeArgs = z.object({
+	lat: z.number(),
+	lon: z.number(),
+	limit: z.number().optional(),
+});
+const currentArgs = z.object({
+	lat: z.number(),
+	lon: z.number(),
+	units: unitsZ.optional(),
+	lang: z.string().optional(),
+});
+const forecastArgs = z.object({
+	lat: z.number(),
+	lon: z.number(),
+	units: unitsZ.optional(),
+	lang: z.string().optional(),
+	limit: z.number().optional(),
+});
 
 const unitsSchema = {
 	type: 'string',
@@ -32,10 +56,6 @@ function err(
 	errorCode: 'invalid_input' | 'execution_failure' = 'execution_failure',
 ): ToolExecutionResult {
 	return { content: message, isError: true, errorCode };
-}
-
-function isFiniteNumber(v: unknown): v is number {
-	return typeof v === 'number' && Number.isFinite(v);
 }
 
 async function callOpenWeather(
@@ -103,10 +123,9 @@ function geocodeTool(apiKey: string): Tool {
 			},
 		},
 		async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
-			const args = (input ?? {}) as { query?: string; limit?: number };
-			if (!args.query || typeof args.query !== 'string') {
-				return err('Missing required parameter: query', 'invalid_input');
-			}
+			const parsed = safeValidate(geocodeArgs, input);
+			if (!parsed.ok) return err(`Invalid input: ${parsed.error}`, 'invalid_input');
+			const args = parsed.value;
 			const limit = Math.min(Math.max(args.limit ?? 5, 1), 5);
 			const result = await callOpenWeather(
 				GEOCODE_URL,
@@ -152,9 +171,9 @@ function reverseGeocodeTool(apiKey: string): Tool {
 			},
 		},
 		async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
-			const args = (input ?? {}) as { lat?: number; lon?: number; limit?: number };
-			if (!isFiniteNumber(args.lat)) return err('Missing or invalid parameter: lat', 'invalid_input');
-			if (!isFiniteNumber(args.lon)) return err('Missing or invalid parameter: lon', 'invalid_input');
+			const parsed = safeValidate(reverseGeocodeArgs, input);
+			if (!parsed.ok) return err(`Invalid input: ${parsed.error}`, 'invalid_input');
+			const args = parsed.value;
 			const limit = Math.min(Math.max(args.limit ?? 1, 1), 5);
 			const result = await callOpenWeather(
 				REVERSE_GEOCODE_URL,
@@ -223,9 +242,9 @@ function currentWeatherTool(apiKey: string): Tool {
 			},
 		},
 		async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
-			const args = (input ?? {}) as { lat?: number; lon?: number; units?: Units; lang?: string };
-			if (!isFiniteNumber(args.lat)) return err('Missing or invalid parameter: lat', 'invalid_input');
-			if (!isFiniteNumber(args.lon)) return err('Missing or invalid parameter: lon', 'invalid_input');
+			const parsed = safeValidate(currentArgs, input);
+			if (!parsed.ok) return err(`Invalid input: ${parsed.error}`, 'invalid_input');
+			const args = parsed.value;
 			const units = args.units ?? 'metric';
 			const result = await callOpenWeather(
 				CURRENT_URL,
@@ -318,15 +337,9 @@ function forecastTool(apiKey: string): Tool {
 			},
 		},
 		async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
-			const args = (input ?? {}) as {
-				lat?: number;
-				lon?: number;
-				units?: Units;
-				lang?: string;
-				limit?: number;
-			};
-			if (!isFiniteNumber(args.lat)) return err('Missing or invalid parameter: lat', 'invalid_input');
-			if (!isFiniteNumber(args.lon)) return err('Missing or invalid parameter: lon', 'invalid_input');
+			const parsed = safeValidate(forecastArgs, input);
+			if (!parsed.ok) return err(`Invalid input: ${parsed.error}`, 'invalid_input');
+			const args = parsed.value;
 			const units = args.units ?? 'metric';
 			const limit = Math.min(Math.max(args.limit ?? 16, 1), 40);
 			const result = await callOpenWeather(

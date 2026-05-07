@@ -1,4 +1,65 @@
+import { z } from 'zod';
+import { validateOrThrow, parseJsonWith } from '$lib/zod-utils';
 import type { McpJsonRpcRequest, McpJsonRpcResponse, McpToolCallResult, McpToolDescriptor } from './types';
+
+const mcpJsonRpcResponseSchema = z.union([
+	z
+		.object({
+			jsonrpc: z.literal('2.0'),
+			id: z.union([z.number(), z.string()]),
+			result: z.unknown(),
+		})
+		.passthrough(),
+	z
+		.object({
+			jsonrpc: z.literal('2.0'),
+			id: z.union([z.number(), z.string()]),
+			error: z
+				.object({
+					code: z.number(),
+					message: z.string(),
+					data: z.unknown().optional(),
+				})
+				.passthrough(),
+		})
+		.passthrough(),
+]);
+
+const mcpAuthHeadersSchema = z.record(z.string(), z.string());
+
+const mcpListToolsResultSchema = z
+	.object({
+		tools: z
+			.array(
+				z
+					.object({
+						name: z.string(),
+						description: z.string().optional(),
+						inputSchema: z.object({}).passthrough().optional(),
+					})
+					.passthrough(),
+			)
+			.optional(),
+	})
+	.passthrough();
+
+const mcpToolCallResultSchema = z
+	.object({
+		content: z.array(
+			z.union([
+				z.object({ type: z.literal('text'), text: z.string() }).passthrough(),
+				z
+					.object({
+						type: z.literal('image'),
+						data: z.string(),
+						mimeType: z.string(),
+					})
+					.passthrough(),
+			]),
+		),
+		isError: z.boolean().optional(),
+	})
+	.passthrough();
 
 // Minimal HTTP-streamable MCP client. Each call POSTs a JSON-RPC request to
 // the server's URL and parses the JSON or text/event-stream response. Stateful
@@ -40,13 +101,24 @@ export class McpHttpClient {
 	}
 
 	async listTools(): Promise<McpToolDescriptor[]> {
-		const result = (await this.#request('tools/list', {})) as { tools?: McpToolDescriptor[] } | undefined;
-		return result?.tools ?? [];
+		const raw = await this.#request('tools/list', {});
+		if (raw == null) return [];
+		const result = validateOrThrow(
+			mcpListToolsResultSchema,
+			raw,
+			`MCP tools/list result from ${this.#url}`,
+		);
+		return (result.tools ?? []) as McpToolDescriptor[];
 	}
 
 	async callTool(name: string, args: unknown): Promise<McpToolCallResult> {
-		const result = (await this.#request('tools/call', { name, arguments: args })) as McpToolCallResult | undefined;
-		return result ?? { content: [], isError: true };
+		const raw = await this.#request('tools/call', { name, arguments: args });
+		if (raw == null) return { content: [], isError: true };
+		return validateOrThrow(
+			mcpToolCallResultSchema,
+			raw,
+			`MCP tools/call result for "${name}" from ${this.#url}`,
+		) as McpToolCallResult;
 	}
 
 	async #buildHeaders(force: boolean): Promise<Record<string, string>> {
@@ -81,7 +153,11 @@ export class McpHttpClient {
 		const ct = res.headers.get('content-type') ?? '';
 		const response = ct.includes('text/event-stream')
 			? await readSseSingleResponse(res)
-			: ((await res.json()) as McpJsonRpcResponse);
+			: (validateOrThrow(
+					mcpJsonRpcResponseSchema,
+					await res.json(),
+					`MCP JSON-RPC response from ${this.#url}`,
+				) as McpJsonRpcResponse);
 		if ('error' in response) throw new Error(response.error.message);
 		return response.result;
 	}
@@ -108,7 +184,9 @@ async function readSseSingleResponse(res: Response): Promise<McpJsonRpcResponse>
 				} catch {
 					/* ignore */
 				}
-				return JSON.parse(dataLines.join('\n')) as McpJsonRpcResponse;
+				const parsed = parseJsonWith(mcpJsonRpcResponseSchema, dataLines.join('\n'));
+				if (!parsed) throw new Error('MCP SSE frame did not match the JSON-RPC response shape');
+				return parsed as McpJsonRpcResponse;
 			}
 			buffer = buffer.slice(newlineIdx + 2);
 		}
@@ -119,10 +197,5 @@ async function readSseSingleResponse(res: Response): Promise<McpJsonRpcResponse>
 
 function parseAuth(authJson: string | null | undefined): Record<string, string> | null {
 	if (!authJson) return null;
-	try {
-		const parsed = JSON.parse(authJson) as Record<string, string>;
-		return parsed && typeof parsed === 'object' ? parsed : null;
-	} catch {
-		return null;
-	}
+	return parseJsonWith(mcpAuthHeadersSchema, authJson);
 }

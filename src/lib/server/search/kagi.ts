@@ -1,20 +1,32 @@
+import { z } from 'zod';
+import { safeValidate } from '$lib/zod-utils';
 import type { WebSearchBackend, WebSearchResponse, WebSearchResult } from './types';
 
 // Kagi Search API: https://help.kagi.com/kagi/api/search.html
 // Authorization header carries a Bot token; results are returned under `data`.
 
-type KagiSearchItem = {
-	t: number; // 0 = result, 1 = related search
-	url?: string;
-	title?: string;
-	snippet?: string;
-	published?: string;
-};
+const kagiSearchItemSchema = z
+	.object({
+		t: z.number(), // 0 = result, 1 = related search
+		url: z.string().optional(),
+		title: z.string().optional(),
+		snippet: z.string().optional(),
+		published: z.string().optional(),
+	})
+	.passthrough();
 
-type KagiResponse = {
-	data?: KagiSearchItem[];
-	error?: Array<{ code: number; msg: string }>;
-};
+const kagiResponseSchema = z
+	.object({
+		data: z.array(kagiSearchItemSchema).optional(),
+		error: z
+			.array(
+				z
+					.object({ code: z.number(), msg: z.string() })
+					.passthrough(),
+			)
+			.optional(),
+	})
+	.passthrough();
 
 export class KagiSearchBackend implements WebSearchBackend {
 	readonly id = 'kagi';
@@ -38,7 +50,11 @@ export class KagiSearchBackend implements WebSearchBackend {
 				signal: options.signal,
 			});
 			if (!res.ok) return { ok: false, error: `Kagi search HTTP ${res.status}` };
-			const body = (await res.json()) as KagiResponse;
+			const validated = safeValidate(kagiResponseSchema, await res.json());
+			if (!validated.ok) {
+				return { ok: false, error: `Kagi response validation failed: ${validated.error}` };
+			}
+			const body = validated.value;
 			if (body.error?.length) return { ok: false, error: body.error.map((e) => e.msg).join('; ') };
 			const results: WebSearchResult[] = (body.data ?? [])
 				.filter((d) => d.t === 0 && d.url && d.title)
