@@ -1,5 +1,6 @@
 import { error } from '@sveltejs/kit';
 import { listMcpServers } from '$lib/server/mcp_servers';
+import { listCustomTools } from '$lib/server/custom_tools';
 import {
 	describeSecretKeys,
 	getContextCompactionSummaryTokens,
@@ -46,6 +47,7 @@ export const load: PageServerLoad = async ({ platform }) => {
 		kagiCostPer1000Searches,
 		ttsVoice,
 		workspaceIoMode,
+		customTools,
 	] = await Promise.all([
 		listMcpServers(env),
 		listSubAgents(env),
@@ -65,6 +67,7 @@ export const load: PageServerLoad = async ({ platform }) => {
 		getKagiCostPer1000Searches(env),
 		getTtsVoice(env),
 		getWorkspaceIoMode(env),
+		listCustomTools(env),
 	]);
 	return {
 		secretKeys: describeSecretKeys(env),
@@ -89,5 +92,7 @@ export const load: PageServerLoad = async ({ platform }) => {
 		ttsVoice,
 		ttsVoices: TTS_VOICES,
 		workspaceIoMode,
+		customTools,
+		hasWorkerLoader: !!env.RUN_JS_LOADER,
 	};
 };
