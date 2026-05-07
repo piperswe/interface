@@ -200,6 +200,36 @@ describe('sandbox_load_image tool', () => {
 		expect(imageBlock!.data).toBe(expectedBase64);
 	});
 
+	it('surfaces the IMAGES binding error instead of advising sandbox_exec', async () => {
+		// Regression: previously the catch block returned a "too large, use sandbox_exec"
+		// error whenever IMAGES.transform threw, which misled agents into pre-resizing
+		// via convert when the binding was actually misconfigured/throwing.
+		const failingImages: ImagesBinding = {
+			input(_stream) {
+				return {
+					transform() { return this; },
+					draw() { return this; },
+					output() {
+						return Promise.reject(new Error('IMAGES_TRANSFORM_ERROR 9402: simulated'));
+					},
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				} as any;
+			},
+			info: () => Promise.resolve({ format: 'image/jpeg', fileSize: 0, width: 0, height: 0 }),
+			hosted: {} as ImagesBinding['hosted'],
+		};
+		const tool = createSandboxLoadImageTool({ getModels: () => [model({ supportsImageInput: true })] });
+		await bucket.put(`conversations/${CONV_ID}/uploads/big.jpeg`, new Uint8Array(6 * 1024 * 1024));
+		const result = await tool.execute(ctx({ env: { ...env, IMAGES: failingImages } }), {
+			path: '/workspace/uploads/big.jpeg',
+		});
+		expect(result.isError).toBe(true);
+		expect(typeof result.content).toBe('string');
+		expect(result.content as string).toMatch(/9402|simulated/);
+		expect(result.content as string).not.toMatch(/sandbox_exec/);
+		expect(result.content as string).not.toMatch(/convert .*-resize/);
+	});
+
 	it('uses the live (post-switch) model from ctx.modelId', async () => {
 		const tool = createSandboxLoadImageTool({
 			getModels: () => [model({ id: 'no-vision', supportsImageInput: false }), model({ id: 'has-vision', supportsImageInput: true })],

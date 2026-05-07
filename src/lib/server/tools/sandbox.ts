@@ -1098,16 +1098,7 @@ export function createSandboxLoadImageTool(deps: SandboxLoadImageDeps): Tool {
 				};
 			}
 			const size = obj.size;
-			const tooBig = size > MAX_IMAGE_BYTES;
 			const mb = (size / (1024 * 1024)).toFixed(1);
-			const tooBigError = {
-				content: `Image too large to load (${mb} MB > 3.5 MB). Use sandbox_exec to resize the image (e.g. \`convert ${path} -resize 1024x1024\\> ${path.replace(/(\.[^.]+)$/, '.small$1')}\`) and load the resized copy.`,
-				isError: true as const,
-			};
-
-			if (tooBig && !ctx.env.IMAGES) {
-				return tooBigError;
-			}
 
 			if (!supportsImageInput) {
 				return {
@@ -1116,25 +1107,17 @@ export function createSandboxLoadImageTool(deps: SandboxLoadImageDeps): Tool {
 				};
 			}
 
-			const bytes = new Uint8Array(await obj.arrayBuffer());
 			const filename = path.split('/').pop() ?? path;
 
-			// Use the Images binding to resize before encoding. DO SQLite has a
-			// 2 MB per-value limit; a raw 5 MB image hits that after base64 encoding.
-			// Resizing to ≤1568 px on each side keeps the encoded blob well under
-			// the limit while preserving useful detail for vision models.
+			// Bound case: stream R2 → IMAGES directly. The Cloudflare Images
+			// binding expects a real fetch/R2/file stream; manually-constructed
+			// ReadableStreams have been fragile across the RPC boundary.
 			if (ctx.env.IMAGES) {
 				try {
-					const stream = new ReadableStream<Uint8Array>({
-						start(controller) {
-							controller.enqueue(bytes);
-							controller.close();
-						},
-					});
-					const resizedResponse = (
-						await ctx.env.IMAGES.input(stream).transform({ width: 1568, height: 1568, fit: 'scale-down' }).output({ format: 'image/jpeg' })
-					).response();
-					const resizedBytes = new Uint8Array(await resizedResponse.arrayBuffer());
+					const resized = await ctx.env.IMAGES.input(obj.body)
+						.transform({ width: 1568, height: 1568, fit: 'scale-down' })
+						.output({ format: 'image/jpeg' });
+					const resizedBytes = new Uint8Array(await resized.response().arrayBuffer());
 					const resizedBase64 = bytesToBase64(resizedBytes);
 					return {
 						content: [
@@ -1149,14 +1132,24 @@ export function createSandboxLoadImageTool(deps: SandboxLoadImageDeps): Tool {
 							},
 						],
 					};
-				} catch {
-					if (tooBig) {
-						return tooBigError;
-					}
-					// Fall through to the unresized path below.
+				} catch (err) {
+					console.error('sandbox_load_image: IMAGES.transform failed', { err, size, mb, path });
+					const message = err instanceof Error ? err.message : String(err);
+					return {
+						content: `Failed to resize ${path} (${mb} MB) via the IMAGES binding: ${message}.`,
+						isError: true,
+					};
 				}
 			}
 
+			// Unbound case: gate on size, then encode raw bytes.
+			if (size > MAX_IMAGE_BYTES) {
+				return {
+					content: `Image too large to load (${mb} MB > 3.5 MB). Use sandbox_exec to resize the image (e.g. \`convert ${path} -resize 1024x1024\\> ${path.replace(/(\.[^.]+)$/, '.small$1')}\`) and load the resized copy.`,
+					isError: true,
+				};
+			}
+			const bytes = new Uint8Array(await obj.arrayBuffer());
 			const base64 = bytesToBase64(bytes);
 			return {
 				content: [
