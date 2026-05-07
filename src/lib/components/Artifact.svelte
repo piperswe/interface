@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Artifact } from '$lib/types/conversation';
+	import { ArrowRight } from 'lucide-svelte';
 
 	let {
 		artifact,
@@ -32,7 +33,7 @@
 		{#if artifact.name}<span class="artifact-name">{artifact.name}</span>{/if}
 		{#if artifact.language}<span class="artifact-lang">{artifact.language}</span>{/if}
 		{#if artifact.version > 1}<span class="artifact-version">v{artifact.version}</span>{/if}
-		{#if onSelect}<span class="artifact-action ms-auto small text-muted">View →</span>{/if}
+		{#if onSelect}<span class="artifact-action ms-auto small text-muted d-inline-flex align-items-center gap-1">View <ArrowRight size={12} aria-hidden="true" /></span>{/if}
 	</button>
 	{#if hasInlinePreview && showHtml}
 		<div class="artifact-body">{@html artifact.contentHtml}</div>

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { ToolCallRecord, ToolResultRecord } from '$lib/types/conversation';
+	import { ChevronRight } from 'lucide-svelte';
 
 	let {
 		call,
@@ -255,7 +256,7 @@
 
 <details class="tool-call{nested ? ' nested' : ''}" data-tool-name={call.name} {open}>
 	<summary>
-		<span class="chevron" aria-hidden="true">▸</span>
+		<ChevronRight class="chevron" size={12} aria-hidden="true" />
 		<span class="tool-label">{toolLabel}</span>
 		{#if headline}
 			<span class="tool-headline"
@@ -510,7 +511,7 @@
 
 		{#if startedAt != null || result}
 			<details class="tool-details">
-				<summary>Details</summary>
+				<summary><ChevronRight class="chevron" size={11} aria-hidden="true" />Details</summary>
 				<dl class="detail-grid">
 					<dt>name</dt><dd><code>{call.name}</code></dd>
 					{#if startedAt != null}
@@ -571,14 +572,13 @@
 		border-bottom: 1px solid var(--border-soft);
 	}
 
-	.chevron {
-		font-size: 0.65em;
+	.tool-call > summary :global(.chevron) {
 		color: var(--muted-2);
 		transition: transform 100ms ease;
 		flex-shrink: 0;
 	}
 
-	.tool-call[open] .chevron {
+	.tool-call[open] > summary :global(.chevron) {
 		transform: rotate(90deg);
 	}
 
@@ -973,16 +973,15 @@
 		content: '';
 	}
 
-	.tool-details summary::before {
-		content: '▸';
-		font-size: 0.7em;
+	.tool-details summary :global(.chevron) {
 		color: var(--muted-2);
-		display: inline-block;
 		margin-right: 0.3rem;
 		transition: transform 100ms ease;
+		flex-shrink: 0;
+		vertical-align: -1px;
 	}
 
-	.tool-details[open] summary::before {
+	.tool-details[open] summary :global(.chevron) {
 		transform: rotate(90deg);
 	}
 

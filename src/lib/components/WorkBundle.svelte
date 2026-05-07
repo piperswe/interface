@@ -2,6 +2,7 @@
 	import type { ToolResultPart } from '$lib/types/conversation';
 	import type { Bundle } from './parts';
 	import MessagePart from './MessagePart.svelte';
+	import { ChevronRight } from 'lucide-svelte';
 
 	let {
 		group,
@@ -18,6 +19,7 @@
 
 <details class="work-bundle" open={group.isLast && isStreaming}>
 	<summary>
+		<ChevronRight class="chevron" size={12} aria-hidden="true" />
 		<span class="work-bundle-label">{group.mixed ? 'Tools & thinking' : 'Thinking'}</span>
 		{#if group.hasActive}<span class="streaming-indicator" aria-hidden="true">●</span>{/if}
 	</summary>
@@ -61,15 +63,13 @@
 		content: '';
 	}
 
-	.work-bundle summary::before {
-		content: '▸';
-		font-size: 0.7em;
+	.work-bundle summary :global(.chevron) {
 		color: var(--muted-2);
 		transition: transform 100ms ease;
-		display: inline-block;
+		flex-shrink: 0;
 	}
 
-	.work-bundle[open] summary::before {
+	.work-bundle[open] summary :global(.chevron) {
 		transform: rotate(90deg);
 	}
 
