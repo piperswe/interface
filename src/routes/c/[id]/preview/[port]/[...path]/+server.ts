@@ -38,7 +38,7 @@ async function proxyToPreview({ params, request, url, platform }: Parameters<Req
 	if (!platform.env.SANDBOX) error(503, 'sandbox not configured');
 
 	const ns = platform.env.SANDBOX as unknown as DurableObjectNamespace<Sandbox>;
-	const sandbox = getSandbox(ns, conversationId);
+	const sandbox = getSandbox(ns, conversationId, { sleepAfter: '1h' });
 
 	// Ensure the port is exposed with a stable token.
 	const hostname = url.host;

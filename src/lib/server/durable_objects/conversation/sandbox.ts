@@ -25,7 +25,7 @@ export async function getSandboxPreviewPorts(
 ): Promise<{ port: number; url: string; name?: string }[]> {
 	if (!env.SANDBOX || !conversationId) return [];
 	try {
-		const sandbox = getSandbox(env.SANDBOX as unknown as DurableObjectNamespace<Sandbox>, conversationId);
+		const sandbox = getSandbox(env.SANDBOX as unknown as DurableObjectNamespace<Sandbox>, conversationId, { sleepAfter: '1h' });
 		return await _listExposedPorts(sandbox as unknown as { getExposedPorts: (hostname: string) => Promise<unknown> }, hostname);
 	} catch {
 		return [];
@@ -35,7 +35,7 @@ export async function getSandboxPreviewPorts(
 export async function destroySandbox(env: Env, conversationId: string | null): Promise<void> {
 	if (!env.SANDBOX || !conversationId) return;
 	try {
-		const sandbox = getSandbox(env.SANDBOX as unknown as DurableObjectNamespace<Sandbox>, conversationId);
+		const sandbox = getSandbox(env.SANDBOX as unknown as DurableObjectNamespace<Sandbox>, conversationId, { sleepAfter: '1h' });
 		await sandbox.destroy();
 	} catch {
 		/* ignore */
