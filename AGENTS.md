@@ -160,10 +160,16 @@ picks between two strategies:
 
 - `snapshot` (default, fastest): `/workspace` is a native ext4 directory
   hydrated from R2 with `rclone copy` on first use. A background daemon
-  inside the container syncs deltas back every 15s, and every modify-tool
-  RPC also runs `rclone sync` synchronously before returning. Native FS
-  speed for git, npm, and compilers; up to ~15s of in-flight build output
-  is at risk if the Sandbox DO is evicted mid-tool-call.
+  inside the container syncs deltas back every 15s, and most modify-tool
+  RPCs (`sandbox_write_file`, `sandbox_delete_file`, `sandbox_mkdir`,
+  `sandbox_run_code`) also run `rclone sync` synchronously before
+  returning. `sandbox_exec`'s streaming branch is the exception — its
+  post-stream sandbox.exec for rclone wedges on the same upstream
+  RPC-stream-cancel propagation that necessitates the floating-consumer
+  workaround in `sandboxExecTool`, so it relies on the 15s daemon
+  instead. Native FS speed for git, npm, and compilers; up to ~15s of
+  in-flight build output is at risk if the Sandbox DO is evicted
+  mid-tool-call.
 - `rclone-mount`: `/workspace` is a FUSE mount via `rclone mount` with a
   4 GB `--vfs-cache-mode=full` local cache. Reads always go through the
   live mount; writes are pushed back to R2 by rclone within ~1s.
