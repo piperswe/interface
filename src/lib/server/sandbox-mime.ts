@@ -2,31 +2,11 @@
 // bucket. Both the file-download endpoint and the upload endpoint reach for
 // this list when no client-provided content type is available.
 
-const SANDBOX_MIME_BY_EXT: Record<string, string> = {
-	txt: 'text/plain',
-	md: 'text/markdown',
-	js: 'application/javascript',
-	jsx: 'application/javascript',
-	ts: 'application/typescript',
-	tsx: 'application/typescript',
-	json: 'application/json',
-	html: 'text/html',
-	css: 'text/css',
-	svg: 'image/svg+xml',
-	png: 'image/png',
-	jpg: 'image/jpeg',
-	jpeg: 'image/jpeg',
-	gif: 'image/gif',
-	webp: 'image/webp',
-	pdf: 'application/pdf',
-	csv: 'text/csv',
-	xml: 'application/xml',
-	yaml: 'application/yaml',
-	yml: 'application/yaml',
-	py: 'text/x-python',
-	sh: 'application/x-sh',
-	toml: 'application/toml',
-};
+import db from 'mime-db';
+
+const SANDBOX_MIME_BY_EXT: Record<string, string> = Object.fromEntries(
+	Object.entries(db).flatMap(([typ, { extensions }]) => extensions?.map((ext) => [ext, typ]) ?? []),
+);
 
 export const DEFAULT_BINARY_MIME = 'application/octet-stream';
 
