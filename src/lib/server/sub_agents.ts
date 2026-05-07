@@ -6,7 +6,11 @@ import { z } from 'zod';
 import { parseJsonWith } from '$lib/zod-utils';
 import { now as nowMs } from './clock';
 
-const allowedToolsSchema = z.array(z.string());
+// `tools_json` is historically lenient: a row written by an old code path
+// might mix in non-string entries, which we want to filter rather than
+// reject. So validate the outer shape (an array) but filter entries
+// per-element.
+const allowedToolsArrayShapeSchema = z.array(z.unknown());
 
 const SINGLE_USER_ID = 1;
 
@@ -43,9 +47,10 @@ type Row = {
 
 function parseTools(json: string | null): string[] | null {
 	if (!json) return null;
-	const parsed = parseJsonWith(allowedToolsSchema, json);
-	if (!parsed || parsed.length === 0) return null;
-	return parsed;
+	const parsed = parseJsonWith(allowedToolsArrayShapeSchema, json);
+	if (!parsed) return null;
+	const names = parsed.filter((x): x is string => typeof x === 'string');
+	return names.length > 0 ? names : null;
 }
 
 function rowToSubAgent(r: Row): SubAgentRow {
