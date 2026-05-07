@@ -110,7 +110,7 @@ describe('sandbox_load_image tool', () => {
 		expect(data).toBe('AQIDBAU=');
 	});
 
-	it('returns a text guidance error when the file exceeds the 5MB cap and no IMAGES binding', async () => {
+	it('returns a text guidance error when the file exceeds the 3.5MB cap and no IMAGES binding', async () => {
 		const tool = createSandboxLoadImageTool({
 			getModels: () => [model({ supportsImageInput: true })],
 		});
@@ -123,7 +123,7 @@ describe('sandbox_load_image tool', () => {
 		expect(result.content as string).toMatch(/too large/);
 	});
 
-	it('resizes via IMAGES binding instead of erroring when file exceeds the 5MB cap', async () => {
+	it('resizes via IMAGES binding instead of erroring when file exceeds the 3.5MB cap', async () => {
 		// Regression: large images should be fed through Cloudflare Image Resizing
 		// rather than returning a "too large" error when the IMAGES binding is present.
 		const fakeResizedBytes = new Uint8Array([0x01, 0x02, 0x03]);
