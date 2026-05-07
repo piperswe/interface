@@ -146,7 +146,14 @@ const RCLONE_REMOTE = 'r2';
 const WORKSPACE_PATH = '/workspace';
 const MODE_MARKER_PATH = '/var/lib/sandbox/workspace-mode';
 const SYNC_DAEMON_PID_PATH = '/var/run/sandbox-rclone-sync.pid';
+const MOUNT_PID_PATH = '/var/run/sandbox-rclone-mount.pid';
 const SNAPSHOT_SYNC_INTERVAL_SECONDS = 15;
+// rclone log files are written by `--log-file=` and tailed back to the
+// Worker on failure so operators can see the actual error from the
+// Cloudflare dashboard (which only sees the surrounding shell's stdout).
+const RCLONE_INIT_LOG = '/var/log/sandbox/rclone-init.log';
+const RCLONE_MOUNT_LOG = '/var/log/sandbox/rclone-mount.log';
+const RCLONE_SYNC_LOG = '/var/log/sandbox/rclone-sync.log';
 // rclone's remote-control HTTP API for the FUSE mount. Used by the
 // mount-mode flush path (currently we just `sync && sleep` but the address is
 // reserved for future `rclone rc` calls if we need finer-grained flush).
@@ -243,47 +250,124 @@ async function writeRcloneConfig(sandbox: ReturnType<typeof getSandbox>, cfg: R2
 	await sandbox.exec(`chmod 600 ${RCLONE_CONFIG_PATH}`);
 }
 
+function truncateForError(s: string, max = 2048): string {
+	if (s.length <= max) return s;
+	return `${s.slice(0, max)}\n[…truncated ${s.length - max} bytes…]`;
+}
+
+function formatSandboxFailure(command: string, result: ExecResult, extra?: string): string {
+	const parts = [`Sandbox command failed (exit ${result.exitCode}): ${command}`];
+	if (result.stderr) parts.push(`stderr:\n${truncateForError(result.stderr)}`);
+	if (result.stdout) parts.push(`stdout:\n${truncateForError(result.stdout)}`);
+	if (extra) parts.push(extra);
+	return parts.join('\n');
+}
+
 async function execOrThrow(sandbox: ReturnType<typeof getSandbox>, command: string): Promise<void> {
 	const result = await sandbox.exec(command);
 	if (!result.success) {
-		throw new Error(`Sandbox command failed (exit ${result.exitCode}): ${command}\nstderr: ${result.stderr}`);
+		throw new Error(formatSandboxFailure(command, result));
 	}
+}
+
+// Like `execOrThrow` but on failure also tries to read a container-side log
+// file and append its tail to the thrown error. Useful for commands whose
+// real diagnostic output goes to a `--log-file` rather than stderr (rclone
+// mount with `--daemon`, the snapshot sync daemon, etc).
+async function execOrThrowWithLog(
+	sandbox: ReturnType<typeof getSandbox>,
+	command: string,
+	logPath: string,
+): Promise<void> {
+	const result = await sandbox.exec(command);
+	if (result.success) return;
+	let logTail = '';
+	try {
+		const file = await sandbox.readFile(logPath);
+		logTail = `${logPath} tail:\n${truncateForError(file.content)}`;
+	} catch (e) {
+		logTail = `${logPath} unreadable: ${e instanceof Error ? e.message : String(e)}`;
+	}
+	throw new Error(formatSandboxFailure(command, result, logTail));
 }
 
 async function initSnapshotMode(sandbox: ReturnType<typeof getSandbox>, cfg: R2Config): Promise<void> {
 	const remote = r2Remote(cfg);
-	// Hydrate /workspace from R2, then start the periodic background sync
-	// daemon. setsid + nohup detaches the daemon so it survives the parent
-	// shell exiting at exec-RPC return; the daemon dies with the container.
-	await execOrThrow(
+	const remoteArg = JSON.stringify(remote);
+	// Hydrate /workspace from R2. Errors bubble up via execOrThrowWithLog,
+	// which reads the rclone log on failure so operators see e.g. AccessDenied
+	// instead of an empty stderr.
+	await execOrThrowWithLog(
 		sandbox,
-		`set -e; mkdir -p ${WORKSPACE_PATH}; rclone copy ${JSON.stringify(remote)}/ ${WORKSPACE_PATH} --transfers 32 --checkers 32 --fast-list 2>&1 | tail -50 || true`,
+		`set -e; mkdir -p ${WORKSPACE_PATH} /var/log/sandbox; rclone copy ${remoteArg}/ ${WORKSPACE_PATH} --transfers 32 --checkers 32 --fast-list --log-file=${RCLONE_INIT_LOG} --log-level=INFO`,
+		RCLONE_INIT_LOG,
 	);
-	const daemonScript = `while true; do rclone sync ${WORKSPACE_PATH} ${JSON.stringify(remote)}/ --transfers 32 --checkers 32 --fast-list >> /var/log/rclone-sync.log 2>&1; sleep ${SNAPSHOT_SYNC_INTERVAL_SECONDS}; done`;
-	await execOrThrow(
+	// Start the periodic sync daemon. setsid + nohup detaches it so it
+	// survives the parent shell exiting at exec-RPC return; the daemon dies
+	// with the container. After launch we sleep briefly and assert the
+	// daemon is still alive so that rclone misconfigurations (which would
+	// kill the first iteration immediately) surface as an init failure
+	// instead of a silent missing-sync.
+	const daemonScript = `while true; do rclone sync ${WORKSPACE_PATH} ${remoteArg}/ --transfers 32 --checkers 32 --fast-list --log-file=${RCLONE_SYNC_LOG} --log-level=INFO; sleep ${SNAPSHOT_SYNC_INTERVAL_SECONDS}; done`;
+	await execOrThrowWithLog(
 		sandbox,
-		`set -e; nohup setsid bash -c ${JSON.stringify(daemonScript)} </dev/null >/dev/null 2>&1 & echo $! > ${SYNC_DAEMON_PID_PATH}; disown; true`,
+		`set -e; : > ${RCLONE_SYNC_LOG}; nohup setsid bash -c ${JSON.stringify(daemonScript)} </dev/null >>${RCLONE_SYNC_LOG} 2>>${RCLONE_SYNC_LOG} & echo $! > ${SYNC_DAEMON_PID_PATH}; disown; sleep 0.5; PID=$(cat ${SYNC_DAEMON_PID_PATH}); kill -0 "$PID" 2>/dev/null || { echo "snapshot sync daemon (pid $PID) died on launch"; exit 1; }`,
+		RCLONE_SYNC_LOG,
 	);
 }
 
 async function teardownSnapshotMode(sandbox: ReturnType<typeof getSandbox>, cfg: R2Config): Promise<void> {
 	const remote = r2Remote(cfg);
-	// Final flush, kill the daemon, then empty /workspace so the next mode can
-	// repopulate cleanly.
-	await execOrThrow(
+	// Final flush, kill the daemon, then empty /workspace so the next mode
+	// can repopulate cleanly. Final flush errors bubble up with their log
+	// tail; daemon-kill failures (no such PID) are tolerated since they're
+	// expected if the container restarted between snapshot inits.
+	await execOrThrowWithLog(
 		sandbox,
-		`set -e; rclone sync ${WORKSPACE_PATH} ${JSON.stringify(remote)}/ --transfers 32 --checkers 32 --fast-list 2>&1 | tail -20 || true; PID=$(cat ${SYNC_DAEMON_PID_PATH} 2>/dev/null || true); if [ -n "$PID" ]; then kill -- -"$PID" 2>/dev/null || kill "$PID" 2>/dev/null || true; fi; rm -f ${SYNC_DAEMON_PID_PATH}; find ${WORKSPACE_PATH} -mindepth 1 -delete 2>/dev/null || true`,
+		`set -e; rclone sync ${WORKSPACE_PATH} ${JSON.stringify(remote)}/ --transfers 32 --checkers 32 --fast-list --log-file=${RCLONE_INIT_LOG} --log-level=INFO; PID=$(cat ${SYNC_DAEMON_PID_PATH} 2>/dev/null || true); if [ -n "$PID" ]; then kill -- -"$PID" 2>/dev/null || kill "$PID" 2>/dev/null || true; fi; rm -f ${SYNC_DAEMON_PID_PATH}; find ${WORKSPACE_PATH} -mindepth 1 -delete 2>/dev/null || true`,
+		RCLONE_INIT_LOG,
 	);
 }
 
 async function initRcloneMountMode(sandbox: ReturnType<typeof getSandbox>, cfg: R2Config): Promise<void> {
 	const remote = r2Remote(cfg);
-	// Best-effort cleanup of any leftover mount, then mount fresh. --daemon
-	// returns once the mount is ready; --vfs-write-back 1s bounds the lag
-	// between local writes and R2 uploads.
-	await execOrThrow(
+	// Best-effort cleanup of any leftover mount, then mount fresh. We
+	// deliberately don't pass `--daemon` here: --daemon forks rclone to the
+	// background and *suppresses output*, so a failed mount produces no
+	// surfaced error. Instead we run rclone backgrounded ourselves with
+	// `--log-file` for diagnostics, then poll `mountpoint -q` for readiness.
+	// On timeout or early exit, the script reads the rclone log tail so
+	// `execOrThrowWithLog` includes it in the thrown error.
+	const mountCmd = [
+		`rclone mount ${JSON.stringify(remote)}/ ${WORKSPACE_PATH}`,
+		`--vfs-cache-mode full --vfs-cache-max-size 4G --vfs-cache-max-age 24h`,
+		`--vfs-write-back 1s --transfers 32 --dir-cache-time 5s`,
+		`--rc --rc-no-auth --rc-addr ${RCLONE_RC_ADDR}`,
+		`--cache-dir /var/cache/rclone-vfs`,
+		`--log-file=${RCLONE_MOUNT_LOG} --log-level=INFO`,
+	].join(' ');
+	await execOrThrowWithLog(
 		sandbox,
-		`set -e; mkdir -p ${WORKSPACE_PATH} /var/cache/rclone-vfs; fusermount -u ${WORKSPACE_PATH} 2>/dev/null || true; rclone mount ${JSON.stringify(remote)}/ ${WORKSPACE_PATH} --vfs-cache-mode full --vfs-cache-max-size 4G --vfs-cache-max-age 24h --vfs-write-back 1s --transfers 32 --dir-cache-time 5s --rc --rc-no-auth --rc-addr ${RCLONE_RC_ADDR} --cache-dir /var/cache/rclone-vfs --daemon`,
+		`set -e
+mkdir -p ${WORKSPACE_PATH} /var/cache/rclone-vfs /var/log/sandbox
+fusermount -u ${WORKSPACE_PATH} 2>/dev/null || true
+: > ${RCLONE_MOUNT_LOG}
+nohup ${mountCmd} >>${RCLONE_MOUNT_LOG} 2>>${RCLONE_MOUNT_LOG} </dev/null &
+MOUNT_PID=$!
+echo $MOUNT_PID > ${MOUNT_PID_PATH}
+disown
+for i in $(seq 1 50); do
+  if mountpoint -q ${WORKSPACE_PATH}; then exit 0; fi
+  if ! kill -0 $MOUNT_PID 2>/dev/null; then
+    echo "rclone mount (pid $MOUNT_PID) exited before becoming ready"
+    exit 1
+  fi
+  sleep 0.2
+done
+echo "rclone mount did not become ready within 10s"
+kill $MOUNT_PID 2>/dev/null || true
+exit 1`,
+		RCLONE_MOUNT_LOG,
 	);
 }
 
@@ -330,33 +414,56 @@ export async function ensureWorkspaceReady(ctx: ToolContext): Promise<void> {
 	await writeWorkspaceMode(sandbox, desiredMode);
 }
 
-// Synchronously push pending /workspace writes to R2. Runs at the end of every
-// modify-tool RPC so file-browser reads (which hit R2 directly via the
+export type FlushResult = { warning?: string };
+
+// Synchronously push pending /workspace writes to R2. Runs at the end of
+// every modify-tool RPC so file-browser reads (which hit R2 directly via the
 // WORKSPACE_BUCKET binding, not the FUSE mount) see fresh data and so the
-// session is durable on tool-call boundaries even if the DO is evicted between
-// calls. Failures are non-fatal — the snapshot daemon (15s) or rclone's
-// write-back (~1s) will eventually catch up.
-export async function flushWorkspaceToR2(ctx: ToolContext): Promise<void> {
-	if (!ctx.env.WORKSPACE_BUCKET) return;
+// session is durable on tool-call boundaries even if the DO is evicted
+// between calls. Failures are non-fatal — the snapshot daemon (15s) or
+// rclone's write-back (~1s) will eventually catch up — but we return the
+// error message as a `warning` so callers can surface it to the operator
+// instead of silently dropping it.
+export async function flushWorkspaceToR2(ctx: ToolContext): Promise<FlushResult> {
+	if (!ctx.env.WORKSPACE_BUCKET) return {};
 	const cfg = r2ConfigFromEnv(ctx);
-	if (!cfg) return;
+	if (!cfg) return {};
 	const sandbox = getConversationSandbox(ctx);
 	const mode = await readWorkspaceMode(sandbox);
 	try {
 		if (mode === 'snapshot') {
-			await execOrThrow(
+			await execOrThrowWithLog(
 				sandbox,
-				`rclone sync ${WORKSPACE_PATH} ${JSON.stringify(r2Remote(cfg))}/ --transfers 32 --checkers 32 --fast-list 2>&1 | tail -20`,
+				`rclone sync ${WORKSPACE_PATH} ${JSON.stringify(r2Remote(cfg))}/ --transfers 32 --checkers 32 --fast-list --log-file=${RCLONE_INIT_LOG} --log-level=INFO`,
+				RCLONE_INIT_LOG,
 			);
 		} else if (mode === 'rclone-mount') {
 			// Force kernel buffers out and wait one --vfs-write-back cycle
-			// (configured to 1s above) to let rclone push the writes to R2.
+			// (configured to 1s at mount) to let rclone push the writes to R2.
 			await execOrThrow(sandbox, 'sync; sleep 2');
 		}
-	} catch {
-		// Eventual consistency is acceptable here. The background sync loop
-		// (snapshot) or VFS write-back (mount) will retry on the next tick.
+		return {};
+	} catch (e) {
+		return { warning: e instanceof Error ? e.message : String(e) };
 	}
+}
+
+function appendFlushWarning(content: string, flush: FlushResult): string {
+	if (!flush.warning) return content;
+	return `${content}\n\n[workspace flush warning]\n${flush.warning}`;
+}
+
+function withFlushWarning(result: ToolExecutionResult, flush: FlushResult): ToolExecutionResult {
+	if (!flush.warning) return result;
+	if (typeof result.content === 'string') {
+		return { ...result, content: appendFlushWarning(result.content, flush) };
+	}
+	// result.content is ToolResultBlock[] (e.g. an image-bearing result).
+	// Append the warning as a trailing text block so it stays visible.
+	return {
+		...result,
+		content: [...result.content, { type: 'text', text: `[workspace flush warning]\n${flush.warning}` }],
+	};
 }
 
 function formatExecResult(result: Pick<ExecResult, 'exitCode' | 'success' | 'stdout' | 'stderr'>): ToolExecutionResult {
@@ -450,8 +557,8 @@ export const sandboxExecTool: Tool = {
 					if (stderr) partial.push('', '--- stderr ---', stderr);
 					return { content: partial.join('\n'), isError: true };
 				}
-				await flushWorkspaceToR2(ctx);
-				return formatExecResult({ success: exitCode === 0, exitCode, stdout, stderr });
+				const streamFlush = await flushWorkspaceToR2(ctx);
+				return withFlushWarning(formatExecResult({ success: exitCode === 0, exitCode, stdout, stderr }), streamFlush);
 			}
 			const result = await sandbox.exec(args.command, {
 				cwd,
@@ -459,8 +566,8 @@ export const sandboxExecTool: Tool = {
 				...(args.stdin ? { stdin: args.stdin } : {}),
 				...(args.timeout ? { timeout: args.timeout } : {}),
 			});
-			await flushWorkspaceToR2(ctx);
-			return formatExecResult(result);
+			const flush = await flushWorkspaceToR2(ctx);
+			return withFlushWarning(formatExecResult(result), flush);
 		} catch (e) {
 			return {
 				content: e instanceof Error ? e.message : String(e),
@@ -513,7 +620,7 @@ export const sandboxRunCodeTool: Tool = {
 				language,
 				...(args.timeout ? { timeout: args.timeout } : {}),
 			});
-			await flushWorkspaceToR2(ctx);
+			const runCodeFlush = await flushWorkspaceToR2(ctx);
 			const lines: string[] = [];
 
 			if (result.logs.stdout.length > 0) {
@@ -544,9 +651,9 @@ export const sandboxRunCodeTool: Tool = {
 				if (result.error.traceback) {
 					lines.push('Traceback:', ...result.error.traceback);
 				}
-				return { content: lines.join('\n'), isError: true };
+				return { content: appendFlushWarning(lines.join('\n'), runCodeFlush), isError: true };
 			}
-			return { content: lines.join('\n') };
+			return { content: appendFlushWarning(lines.join('\n'), runCodeFlush) };
 		} catch (e) {
 			return {
 				content: e instanceof Error ? e.message : String(e),
@@ -628,8 +735,8 @@ export const sandboxWriteFileTool: Tool = {
 			await ensureWorkspaceReady(ctx);
 			const sandbox = getConversationSandbox(ctx);
 			await sandbox.writeFile(args.path, args.content);
-			await flushWorkspaceToR2(ctx);
-			return { content: `Wrote ${args.path}` };
+			const writeFlush = await flushWorkspaceToR2(ctx);
+			return { content: appendFlushWarning(`Wrote ${args.path}`, writeFlush) };
 		} catch (e) {
 			return {
 				content: e instanceof Error ? e.message : String(e),
@@ -666,8 +773,8 @@ export const sandboxDeleteFileTool: Tool = {
 			await ensureWorkspaceReady(ctx);
 			const sandbox = getConversationSandbox(ctx);
 			await sandbox.deleteFile(args.path);
-			await flushWorkspaceToR2(ctx);
-			return { content: `Deleted ${args.path}` };
+			const deleteFlush = await flushWorkspaceToR2(ctx);
+			return { content: appendFlushWarning(`Deleted ${args.path}`, deleteFlush) };
 		} catch (e) {
 			return {
 				content: e instanceof Error ? e.message : String(e),
@@ -709,8 +816,8 @@ export const sandboxMkdirTool: Tool = {
 			await ensureWorkspaceReady(ctx);
 			const sandbox = getConversationSandbox(ctx);
 			await sandbox.mkdir(args.path, { recursive: !!args.recursive });
-			await flushWorkspaceToR2(ctx);
-			return { content: `Created directory ${args.path}` };
+			const mkdirFlush = await flushWorkspaceToR2(ctx);
+			return { content: appendFlushWarning(`Created directory ${args.path}`, mkdirFlush) };
 		} catch (e) {
 			return {
 				content: e instanceof Error ? e.message : String(e),
