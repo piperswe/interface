@@ -26,6 +26,7 @@
 	} from '$lib/settings.remote';
 	import { addTag, removeTag, renameTagForm } from '$lib/tags.remote';
 	import { addSchedule, removeSchedule, toggleSchedule, runScheduleNow } from '$lib/schedules.remote';
+	import { addCustomTool, removeCustomTool, toggleCustomTool } from '$lib/custom-tools.remote';
 	import {
 		confirmOptimisticSubmit,
 		confirmToastSubmit,
@@ -47,13 +48,14 @@
 	});
 
 	// ----- Tab navigation -----
-	type TabId = 'general' | 'models' | 'connections' | 'agents' | 'schedules';
+	type TabId = 'general' | 'models' | 'connections' | 'agents' | 'schedules' | 'tools';
 	const tabs: { id: TabId; label: string; hint: string }[] = [
 		{ id: 'general', label: 'General', hint: 'Theme, prompts & limits' },
 		{ id: 'models', label: 'Models', hint: 'Providers & model catalog' },
 		{ id: 'connections', label: 'Connections', hint: 'MCP servers' },
 		{ id: 'agents', label: 'Agents', hint: 'Sub-agents, styles & memories' },
 		{ id: 'schedules', label: 'Schedules & Tags', hint: 'Recurring prompts & tags' },
+		{ id: 'tools', label: 'Tools', hint: 'Custom tools (Dynamic Workers)' },
 	];
 	let activeTab = $state<TabId>('general');
 
@@ -80,6 +82,7 @@
 	let pendingSubAgents = $state(new Set<number>());
 	let pendingStyles = $state(new Set<number>());
 	let pendingMemories = $state(new Set<number>());
+	let pendingCustomTools = $state(new Set<number>());
 	let optimisticSubAgentEnabled = $state(new Map<number, boolean>());
 
 	function reconcile<T>(set: Set<T>, present: Set<T>, update: (next: Set<T>) => void) {
@@ -111,6 +114,13 @@
 	});
 	$effect(() => {
 		reconcile(pendingMemories, new Set(data.memories.map((m) => m.id)), (s) => (pendingMemories = s));
+	});
+	$effect(() => {
+		reconcile(
+			pendingCustomTools,
+			new Set(data.customTools.map((t) => t.id)),
+			(s) => (pendingCustomTools = s),
+		);
 	});
 	$effect(() => {
 		// Drop optimistic toggles once the server reports the same value.
@@ -175,6 +185,14 @@
 		next.delete(id);
 		pendingMemories = next;
 	}
+	function pendingCustomToolAdd(id: number) {
+		pendingCustomTools = new Set([...pendingCustomTools, id]);
+	}
+	function pendingCustomToolRemove(id: number) {
+		const next = new Set(pendingCustomTools);
+		next.delete(id);
+		pendingCustomTools = next;
+	}
 	function optimisticSubAgentSet(id: number, enabled: boolean) {
 		optimisticSubAgentEnabled = new Map(optimisticSubAgentEnabled).set(id, enabled);
 	}
@@ -189,6 +207,9 @@
 	const visibleSubAgents = $derived(data.subAgents.filter((s) => !pendingSubAgents.has(s.id)));
 	const visibleStyles = $derived(data.styles.filter((s) => !pendingStyles.has(s.id)));
 	const visibleMemories = $derived(data.memories.filter((m) => !pendingMemories.has(m.id)));
+	const visibleCustomTools = $derived(
+		data.customTools.filter((t) => !pendingCustomTools.has(t.id)),
+	);
 
 	const providerCount = $derived(visibleProviders.length);
 	const visibleModelCount = $derived(
@@ -200,6 +221,7 @@
 	const memoryCount = $derived(visibleMemories.length);
 	const tagCount = $derived(data.tags.length);
 	const scheduleCount = $derived(data.schedules.length);
+	const customToolCount = $derived(visibleCustomTools.length);
 
 	function applyTheme(value: string) {
 		if (typeof document !== 'undefined') {
@@ -1875,6 +1897,123 @@
 					</div>
 				</form>
 			</section>
+		{:else if activeTab === 'tools'}
+			<!-- ============ TOOLS ============ -->
+			<div class="settings-toolbar">
+				<div>
+					<h2 class="h5 mb-1">
+						Custom tools
+						<span class="text-muted small fw-normal">({customToolCount})</span>
+					</h2>
+					<p class="small text-muted mb-0">
+						User-defined tools backed by Cloudflare Worker Loader. The agent can also
+						read and write these — ask it to "write a tool that…" and it will create one.
+					</p>
+				</div>
+			</div>
+
+			{#if !data.hasWorkerLoader}
+				<div class="empty-state">
+					<h3 class="h6 mb-2">Worker Loader not configured</h3>
+					<p class="small text-muted mb-0">
+						Custom tools require the <code>RUN_JS_LOADER</code> binding in
+						<code>wrangler.jsonc</code>.
+					</p>
+				</div>
+			{:else if visibleCustomTools.length === 0}
+				<div class="empty-state">
+					<h3 class="h6 mb-2">No custom tools yet</h3>
+					<p class="small text-muted mb-0">
+						Create one below, or ask the agent in chat to write one for you.
+					</p>
+				</div>
+			{:else}
+				<div class="mcp-grid">
+					{#each visibleCustomTools as t (t.id)}
+						<div class="mcp-card">
+							<div class="mcp-card-head">
+								<div class="d-flex flex-column">
+									<strong>{t.name}</strong>
+									<span class="small text-muted">{t.description}</span>
+									<div class="d-flex gap-1 align-items-center mt-1 flex-wrap">
+										<span class="badge {t.enabled ? 'text-bg-success' : 'text-bg-secondary'}">
+											{t.enabled ? 'Enabled' : 'Disabled'}
+										</span>
+										<code class="small text-muted">custom_{t.id}_{t.name}</code>
+									</div>
+								</div>
+							</div>
+							<div class="mcp-card-actions">
+								<a class="btn btn-sm btn-outline-primary" href={`/settings/tools/${t.id}`}>Edit</a>
+								<form
+									{...toggleCustomTool
+										.for(`nav-${t.id}`)
+										.enhance(toastSubmit(t.enabled ? 'Tool disabled' : 'Tool enabled'))}
+									class="m-0"
+								>
+									<input type="hidden" name="id" value={t.id} />
+									<input type="hidden" name="enabled" value={t.enabled ? 'false' : 'true'} />
+									<button type="submit" class="btn btn-sm btn-outline-secondary">
+										{t.enabled ? 'Disable' : 'Enable'}
+									</button>
+								</form>
+								<form
+									{...removeCustomTool.for(`nav-${t.id}`).enhance(
+										confirmOptimisticSubmit(`Delete tool "${t.name}"?`, {
+											apply: () => pendingCustomToolAdd(t.id),
+											revert: () => pendingCustomToolRemove(t.id),
+											successMessage: 'Tool deleted',
+										}),
+									)}
+									class="m-0"
+								>
+									<input type="hidden" name="id" value={t.id} />
+									<button type="submit" class="btn btn-sm btn-link text-danger p-0">Delete</button>
+								</form>
+							</div>
+						</div>
+					{/each}
+				</div>
+			{/if}
+
+			{#if data.hasWorkerLoader}
+				<section class="settings-card mt-3">
+					<div class="settings-card-head">
+						<h2 class="h6 mb-0">Create a new tool</h2>
+						<p class="small text-muted mb-0">
+							Starts you with a stub source. Edit the code, schema, and secrets on
+							the next page.
+						</p>
+					</div>
+					<form {...addCustomTool.enhance(justSubmit)} class="row g-2">
+						<div class="col-md-4">
+							<label class="form-label small d-block">
+								<span class="d-block mb-1">Name</span>
+								<input
+									name="name"
+									placeholder="current_weather"
+									class="form-control form-control-sm"
+									required
+								/>
+							</label>
+						</div>
+						<div class="col-md-8">
+							<label class="form-label small d-block">
+								<span class="d-block mb-1">Description</span>
+								<input
+									name="description"
+									placeholder="Get the current weather for a city."
+									class="form-control form-control-sm"
+									required
+								/>
+							</label>
+						</div>
+						<div class="col-12 d-flex justify-content-end">
+							<button type="submit" class="btn btn-sm btn-primary">Create &amp; edit</button>
+						</div>
+					</form>
+				</section>
+			{/if}
 		{/if}
 	</div>
 </div>

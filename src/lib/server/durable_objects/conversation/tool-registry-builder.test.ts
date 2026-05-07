@@ -37,6 +37,7 @@ function makeContext(overrides: Partial<ConversationContext> = {}): Conversation
 		mcpServers: [],
 		memories: [],
 		styles: [],
+		customTools: [],
 		...overrides,
 	};
 }
