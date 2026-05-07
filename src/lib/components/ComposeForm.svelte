@@ -8,9 +8,10 @@
 	import type { ProviderModel } from '$lib/server/providers/types';
 	import { sendMessage, setThinkingBudget, abortGeneration, compactContext } from '$lib/conversations.remote';
 	import { invalidateAll } from '$app/navigation';
-	import { untrack } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { clickOutside } from '$lib/click-outside';
 	import type { Preset } from './thinking-presets';
+	import type { Recorder } from '$lib/speech-recognition.client';
 
 	let {
 		conversationId,
@@ -238,6 +239,101 @@
 	function closeOptions() {
 		if (optionsEl?.open) optionsEl.open = false;
 	}
+
+	type RecState = 'idle' | 'recording' | 'transcribing' | 'error';
+	let recState = $state<RecState>('idle');
+	let recError = $state<string | null>(null);
+	let recSupported = $state(false);
+	let recorder: Recorder | null = null;
+	let errorResetTimer: ReturnType<typeof setTimeout> | null = null;
+
+	onMount(async () => {
+		const mod = await import('$lib/speech-recognition.client');
+		recSupported = mod.isSpeechRecognitionSupported();
+	});
+
+	function clearErrorLater() {
+		if (errorResetTimer) clearTimeout(errorResetTimer);
+		errorResetTimer = setTimeout(() => {
+			if (recState === 'error') {
+				recState = 'idle';
+				recError = null;
+			}
+			errorResetTimer = null;
+		}, 3000);
+	}
+
+	function setRecError(message: string) {
+		recError = message;
+		recState = 'error';
+		clearErrorLater();
+	}
+
+	function insertTranscript(text: string) {
+		if (!text) return;
+		const ta = textareaEl;
+		if (!ta) return;
+		const start = ta.selectionStart ?? ta.value.length;
+		const end = ta.selectionEnd ?? ta.value.length;
+		const before = ta.value.slice(0, start);
+		const after = ta.value.slice(end);
+		const needsLeadSpace = before.length > 0 && !/\s$/.test(before) && !/^\s/.test(text);
+		const insert = (needsLeadSpace ? ' ' : '') + text;
+		ta.value = before + insert + after;
+		const cursor = (before + insert).length;
+		ta.selectionStart = ta.selectionEnd = cursor;
+		ta.focus();
+		resizeTextarea();
+	}
+
+	async function onMicClick() {
+		if (busy) return;
+		const mod = await import('$lib/speech-recognition.client');
+		if (recState === 'idle' || recState === 'error') {
+			recError = null;
+			try {
+				recorder = new mod.Recorder();
+				await recorder.start();
+				recState = 'recording';
+			} catch (err) {
+				recorder?.cancel();
+				recorder = null;
+				setRecError(mod.explainMicError(err));
+			}
+			return;
+		}
+		if (recState === 'recording') {
+			const r = recorder;
+			if (!r) {
+				recState = 'idle';
+				return;
+			}
+			recState = 'transcribing';
+			try {
+				const blob = await r.stop();
+				const text = await mod.transcribe(blob);
+				insertTranscript(text);
+				recState = 'idle';
+			} catch (err) {
+				setRecError(err instanceof Error ? err.message : String(err));
+			} finally {
+				recorder = null;
+			}
+		}
+	}
+
+	const micGlyph = $derived(
+		recState === 'recording' ? '⏺' : recState === 'transcribing' ? '⏳' : recState === 'error' ? '⚠' : '🎤',
+	);
+	const micLabel = $derived(
+		recState === 'recording'
+			? 'Stop recording'
+			: recState === 'transcribing'
+				? 'Transcribing…'
+				: recState === 'error'
+					? 'Retry dictation'
+					: 'Dictate message',
+	);
 </script>
 
 <form
@@ -440,6 +536,22 @@
 					<path d="M21.44 11.05l-9.19 9.19a6 6 0 1 1-8.49-8.49l9.19-9.19a4 4 0 1 1 5.66 5.66l-9.2 9.19a2 2 0 1 1-2.83-2.83l8.49-8.48"/>
 				</svg>
 			</button>
+			{#if recSupported}
+				<button
+					type="button"
+					class="mic-button"
+					class:recording={recState === 'recording'}
+					class:transcribing={recState === 'transcribing'}
+					class:error={recState === 'error'}
+					onclick={onMicClick}
+					disabled={busy || recState === 'transcribing'}
+					aria-label={micLabel}
+					aria-pressed={recState === 'recording'}
+					title={recError ?? micLabel}
+				>
+					<span aria-hidden="true">{micGlyph}</span>
+				</button>
+			{/if}
 			{#if showMeter}
 				<button
 					type="button"
@@ -789,5 +901,51 @@
 	.attach-button[disabled] {
 		opacity: 0.4;
 		cursor: not-allowed;
+	}
+
+	.mic-button {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 32px;
+		height: 32px;
+		padding: 0;
+		font-size: 0.95rem;
+		line-height: 1;
+		background: transparent;
+		border: 1px solid transparent;
+		border-radius: 999px;
+		color: var(--muted);
+		cursor: pointer;
+		transition: background 120ms ease, color 120ms ease;
+	}
+
+	.mic-button:hover:not([disabled]) {
+		background: var(--bs-secondary-bg);
+		color: var(--fg);
+	}
+
+	.mic-button[disabled] {
+		opacity: 0.4;
+		cursor: not-allowed;
+	}
+
+	.mic-button.recording {
+		color: #c00;
+		background: var(--bs-secondary-bg);
+		animation: mic-pulse 1.1s ease-in-out infinite;
+	}
+
+	.mic-button.transcribing {
+		opacity: 0.7;
+	}
+
+	.mic-button.error {
+		color: var(--error-fg, #c00);
+	}
+
+	@keyframes mic-pulse {
+		0%, 100% { box-shadow: 0 0 0 0 rgba(204, 0, 0, 0.45); }
+		50% { box-shadow: 0 0 0 6px rgba(204, 0, 0, 0); }
 	}
 </style>
