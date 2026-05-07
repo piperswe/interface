@@ -72,7 +72,7 @@ describe('sandbox/upload +server.ts — POST', () => {
 		await expectError(
 			callPost(VALID_ID, {
 				filename: 'big.bin',
-				contentLength: 100 * 1024 * 1024,
+				contentLength: 501 * 1024 * 1024,
 			}),
 			413,
 		);

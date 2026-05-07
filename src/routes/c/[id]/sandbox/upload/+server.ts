@@ -3,10 +3,8 @@ import { CONVERSATION_ID_PATTERN } from '$lib/conversation-id';
 import { DEFAULT_BINARY_MIME, mimeTypeForPath } from '$lib/server/sandbox-mime';
 import type { RequestHandler } from './$types';
 
-// Hard cap to keep request bodies sane. Cloudflare Workers Free/Pro is 100MB
-// of body; we cap well below that to leave headroom and to keep one upload
-// from filling the per-conversation R2 prefix.
-const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+// Hard cap for ENT accounts, which support up to 500 MB request bodies.
+const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
 
 function stripControlChars(s: string): string {
 	let out = '';
