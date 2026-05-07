@@ -3,12 +3,11 @@
 
 	let { conversationId, messageId }: { conversationId: string; messageId: string } = $props();
 
-	type State = 'idle' | 'loading' | 'playing' | 'paused' | 'error';
-	let phase = $state<State>('idle');
+	type Phase = 'idle' | 'loading' | 'playing' | 'paused' | 'error';
+	let phase = $state<Phase>('idle');
 	let errorMessage = $state<string | null>(null);
 
 	let audio: HTMLAudioElement | null = null;
-	let blobUrl: string | null = null;
 
 	function cleanup() {
 		if (audio) {
@@ -16,30 +15,29 @@
 			audio.src = '';
 			audio = null;
 		}
-		if (blobUrl) {
-			URL.revokeObjectURL(blobUrl);
-			blobUrl = null;
-		}
 	}
-
 	onDestroy(cleanup);
 
-	async function ensureAudio(): Promise<HTMLAudioElement> {
-		if (audio && blobUrl) return audio;
-		const res = await fetch(`/c/${conversationId}/m/${messageId}/speak`);
-		if (!res.ok) {
-			const detail = await res.text().catch(() => '');
-			throw new Error(detail || `TTS request failed (${res.status})`);
-		}
-		const blob = await res.blob();
-		blobUrl = URL.createObjectURL(blob);
-		const a = new Audio(blobUrl);
-		a.addEventListener('ended', () => { phase = 'idle'; });
+	function ensureAudio(): HTMLAudioElement {
+		if (audio) return audio;
+		const a = new Audio(`/c/${conversationId}/m/${messageId}/speak`);
+		// Browser progressively downloads MP3 and starts playback as soon as
+		// enough frames have arrived — the first chunk's bytes are enough to
+		// begin, so we hear audio while later chunks are still synthesising.
+		a.preload = 'none';
+		a.addEventListener('playing', () => { phase = 'playing'; });
 		a.addEventListener('pause', () => {
-			// Only flip to paused if we didn't naturally end (which fires pause too).
-			if (!a.ended && phase === 'playing') phase = 'paused';
+			if (!a.ended && phase !== 'idle' && phase !== 'error') phase = 'paused';
 		});
-		a.addEventListener('play', () => { phase = 'playing'; });
+		a.addEventListener('waiting', () => { phase = 'loading'; });
+		a.addEventListener('ended', () => {
+			a.currentTime = 0;
+			phase = 'idle';
+		});
+		a.addEventListener('error', () => {
+			phase = 'error';
+			errorMessage = a.error?.message || 'Playback failed';
+		});
 		audio = a;
 		return a;
 	}
@@ -56,7 +54,7 @@
 				return;
 			}
 			phase = 'loading';
-			const a = await ensureAudio();
+			const a = ensureAudio();
 			await a.play();
 		} catch (err) {
 			phase = 'error';
@@ -86,7 +84,6 @@
 	onclick={onClick}
 	aria-label={label}
 	title={errorMessage ?? label}
-	disabled={phase === 'loading'}
 >
 	<span aria-hidden="true">{glyph}</span>
 </button>
@@ -107,9 +104,5 @@
 	.speak-button:hover:not([disabled]) {
 		background: var(--bs-secondary-bg);
 		color: var(--accent);
-	}
-	.speak-button[disabled] {
-		opacity: 0.5;
-		cursor: progress;
 	}
 </style>
