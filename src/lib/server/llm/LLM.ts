@@ -76,6 +76,11 @@ export type ChatRequest = {
 export type StreamEvent =
 	| { type: 'text_delta'; delta: string }
 	| { type: 'thinking_delta'; delta: string }
+	// Emitted once per thinking block when the provider attaches an
+	// authentication blob to it (Anthropic). The signature must be round-
+	// tripped on the next turn or the API rejects the request when thinking
+	// is interleaved with tool calls.
+	| { type: 'thinking_signature'; signature: string }
 	| { type: 'tool_call_delta'; id: string; name?: string; argumentsDelta?: string }
 	| { type: 'tool_call'; id: string; name: string; input: unknown; thoughtSignature?: string }
 	| { type: 'usage'; usage: Usage }

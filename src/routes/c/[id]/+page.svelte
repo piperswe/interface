@@ -175,6 +175,21 @@
 		[...convState.messages].reverse().find((m) => m.role === 'assistant' && m.model)?.model ??
 			(data.defaultModel || (data.models[0] ? `${data.models[0].providerId}/${data.models[0].id}` : '')),
 	);
+	// True if any persisted message in this conversation carries an image —
+	// either a user-attached image or an image-bearing tool_result (e.g.
+	// `sandbox_load_image`). Used by `ComposeForm` to warn when the active
+	// model can't see images so the user knows why the next turn looks
+	// amnesiac. We sanitize on send so it's not a hard error, just a hint.
+	const historyHasImages = $derived(
+		convState.messages.some((m) => {
+			for (const p of m.parts ?? []) {
+				if (p.type === 'tool_result' && Array.isArray(p.content)) {
+					if (p.content.some((b) => b.type === 'image')) return true;
+				}
+			}
+			return false;
+		}),
+	);
 	const contextUsed = $derived(
 		[...convState.messages].reverse().find((m) => m.role === 'assistant' && m.meta?.usage?.inputTokens)?.meta?.usage?.inputTokens ?? 0,
 	);
@@ -453,6 +468,7 @@
 						thinkingBudget={data.thinkingBudget}
 						{busy}
 						{contextUsed}
+						{historyHasImages}
 						onOptimisticSubmit={pushOptimisticUserMessage}
 						onOptimisticRevert={revertOptimisticUserMessage}
 					/>

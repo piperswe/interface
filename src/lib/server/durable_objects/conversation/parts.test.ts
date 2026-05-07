@@ -62,6 +62,34 @@ describe('partsToMessages', () => {
 		expect(msgs.map((m) => m.role)).toEqual(['assistant', 'tool', 'assistant']);
 	});
 
+	it('round-trips ThinkingPart.signature so Anthropic accepts the next turn', () => {
+		// Regression: signatures used to be discarded in `partsToMessages`,
+		// so a stored Anthropic thinking block emerged with `signature: ''`
+		// and Anthropic 400'd the next turn.
+		const parts: MessagePart[] = [
+			{ type: 'thinking', text: 'planning', signature: 'auth-blob-abc' },
+			{ type: 'tool_use', id: 't1', name: 'x', input: {} },
+			{ type: 'tool_result', toolUseId: 't1', content: 'ok', isError: false },
+		];
+		const msgs = partsToMessages(parts);
+		const asst = msgs[0];
+		expect(asst.role).toBe('assistant');
+		const thinkingBlock = (asst.content as Array<Record<string, unknown>>).find((b) => b.type === 'thinking');
+		expect(thinkingBlock?.signature).toBe('auth-blob-abc');
+	});
+
+	it('omits the signature field when ThinkingPart has none (signature-less legacy rows)', () => {
+		const parts: MessagePart[] = [
+			{ type: 'thinking', text: 'planning' },
+			{ type: 'tool_use', id: 't1', name: 'x', input: {} },
+			{ type: 'tool_result', toolUseId: 't1', content: 'ok', isError: false },
+		];
+		const msgs = partsToMessages(parts);
+		const thinkingBlock = (msgs[0].content as Array<Record<string, unknown>>).find((b) => b.type === 'thinking');
+		expect(thinkingBlock).toBeDefined();
+		expect('signature' in thinkingBlock!).toBe(false);
+	});
+
 	it('preserves array tool_result content (text + image) so sandbox_load_image survives replay', () => {
 		const parts: MessagePart[] = [
 			{ type: 'tool_use', id: 't1', name: 'sandbox_load_image', input: { path: '/workspace/x.png' } },

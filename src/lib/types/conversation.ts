@@ -86,7 +86,11 @@ export type ToolResultRecord = {
 //   [{type:'thinking'}, {type:'text'}, {type:'tool_use'}, {type:'tool_result'},
 //    {type:'thinking'}, {type:'text'}]
 export type TextPart = { type: 'text'; text: string; textHtml?: string };
-export type ThinkingPart = { type: 'thinking'; text: string; textHtml?: string };
+// `signature` is the Anthropic-supplied authentication blob attached to a
+// thinking block. It must round-trip to the API on subsequent turns; without
+// it, Anthropic rejects the message when thinking is interleaved with tool
+// rounds. Only set for Anthropic-produced thinking; other providers omit it.
+export type ThinkingPart = { type: 'thinking'; text: string; textHtml?: string; signature?: string };
 export type ToolUsePart = {
 	type: 'tool_use';
 	id: string;

@@ -244,4 +244,60 @@ describe('ConversationDurableObject — resume', () => {
 		const a1 = state.messages.find((m) => m.id === 'a1')!;
 		expect(a1.error).toContain('conversation id unknown');
 	});
+
+	it('resume falls back to default_model when the streaming row has no model recorded', async () => {
+		// Regression: a streaming row whose `model` column was null (or that
+		// references a model the operator has since deleted from /settings)
+		// used to brick the conversation with "Cannot resume generation:
+		// model unknown". Now we fall back to the user's default_model and
+		// surface the swap as an info part.
+		const { createProvider } = await import('../providers/store');
+		const { createModel } = await import('../providers/models');
+		const { setSetting } = await import('../settings');
+		await createProvider(env, {
+			id: 'fallback-provider',
+			type: 'openai_compatible',
+			apiKey: 'sk-test',
+			endpoint: 'https://api.example.com/v1',
+		});
+		await createModel(env, 'fallback-provider', { id: 'fallback-model', name: 'Fallback' });
+		await setSetting(env, 'default_model', 'fallback-provider/fallback-model');
+
+		const id = await createConversation(env);
+		const stub = stubFor(id);
+		await runInDurableObject(stub, async (_instance, ctx) => {
+			ctx.storage.sql.exec(
+				"INSERT INTO messages (id, role, content, model, status, created_at) VALUES ('u1', 'user', 'hi', NULL, 'complete', 1)",
+			);
+			// Stored model column NULL — old row, or a row whose model was
+			// deleted from settings. The override-skip in #resolveResumeModel
+			// only short-circuits for non-null stored values, so this null
+			// path exercises the real fallback resolution.
+			ctx.storage.sql.exec(
+				"INSERT INTO messages (id, role, content, model, status, created_at) VALUES ('a1', 'assistant', '', NULL, 'streaming', 2)",
+			);
+			ctx.storage.sql.exec(
+				"INSERT OR REPLACE INTO _meta (key, value) VALUES ('conversation_id', ?)",
+				id,
+			);
+		});
+		// Override the LLM so the fallback model's resume call doesn't try to
+		// hit the real network.
+		await setOverride(stub, [textTurn('answered with fallback').events]);
+
+		await pokeSubscribe(stub);
+
+		const state = await waitForState(stub, (s) => s.messages.find((m) => m.id === 'a1')?.status === 'complete');
+		const a1 = state.messages.find((m) => m.id === 'a1')!;
+		expect(a1.status).toBe('complete');
+		// The row's model column was rewritten to the fallback.
+		expect(a1.model).toBe('fallback-provider/fallback-model');
+		// And a visible info part records the swap.
+		const infoParts = (a1.parts ?? []).filter((p) => p.type === 'info') as Array<{ type: 'info'; text: string }>;
+		expect(infoParts.some((p) => p.text.includes('fallback-provider/fallback-model'))).toBe(true);
+
+		await env.DB.prepare('DELETE FROM provider_models').run();
+		await env.DB.prepare('DELETE FROM providers').run();
+		await env.DB.prepare("DELETE FROM settings WHERE key = 'default_model'").run();
+	});
 });

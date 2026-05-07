@@ -101,7 +101,11 @@ export function partsToMessages(parts: MessagePart[]): Message[] {
 			asstBlocks.push({ type: 'text', text: p.text });
 		} else if (p.type === 'thinking') {
 			flushTool();
-			asstBlocks.push({ type: 'thinking', text: p.text });
+			asstBlocks.push({
+				type: 'thinking',
+				text: p.text,
+				...(p.signature ? { signature: p.signature } : {}),
+			});
 		} else if (p.type === 'tool_use') {
 			flushTool();
 			asstBlocks.push({ type: 'tool_use', id: p.id, name: p.name, input: p.input, thoughtSignature: p.thoughtSignature });

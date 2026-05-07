@@ -107,6 +107,84 @@ describe('AnthropicLLM', () => {
 		expect(thinking).toEqual({ type: 'thinking_delta', delta: 'Let me consider' });
 	});
 
+	it('emits a thinking_signature event when Anthropic delivers a signature_delta', async () => {
+		// Regression: signatures were never captured, so round-tripped thinking
+		// blocks went out with `signature: ''` and Anthropic 400'd the next
+		// turn whenever thinking was interleaved with tool calls.
+		const llm = new AnthropicLLM(
+			fakeAnthropic([
+				messageStartEvent(),
+				{
+					type: 'content_block_start',
+					index: 0,
+					content_block: { type: 'thinking', thinking: '', signature: '' },
+				} as unknown as MessageStreamEvent,
+				{
+					type: 'content_block_delta',
+					index: 0,
+					delta: { type: 'thinking_delta', thinking: 'Let me consider' },
+				} as unknown as MessageStreamEvent,
+				{
+					type: 'content_block_delta',
+					index: 0,
+					delta: { type: 'signature_delta', signature: 'auth-blob-abc' },
+				} as unknown as MessageStreamEvent,
+				{ type: 'content_block_stop', index: 0 } as unknown as MessageStreamEvent,
+				{
+					type: 'message_delta',
+					delta: { stop_reason: 'end_turn', stop_sequence: null },
+					usage: { output_tokens: 10 },
+				} as unknown as MessageStreamEvent,
+				{ type: 'message_stop' } as unknown as MessageStreamEvent,
+			]),
+			'claude-sonnet-4-5',
+		);
+		const events = await collect(llm.chat({ messages: [] }));
+		const sig = events.find((e) => e.type === 'thinking_signature');
+		expect(sig).toEqual({ type: 'thinking_signature', signature: 'auth-blob-abc' });
+	});
+
+	it('drops thinking blocks without a signature when round-tripping (defense in depth)', async () => {
+		// Regression: `blocksToAnthropic` used to fabricate `signature: ''` for
+		// signatureless thinking blocks, which Anthropic rejects. Sanitize
+		// strips them upstream now, but the adapter must also refuse to forge.
+		const capture: { params?: { messages?: Array<{ content: Array<Record<string, unknown>> }> } } = {};
+		const llm = new AnthropicLLM(
+			fakeAnthropic([{ type: 'message_stop' } as unknown as MessageStreamEvent], capture),
+			'claude-sonnet-4-5',
+		);
+		await collect(
+			llm.chat({
+				messages: [{ role: 'assistant', content: [{ type: 'thinking', text: 'planning' }] }],
+			}),
+		);
+		const blocks = capture.params?.messages?.flatMap((m) => m.content) ?? [];
+		// The thinking block had no signature, so `blocksToAnthropic` must have
+		// dropped it rather than emitting `{ signature: '' }`.
+		expect(blocks.find((b) => b.type === 'thinking')).toBeUndefined();
+	});
+
+	it('round-trips a captured thinking signature back to the SDK', async () => {
+		const capture: { params?: { messages?: Array<{ content: Array<Record<string, unknown>> }> } } = {};
+		const llm = new AnthropicLLM(
+			fakeAnthropic([{ type: 'message_stop' } as unknown as MessageStreamEvent], capture),
+			'claude-sonnet-4-5',
+		);
+		await collect(
+			llm.chat({
+				messages: [
+					{
+						role: 'assistant',
+						content: [{ type: 'thinking', text: 'planning', signature: 'auth-blob-abc' }],
+					},
+				],
+			}),
+		);
+		const blocks = capture.params?.messages?.flatMap((m) => m.content) ?? [];
+		const thinking = blocks.find((b) => b.type === 'thinking') as { signature?: string } | undefined;
+		expect(thinking?.signature).toBe('auth-blob-abc');
+	});
+
 	it('finalizes tool calls on content_block_stop', async () => {
 		const llm = new AnthropicLLM(
 			fakeAnthropic([
@@ -246,7 +324,7 @@ describe('AnthropicLLM', () => {
 			llm.chat({
 				messages: [
 					{ role: 'user', content: [{ type: 'image', mimeType: 'image/jpeg', data: 'AAA' }] },
-					{ role: 'assistant', content: [{ type: 'thinking', text: 'planning' }] },
+					{ role: 'assistant', content: [{ type: 'thinking', text: 'planning', signature: 'sig' }] },
 					{ role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'x', input: { a: 1 } }] },
 					{ role: 'tool', content: [{ type: 'tool_result', toolUseId: 't1', content: 'ok' }] },
 					{ role: 'tool', content: [{ type: 'tool_result', toolUseId: 't2', content: 'fail', isError: true }] },

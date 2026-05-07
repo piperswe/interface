@@ -31,6 +31,11 @@ export class AnthropicLLM implements LLM {
 
 	async *chat(request: ChatRequest): AsyncIterable<StreamEvent> {
 		const partialToolUses = new Map<number, { id: string; name: string; args: string }>();
+		// Track open thinking-block indices so we can fish the SDK-supplied
+		// signature out of `content_block_stop` and emit it as a
+		// `thinking_signature` event for the caller to attach to the matching
+		// `ThinkingPart`.
+		const openThinking = new Set<number>();
 		let inputTokens = 0;
 		let outputTokens = 0;
 		let cacheRead = 0;
@@ -79,6 +84,8 @@ export class AnthropicLLM implements LLM {
 							args: '',
 						});
 						yield { type: 'tool_call_delta', id: ev.content_block.id, name: ev.content_block.name };
+					} else if (ev.content_block.type === 'thinking') {
+						openThinking.add(ev.index);
 					}
 				} else if (ev.type === 'content_block_delta') {
 					const d = ev.delta;
@@ -86,6 +93,14 @@ export class AnthropicLLM implements LLM {
 						yield { type: 'text_delta', delta: d.text };
 					} else if (d.type === 'thinking_delta') {
 						yield { type: 'thinking_delta', delta: d.thinking };
+					} else if (d.type === 'signature_delta') {
+						// Anthropic delivers the thinking-block signature as a single
+						// non-incremental delta. Forward it so the caller can attach
+						// it to the matching `ThinkingPart` for round-trip on the
+						// next turn.
+						if (openThinking.has(ev.index) && d.signature) {
+							yield { type: 'thinking_signature', signature: d.signature };
+						}
 					} else if (d.type === 'input_json_delta') {
 						const partial = partialToolUses.get(ev.index);
 						if (partial) {
@@ -109,6 +124,7 @@ export class AnthropicLLM implements LLM {
 						yield { type: 'tool_call', id: partial.id, name: partial.name, input };
 						partialToolUses.delete(ev.index);
 					}
+					openThinking.delete(ev.index);
 				} else if (ev.type === 'message_delta') {
 					if (ev.delta.stop_reason) stopReason = ev.delta.stop_reason;
 					if (ev.usage?.output_tokens != null) outputTokens = ev.usage.output_tokens;
@@ -183,7 +199,12 @@ function blocksToAnthropic(blocks: ContentBlock[]): Messages.ContentBlockParam[]
 				};
 			}
 			if (b.type === 'thinking') {
-				return { type: 'thinking', thinking: b.text, signature: b.signature ?? '' };
+				// Anthropic requires a non-empty signature on round-tripped thinking
+				// blocks. Drop signature-less entries — `sanitizeHistoryForModel`
+				// strips them before this adapter runs, so this is defense in depth
+				// for legacy rows or test fixtures.
+				if (!b.signature) return null;
+				return { type: 'thinking', thinking: b.text, signature: b.signature };
 			}
 			// `file` blocks: Anthropic supports document blocks (PDF) — Phase 4 P0.6
 			// will wire those properly. Drop here for now.
