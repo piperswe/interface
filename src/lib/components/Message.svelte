@@ -267,6 +267,28 @@
 		color: var(--accent);
 	}
 
+	/* Inline citation markers — `[N]` rendered by the marked-inline-citation
+	 * extension. Small superscript pill that links to the matching entry in
+	 * the Sources block. */
+	:global(.content .citation-ref) {
+		font-size: 0.7em;
+		line-height: 0;
+		margin-left: 0.1em;
+		vertical-align: super;
+	}
+
+	:global(.content .citation-ref a) {
+		text-decoration: none;
+		padding: 0.05em 0.35em;
+		border-radius: 4px;
+		background: var(--bs-secondary-bg, rgba(127, 127, 127, 0.15));
+		color: var(--accent);
+	}
+
+	:global(.content .citation-ref a:hover) {
+		text-decoration: underline;
+	}
+
 	:global(.content hr) {
 		border: none;
 		border-top: 1px solid var(--border);
