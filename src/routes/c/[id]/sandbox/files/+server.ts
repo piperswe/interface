@@ -41,6 +41,9 @@ export const GET: RequestHandler = async ({ params, url, platform }) => {
 		}
 		for (const obj of page.objects) {
 			const rel = obj.key.slice(conversationPrefix.length);
+			// s3fs writes directory-marker objects whose keys end in "/";
+			// those render as files with an empty name in the UI. Skip them.
+			if (rel === '' || rel.endsWith('/')) continue;
 			out.push({ path: `/workspace/${rel}`, type: 'file' });
 		}
 		cursor = page.truncated ? page.cursor : undefined;
