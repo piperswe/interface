@@ -64,8 +64,8 @@ describe('sandbox/file +server.ts — GET', () => {
 	});
 
 	it('falls back to application/octet-stream for unknown extensions', async () => {
-		await bucket.put(`conversations/${VALID_ID}/binary.xyz`, 'bytes');
-		const res = await callGet(VALID_ID, 'path=/workspace/binary.xyz');
+		await bucket.put(`conversations/${VALID_ID}/binary.xyzunknown`, 'bytes');
+		const res = await callGet(VALID_ID, 'path=/workspace/binary.xyzunknown');
 		expect(res.headers.get('Content-Type')).toBe('application/octet-stream');
 	});
 
