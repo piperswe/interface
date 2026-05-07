@@ -1,9 +1,9 @@
 import { env, runInDurableObject } from 'cloudflare:test';
-import { isHttpError } from '@sveltejs/kit';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createConversation, getConversation } from '$lib/server/conversations';
 import { getConversationStub } from '$lib/server/durable_objects';
 import { createTag, addTagToConversation } from '$lib/server/tags';
+import { expectError } from '../../../../test/helpers';
 import { load } from './+page.server';
 
 // Each test uses a fresh DO id so DO state from earlier tests can't leak in.
@@ -24,16 +24,6 @@ function makeEvent(id: string, opts: { platform?: unknown } = {}): LoadEvent {
 		params: { id },
 		platform: 'platform' in opts ? opts.platform : { env },
 	} as unknown as LoadEvent;
-}
-
-async function expectError(promise: Promise<unknown>, status: number): Promise<void> {
-	try {
-		await promise;
-		throw new Error('expected error');
-	} catch (e) {
-		if (!isHttpError(e)) throw e;
-		expect(e.status).toBe(status);
-	}
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

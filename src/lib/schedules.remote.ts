@@ -1,4 +1,4 @@
-import { form, getRequestEvent } from '$app/server';
+import { form } from '$app/server';
 import { error, redirect } from '@sveltejs/kit';
 import {
 	bumpScheduleNow,
@@ -9,12 +9,7 @@ import {
 } from '$lib/server/schedules';
 import { getSchedulerStub } from '$lib/server/durable_objects';
 import { CONVERSATION_ID_PATTERN } from '$lib/conversation-id';
-
-function getEnv(): Env {
-	const event = getRequestEvent();
-	if (!event.platform) error(500, 'Cloudflare platform bindings unavailable');
-	return event.platform.env;
-}
+import { getEnv, parseFormId } from '$lib/server/remote-helpers';
 
 function parseTimeOfDay(raw: string): number | null {
 	const m = raw.match(/^(\d{2}):(\d{2})$/);
@@ -78,8 +73,7 @@ export const addSchedule = form(
 );
 
 export const removeSchedule = form('unchecked', async (data: { id?: unknown }) => {
-	const id = Number.parseInt(String(data.id ?? ''), 10);
-	if (!Number.isFinite(id) || id <= 0) error(400, 'Invalid id');
+	const id = parseFormId(data.id);
 	const env = getEnv();
 	await deleteSchedule(env, id);
 	await bumpScheduler(env);
@@ -87,8 +81,7 @@ export const removeSchedule = form('unchecked', async (data: { id?: unknown }) =
 });
 
 export const toggleSchedule = form('unchecked', async (data: { id?: unknown; enabled?: unknown }) => {
-	const id = Number.parseInt(String(data.id ?? ''), 10);
-	if (!Number.isFinite(id) || id <= 0) error(400, 'Invalid id');
+	const id = parseFormId(data.id);
 	const enabled = String(data.enabled ?? '') === 'true';
 	const env = getEnv();
 	await setScheduleEnabled(env, id, enabled);
@@ -97,8 +90,7 @@ export const toggleSchedule = form('unchecked', async (data: { id?: unknown; ena
 });
 
 export const runScheduleNow = form('unchecked', async (data: { id?: unknown }) => {
-	const id = Number.parseInt(String(data.id ?? ''), 10);
-	if (!Number.isFinite(id) || id <= 0) error(400, 'Invalid id');
+	const id = parseFormId(data.id);
 	const env = getEnv();
 	await bumpScheduleNow(env, id);
 	await bumpScheduler(env);

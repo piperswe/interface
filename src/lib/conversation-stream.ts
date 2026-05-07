@@ -186,6 +186,18 @@ export function applyModelSwitch(state: ConversationState, ev: ModelSwitchEvent)
 	return patchMessage(state, ev.messageId, (m) => ({ ...m, model: ev.model }));
 }
 
+// Defensive parse: if a single malformed payload sneaks past the wire it
+// shouldn't kill the whole stream. We log, drop the event, and let the
+// next `sync` heal any divergence.
+export function parseEventData<T>(raw: string, kind: string): T | null {
+	try {
+		return JSON.parse(raw) as T;
+	} catch (e) {
+		console.error(`conversation-stream: malformed ${kind} payload`, e);
+		return null;
+	}
+}
+
 export function attachConversationStream(
 	conversationId: string,
 	getState: () => ConversationState,
@@ -194,29 +206,31 @@ export function attachConversationStream(
 ): () => void {
 	const es = new EventSource(`/c/${conversationId}/events`);
 
-	function handle<T>(apply: (state: ConversationState, ev: T) => ConversationState) {
+	function handle<T>(apply: (state: ConversationState, ev: T) => ConversationState, kind: string) {
 		return (event: MessageEvent) => {
-			const data = JSON.parse(event.data) as T;
+			const data = parseEventData<T>(event.data, kind);
+			if (data === null) return;
 			setState(apply(getState(), data));
 		};
 	}
 
 	const onSync = (event: MessageEvent) => {
-		const data = JSON.parse(event.data) as SyncEvent;
+		const data = parseEventData<SyncEvent>(event.data, 'sync');
+		if (data === null) return;
 		const next = applySync(getState(), data);
 		if (next === 'reload') onReload();
 		else setState(next);
 	};
 
-	const onDelta = handle<DeltaEvent>(applyDelta);
-	const onThinkingDelta = handle<ThinkingDeltaEvent>(applyThinkingDelta);
-	const onToolCall = handle<ToolCallEvent>(applyToolCall);
-	const onToolResult = handle<ToolResultEvent>(applyToolResult);
-	const onToolOutput = handle<ToolOutputEvent>(applyToolOutput);
-	const onArtifact = handle<ArtifactEvent>(applyArtifact);
-	const onMeta = handle<MetaEvent>(applyMeta);
-	const onPart = handle<PartEvent>(applyPart);
-	const onModelSwitch = handle<ModelSwitchEvent>(applyModelSwitch);
+	const onDelta = handle<DeltaEvent>(applyDelta, 'delta');
+	const onThinkingDelta = handle<ThinkingDeltaEvent>(applyThinkingDelta, 'thinking_delta');
+	const onToolCall = handle<ToolCallEvent>(applyToolCall, 'tool_call');
+	const onToolResult = handle<ToolResultEvent>(applyToolResult, 'tool_result');
+	const onToolOutput = handle<ToolOutputEvent>(applyToolOutput, 'tool_output');
+	const onArtifact = handle<ArtifactEvent>(applyArtifact, 'artifact');
+	const onMeta = handle<MetaEvent>(applyMeta, 'meta');
+	const onPart = handle<PartEvent>(applyPart, 'part');
+	const onModelSwitch = handle<ModelSwitchEvent>(applyModelSwitch, 'model_switch');
 	const onRefresh = () => onReload();
 
 	es.addEventListener('sync', onSync);

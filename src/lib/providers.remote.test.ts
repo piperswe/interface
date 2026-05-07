@@ -1,12 +1,11 @@
 import { env } from 'cloudflare:test';
-import { isHttpError, isRedirect } from '@sveltejs/kit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearMockRequestEvent, setMockRequestEvent } from '../../test/shims/app-server';
+import { type AnyArgs, expectError, expectRedirect, runForm } from '../../test/helpers';
 import * as remote from './providers.remote';
 import { createProvider, getProvider, listProviders } from './server/providers/store';
 import { createModel, getModel, listAllModels, listModelsForProvider } from './server/providers/models';
 
-type AnyArgs = (...args: unknown[]) => Promise<unknown>;
 const saveProvider = remote.saveProvider as unknown as AnyArgs;
 const deleteProviderAction = remote.deleteProviderAction as unknown as AnyArgs;
 const saveProviderModel = remote.saveProviderModel as unknown as AnyArgs;
@@ -25,35 +24,6 @@ afterEach(async () => {
 	await env.DB.prepare('DELETE FROM provider_models').run();
 	await env.DB.prepare('DELETE FROM providers').run();
 });
-
-async function expectRedirect(promise: Promise<unknown>, locationStartsWith: string) {
-	try {
-		await promise;
-		throw new Error('expected redirect');
-	} catch (e) {
-		if (!isRedirect(e)) throw e;
-		expect(e.location.startsWith(locationStartsWith)).toBe(true);
-	}
-}
-
-async function expectError(promise: Promise<unknown>, status: number, msg?: RegExp) {
-	try {
-		await promise;
-		throw new Error('expected error');
-	} catch (e) {
-		if (!isHttpError(e)) throw e;
-		expect(e.status).toBe(status);
-		if (msg) expect(String(e.body.message)).toMatch(msg);
-	}
-}
-
-async function runForm(promise: Promise<unknown>): Promise<void> {
-	try {
-		await promise;
-	} catch (e) {
-		if (!isRedirect(e)) throw e;
-	}
-}
 
 describe('providers.remote — saveProvider', () => {
 	it('creates a new provider with valid id and type', async () => {

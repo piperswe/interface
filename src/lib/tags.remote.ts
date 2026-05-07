@@ -1,4 +1,4 @@
-import { command, form, getRequestEvent } from '$app/server';
+import { command, form } from '$app/server';
 import { error, redirect } from '@sveltejs/kit';
 import {
 	addTagToConversation,
@@ -8,12 +8,7 @@ import {
 	renameTag,
 } from '$lib/server/tags';
 import { CONVERSATION_ID_PATTERN } from '$lib/conversation-id';
-
-function getEnv(): Env {
-	const event = getRequestEvent();
-	if (!event.platform) error(500, 'Cloudflare platform bindings unavailable');
-	return event.platform.env;
-}
+import { getEnv, parseFormId } from '$lib/server/remote-helpers';
 
 export const addTag = form(
 	'unchecked',
@@ -34,8 +29,7 @@ export const addTag = form(
 export const renameTagForm = form(
 	'unchecked',
 	async (data: { id?: unknown; name?: unknown; color?: unknown }) => {
-		const id = Number.parseInt(String(data.id ?? ''), 10);
-		if (!Number.isFinite(id) || id <= 0) error(400, 'Invalid id');
+		const id = parseFormId(data.id);
 		const name = String(data.name ?? '').trim();
 		const color = String(data.color ?? '').trim();
 		try {
@@ -48,8 +42,7 @@ export const renameTagForm = form(
 );
 
 export const removeTag = form('unchecked', async (data: { id?: unknown }) => {
-	const id = Number.parseInt(String(data.id ?? ''), 10);
-	if (!Number.isFinite(id) || id <= 0) error(400, 'Invalid id');
+	const id = parseFormId(data.id);
 	await deleteTag(getEnv(), id);
 	redirect(303, '/settings');
 });

@@ -1,4 +1,4 @@
-import { form, getRequestEvent } from '$app/server';
+import { form } from '$app/server';
 import { error, redirect } from '@sveltejs/kit';
 import { setSetting } from '$lib/server/settings';
 import { isValidTtsVoice } from '$lib/server/tts';
@@ -13,12 +13,7 @@ import { createMemory, deleteMemory } from '$lib/server/memories';
 import { createStyle, deleteStyle, updateStyle } from '$lib/server/styles';
 import { getMcpPreset } from '$lib/server/mcp/presets';
 import { invalidateThemeCache } from '../hooks.server';
-
-function getEnv(): Env {
-	const event = getRequestEvent();
-	if (!event.platform) error(500, 'Cloudflare platform bindings unavailable');
-	return event.platform.env;
-}
+import { getEnv, parseFormId } from '$lib/server/remote-helpers';
 
 const ALLOWED_SETTING_KEYS = new Set([
 	'theme',
@@ -116,8 +111,7 @@ export const addMcpServer = form(
 );
 
 export const removeMcpServer = form('unchecked', async (data: { id?: unknown }) => {
-	const id = Number.parseInt(String(data.id ?? ''), 10);
-	if (!Number.isFinite(id) || id <= 0) error(400, 'Invalid id');
+	const id = parseFormId(data.id);
 	await deleteMcpServer(getEnv(), id);
 	redirect(303, '/settings');
 });
@@ -184,8 +178,7 @@ export const addSubAgent = form(
 );
 
 export const removeSubAgent = form('unchecked', async (data: { id?: unknown }) => {
-	const id = Number.parseInt(String(data.id ?? ''), 10);
-	if (!Number.isFinite(id) || id <= 0) error(400, 'Invalid id');
+	const id = parseFormId(data.id);
 	await deleteSubAgent(getEnv(), id);
 	redirect(303, '/settings');
 });
@@ -193,8 +186,7 @@ export const removeSubAgent = form('unchecked', async (data: { id?: unknown }) =
 export const toggleSubAgent = form(
 	'unchecked',
 	async (data: { id?: unknown; enabled?: unknown }) => {
-		const id = Number.parseInt(String(data.id ?? ''), 10);
-		if (!Number.isFinite(id) || id <= 0) error(400, 'Invalid id');
+		const id = parseFormId(data.id);
 		const enabled = String(data.enabled ?? '') === 'true';
 		await setSubAgentEnabled(getEnv(), id, enabled);
 		redirect(303, '/settings');
@@ -213,8 +205,7 @@ export const addMemory = form('unchecked', async (data: { content?: unknown }) =
 });
 
 export const removeMemory = form('unchecked', async (data: { id?: unknown }) => {
-	const id = Number.parseInt(String(data.id ?? ''), 10);
-	if (!Number.isFinite(id) || id <= 0) error(400, 'Invalid id');
+	const id = parseFormId(data.id);
 	await deleteMemory(getEnv(), id);
 	redirect(303, '/settings');
 });
@@ -238,8 +229,7 @@ export const addStyle = form(
 export const saveStyle = form(
 	'unchecked',
 	async (data: { id?: unknown; name?: unknown; system_prompt?: unknown }) => {
-		const id = Number.parseInt(String(data.id ?? ''), 10);
-		if (!Number.isFinite(id) || id <= 0) error(400, 'Invalid id');
+		const id = parseFormId(data.id);
 		const name = String(data.name ?? '').trim();
 		const systemPrompt = String(data.system_prompt ?? '');
 		if (!name) error(400, 'Name is required');
@@ -254,8 +244,7 @@ export const saveStyle = form(
 );
 
 export const removeStyle = form('unchecked', async (data: { id?: unknown }) => {
-	const id = Number.parseInt(String(data.id ?? ''), 10);
-	if (!Number.isFinite(id) || id <= 0) error(400, 'Invalid id');
+	const id = parseFormId(data.id);
 	await deleteStyle(getEnv(), id);
 	redirect(303, '/settings');
 });
@@ -285,8 +274,7 @@ export const addMcpFromPreset = form('unchecked', async (data: { preset_id?: unk
 });
 
 export const disconnectMcpServer = form('unchecked', async (data: { id?: unknown }) => {
-	const id = Number.parseInt(String(data.id ?? ''), 10);
-	if (!Number.isFinite(id) || id <= 0) error(400, 'Invalid id');
+	const id = parseFormId(data.id);
 	const env = getEnv();
 	await env.DB.prepare(
 		`UPDATE mcp_servers SET

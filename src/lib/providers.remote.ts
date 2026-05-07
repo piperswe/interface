@@ -1,16 +1,11 @@
-import { form, command, getRequestEvent } from '$app/server';
+import { form, command } from '$app/server';
 import { error, redirect } from '@sveltejs/kit';
 import { createProvider, deleteProvider, getProvider, updateProvider, isValidProviderId } from '$lib/server/providers/store';
 import { createModel, deleteModel, getModel, listModelsForProvider, updateModel, swapModelOrder } from '$lib/server/providers/models';
 import { fetchOpenRouterModels } from '$lib/server/providers/fetch';
 import { getPresetById } from '$lib/server/providers/presets';
 import type { ProviderType, ReasoningType } from '$lib/server/providers/types';
-
-function getEnv(): Env {
-	const event = getRequestEvent();
-	if (!event.platform) error(500, 'Cloudflare platform bindings unavailable');
-	return event.platform.env;
-}
+import { getEnv } from '$lib/server/remote-helpers';
 
 function validateProviderType(v: unknown): ProviderType {
 	if (v === 'anthropic' || v === 'openai_compatible') return v;

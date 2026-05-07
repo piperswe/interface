@@ -1,11 +1,11 @@
 import { env } from 'cloudflare:test';
-import { isHttpError } from '@sveltejs/kit';
 import { afterEach, describe, expect, it } from 'vitest';
 import { setSetting } from '$lib/server/settings';
 import { createMcpServer } from '$lib/server/mcp_servers';
 import { createProvider } from '$lib/server/providers/store';
 import { createModel } from '$lib/server/providers/models';
 import { createSchedule } from '$lib/server/schedules';
+import { expectError } from '../../../test/helpers';
 import { load } from './+page.server';
 
 afterEach(async () => {
@@ -23,16 +23,6 @@ function makeEvent(opts: { platform?: unknown } = {}): LoadEvent {
 	return {
 		platform: 'platform' in opts ? opts.platform : { env },
 	} as unknown as LoadEvent;
-}
-
-async function expectError(promise: Promise<unknown>, status: number): Promise<void> {
-	try {
-		await promise;
-		throw new Error('expected error');
-	} catch (e) {
-		if (!isHttpError(e)) throw e;
-		expect(e.status).toBe(status);
-	}
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

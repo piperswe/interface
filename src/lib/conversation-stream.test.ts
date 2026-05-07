@@ -11,6 +11,7 @@ import {
 	applyToolCall,
 	applyToolOutput,
 	applyToolResult,
+	parseEventData,
 	patchMessage,
 } from './conversation-stream';
 
@@ -380,5 +381,45 @@ describe('attachConversationStream', () => {
 		lastEs!.emit('refresh', null);
 		expect(onReload).toHaveBeenCalled();
 		detach();
+	});
+
+	// Regression: a malformed event payload used to throw inside the
+	// EventSource handler and silently break the stream. Now we log and
+	// drop the event so subsequent events still apply.
+	it('drops malformed event payloads without crashing', async () => {
+		const { attachConversationStream } = await import('./conversation-stream');
+		let s: ConversationState = state({ ...baseMessage, content: 'hi' });
+		const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const detach = attachConversationStream('cid', () => s, (next) => (s = next), () => {});
+
+		// Dispatch a raw, non-JSON payload to the delta listener.
+		const set = (lastEs as unknown as { listeners: Map<string, Set<Listener>> }).listeners.get('delta')!;
+		const badEvent = new MessageEvent('delta', { data: 'not json{' });
+		for (const l of set) l(badEvent);
+		expect(s.messages[0].content).toBe('hi'); // unchanged
+		expect(errSpy).toHaveBeenCalled();
+
+		// A subsequent valid event should still apply.
+		lastEs!.emit('delta', { messageId: 'm1', content: '!' });
+		expect(s.messages[0].content).toBe('hi!');
+
+		detach();
+		errSpy.mockRestore();
+	});
+});
+
+describe('parseEventData', () => {
+	it('parses valid JSON', () => {
+		expect(parseEventData<{ a: number }>('{"a":1}', 'test')).toEqual({ a: 1 });
+	});
+
+	it('returns null and logs for invalid JSON', () => {
+		const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		expect(parseEventData('garbage{', 'test')).toBeNull();
+		expect(errSpy).toHaveBeenCalledWith(
+			expect.stringMatching(/malformed test/),
+			expect.anything(),
+		);
+		errSpy.mockRestore();
 	});
 });

@@ -1,11 +1,11 @@
 import { env } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { clearMockRequestEvent, setMockRequestEvent } from '../../test/shims/app-server';
+import { type AnyArgs } from '../../test/helpers';
 import * as remote from './search.remote';
 import { createConversation } from './server/conversations';
 import { indexMessage, indexTitle } from './server/search';
 
-type AnyArgs = (...args: unknown[]) => Promise<unknown>;
 const searchConversations = remote.searchConversations as unknown as AnyArgs;
 
 type SearchHit = {

@@ -1,12 +1,11 @@
 import { env } from 'cloudflare:test';
-import { isHttpError, isRedirect } from '@sveltejs/kit';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { clearMockRequestEvent, setMockRequestEvent } from '../../test/shims/app-server';
+import { type AnyArgs, expectError, expectRedirect, runForm } from '../../test/helpers';
 import * as remote from './tags.remote';
 import { createConversation } from './server/conversations';
 import { listTags, tagsForConversation } from './server/tags';
 
-type AnyArgs = (...args: unknown[]) => Promise<unknown>;
 const addTag = remote.addTag as unknown as AnyArgs;
 const renameTagForm = remote.renameTagForm as unknown as AnyArgs;
 const removeTag = remote.removeTag as unknown as AnyArgs;
@@ -23,37 +22,6 @@ afterEach(async () => {
 	await env.DB.prepare('DELETE FROM tags').run();
 	await env.DB.prepare('DELETE FROM conversations').run();
 });
-
-async function expectRedirect(promise: Promise<unknown>, locationStartsWith: string) {
-	try {
-		await promise;
-		throw new Error('expected redirect');
-	} catch (e) {
-		if (!isRedirect(e)) throw e;
-		expect(e.location.startsWith(locationStartsWith)).toBe(true);
-	}
-}
-
-async function expectError(promise: Promise<unknown>, status: number, msg?: RegExp) {
-	try {
-		await promise;
-		throw new Error('expected error');
-	} catch (e) {
-		if (!isHttpError(e)) throw e;
-		expect(e.status).toBe(status);
-		if (msg) expect(String(e.body.message)).toMatch(msg);
-	}
-}
-
-// Helper for setup: a form action's redirect is expected, but we don't care
-// where it redirects to. Swallows the redirect and re-throws anything else.
-async function runForm(promise: Promise<unknown>): Promise<void> {
-	try {
-		await promise;
-	} catch (e) {
-		if (!isRedirect(e)) throw e;
-	}
-}
 
 describe('tags.remote — addTag', () => {
 	it('persists a tag and redirects to /settings by default', async () => {

@@ -1,8 +1,8 @@
 import { env, runInDurableObject } from 'cloudflare:test';
-import { isHttpError } from '@sveltejs/kit';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createConversation } from '$lib/server/conversations';
 import { getConversationStub } from '$lib/server/durable_objects';
+import { expectError } from '../../../../../test/helpers';
 import { GET } from './+server';
 
 afterEach(async () => {
@@ -18,16 +18,6 @@ async function callGet(conversationId: string, opts?: { platform?: unknown }): P
 		request: new Request(url.toString()),
 	} as Parameters<typeof GET>[0];
 	return GET(event);
-}
-
-async function expectError(promise: Promise<unknown>, status: number): Promise<void> {
-	try {
-		await promise;
-		throw new Error('expected error');
-	} catch (e) {
-		if (!isHttpError(e)) throw e;
-		expect(e.status).toBe(status);
-	}
 }
 
 describe('events +server.ts — GET (SSE proxy)', () => {

@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:test';
-import { isHttpError } from '@sveltejs/kit';
 import { afterEach, describe, expect, it } from 'vitest';
+import { expectError } from '../../../../../../test/helpers';
 import { POST } from './+server';
 
 const VALID_ID = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
@@ -43,16 +43,6 @@ async function callPost(
 		request,
 	} as Parameters<typeof POST>[0];
 	return POST(event);
-}
-
-async function expectError(promise: Promise<unknown>, status: number): Promise<void> {
-	try {
-		await promise;
-		throw new Error('expected error');
-	} catch (e) {
-		if (!isHttpError(e)) throw e;
-		expect(e.status).toBe(status);
-	}
 }
 
 describe('sandbox/upload +server.ts — POST', () => {

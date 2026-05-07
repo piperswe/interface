@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:test';
-import { isHttpError } from '@sveltejs/kit';
 import { afterEach, describe, expect, it } from 'vitest';
+import { expectError } from '../../../../../../test/helpers';
 import { GET } from './+server';
 
 const VALID_ID = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
@@ -30,16 +30,6 @@ async function callGet(conversationId: string, search: string): Promise<Response
 		request: new Request(url.toString()),
 	} as Parameters<typeof GET>[0];
 	return GET(event);
-}
-
-async function expectError(promise: Promise<unknown>, status: number): Promise<void> {
-	try {
-		await promise;
-		throw new Error('expected error');
-	} catch (e) {
-		if (!isHttpError(e)) throw e;
-		expect(e.status).toBe(status);
-	}
 }
 
 describe('sandbox/files +server.ts — GET', () => {

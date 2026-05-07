@@ -1,8 +1,9 @@
 import { env } from 'cloudflare:test';
-import { isHttpError, isRedirect } from '@sveltejs/kit';
+import { isRedirect } from '@sveltejs/kit';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createMcpServer, getMcpServer, setMcpServerOauthClient } from '$lib/server/mcp_servers';
 import { now as nowMs } from '$lib/server/clock';
+import { expectError } from '../../../../../../test/helpers';
 import { GET } from './+server';
 
 afterEach(async () => {
@@ -22,6 +23,8 @@ async function callGet(idParam: string): Promise<Response> {
 	return GET(event);
 }
 
+// Local variant: returns the redirect Location as a URL so the test can assert
+// against query params. The shared `expectRedirect` only checks the prefix.
 async function expectRedirect(promise: Promise<unknown>): Promise<URL> {
 	try {
 		await promise;
@@ -29,17 +32,6 @@ async function expectRedirect(promise: Promise<unknown>): Promise<URL> {
 	} catch (e) {
 		if (!isRedirect(e)) throw e;
 		return new URL(e.location);
-	}
-}
-
-async function expectError(promise: Promise<unknown>, status: number, msg?: RegExp): Promise<void> {
-	try {
-		await promise;
-		throw new Error('expected error');
-	} catch (e) {
-		if (!isHttpError(e)) throw e;
-		expect(e.status).toBe(status);
-		if (msg) expect(String(e.body.message)).toMatch(msg);
 	}
 }
 

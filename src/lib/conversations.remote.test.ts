@@ -1,13 +1,15 @@
 import { env } from 'cloudflare:test';
-import { isHttpError, isRedirect } from '@sveltejs/kit';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { clearMockRequestEvent, setMockRequestEvent } from '../../test/shims/app-server';
+import { type AnyArgs, expectError, expectRedirect } from '../../test/helpers';
 import * as remote from './conversations.remote';
+import {
+	createConversation,
+	getConversation,
+	listArchivedConversations,
+	listConversations,
+} from './server/conversations';
 
-// The remote functions are typed as opaque `RemoteForm`/`RemoteCommand`s by
-// SvelteKit. Under the test alias for `$app/server` they're plain callables
-// (see test/shims/app-server.ts), so we cast through `unknown` once.
-type AnyArgs = (...args: unknown[]) => Promise<unknown>;
 const archive = remote.archive as unknown as AnyArgs;
 const createNewConversation = remote.createNewConversation as unknown as AnyArgs;
 const destroyConv = remote.destroy as unknown as AnyArgs;
@@ -17,12 +19,6 @@ const setThinkingBudget = remote.setThinkingBudget as unknown as AnyArgs;
 const setConversationSystemPrompt = remote.setConversationSystemPrompt as unknown as AnyArgs;
 const setConversationStyle = remote.setConversationStyle as unknown as AnyArgs;
 const unarchive = remote.unarchive as unknown as AnyArgs;
-import {
-	createConversation,
-	getConversation,
-	listArchivedConversations,
-	listConversations,
-} from './server/conversations';
 
 beforeEach(() => {
 	setMockRequestEvent({ platform: { env } });
@@ -32,27 +28,6 @@ afterEach(async () => {
 	clearMockRequestEvent();
 	await env.DB.prepare('DELETE FROM conversations').run();
 });
-
-async function expectRedirect(promise: Promise<unknown>, locationStartsWith: string) {
-	try {
-		await promise;
-		throw new Error('expected redirect');
-	} catch (e) {
-		if (!isRedirect(e)) throw e;
-		expect(e.location.startsWith(locationStartsWith)).toBe(true);
-	}
-}
-
-async function expectError(promise: Promise<unknown>, status: number, msg?: RegExp) {
-	try {
-		await promise;
-		throw new Error('expected error');
-	} catch (e) {
-		if (!isHttpError(e)) throw e;
-		expect(e.status).toBe(status);
-		if (msg) expect(String(e.body.message)).toMatch(msg);
-	}
-}
 
 describe('createNewConversation', () => {
 	it('creates a row and returns the new id', async () => {

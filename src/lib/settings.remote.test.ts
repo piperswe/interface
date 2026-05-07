@@ -1,13 +1,13 @@
 import { env } from 'cloudflare:test';
-import { isHttpError, isRedirect } from '@sveltejs/kit';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { clearMockRequestEvent, setMockRequestEvent } from '../../test/shims/app-server';
+import { type AnyArgs, expectError, expectRedirect, runForm } from '../../test/helpers';
 import * as remote from './settings.remote';
+import { getSetting } from './server/settings';
+import { listMcpServers, setMcpServerOauthClient, setMcpServerOauthTokens } from './server/mcp_servers';
+import { listMemories } from './server/memories';
+import { listStyles, getStyle } from './server/styles';
 
-// The remote functions are typed as opaque `RemoteForm`s by SvelteKit. Under
-// the test alias for `$app/server` they're plain callables (see
-// test/shims/app-server.ts), so we cast through `unknown` once.
-type AnyArgs = (...args: unknown[]) => Promise<unknown>;
 const saveSetting = remote.saveSetting as unknown as AnyArgs;
 const addMcpServer = remote.addMcpServer as unknown as AnyArgs;
 const removeMcpServer = remote.removeMcpServer as unknown as AnyArgs;
@@ -18,10 +18,6 @@ const saveStyle = remote.saveStyle as unknown as AnyArgs;
 const removeStyle = remote.removeStyle as unknown as AnyArgs;
 const addMcpFromPreset = remote.addMcpFromPreset as unknown as AnyArgs;
 const disconnectMcpServer = remote.disconnectMcpServer as unknown as AnyArgs;
-import { getSetting } from './server/settings';
-import { listMcpServers, setMcpServerOauthClient, setMcpServerOauthTokens } from './server/mcp_servers';
-import { listMemories } from './server/memories';
-import { listStyles, getStyle } from './server/styles';
 
 beforeEach(() => {
 	setMockRequestEvent({ platform: { env } });
@@ -34,27 +30,6 @@ afterEach(async () => {
 	await env.DB.prepare('DELETE FROM memories').run();
 	await env.DB.prepare('DELETE FROM styles').run();
 });
-
-async function expectRedirect(promise: Promise<unknown>, locationStartsWith: string) {
-	try {
-		await promise;
-		throw new Error('expected redirect');
-	} catch (e) {
-		if (!isRedirect(e)) throw e;
-		expect(e.location.startsWith(locationStartsWith)).toBe(true);
-	}
-}
-
-async function expectError(promise: Promise<unknown>, status: number, msg?: RegExp) {
-	try {
-		await promise;
-		throw new Error('expected error');
-	} catch (e) {
-		if (!isHttpError(e)) throw e;
-		expect(e.status).toBe(status);
-		if (msg) expect(String(e.body.message)).toMatch(msg);
-	}
-}
 
 describe('saveSetting', () => {
 	it('persists allowed settings and redirects', async () => {
@@ -181,10 +156,7 @@ describe('addMcpServer', () => {
 
 describe('removeMcpServer', () => {
 	it('deletes the row and redirects', async () => {
-		await addMcpServer({ name: 'x', transport: 'http', url: 'https://x.example' }).catch((e) => {
-			// addMcpServer throws a redirect — ignore.
-			if (!isRedirect(e)) throw e;
-		});
+		await runForm(addMcpServer({ name: 'x', transport: 'http', url: 'https://x.example' }) as Promise<unknown>);
 		const [row] = await listMcpServers(env);
 		await expectRedirect(removeMcpServer({ id: String(row.id) }) as Promise<unknown>, '/settings');
 		expect(await listMcpServers(env)).toEqual([]);
@@ -212,9 +184,7 @@ describe('addMemory / removeMemory', () => {
 	});
 
 	it('removes by id', async () => {
-		await addMemory({ content: 'gone' }).catch((e) => {
-			if (!isRedirect(e)) throw e;
-		});
+		await runForm(addMemory({ content: 'gone' }) as Promise<unknown>);
 		const [m] = await listMemories(env);
 		await expectRedirect(removeMemory({ id: String(m.id) }) as Promise<unknown>, '/settings');
 		expect(await listMemories(env)).toEqual([]);
@@ -250,9 +220,7 @@ describe('addStyle / saveStyle / removeStyle', () => {
 	});
 
 	it('saveStyle updates name + prompt', async () => {
-		await addStyle({ name: 'A', system_prompt: 'p' }).catch((e) => {
-			if (!isRedirect(e)) throw e;
-		});
+		await runForm(addStyle({ name: 'A', system_prompt: 'p' }) as Promise<unknown>);
 		const [s] = await listStyles(env);
 		await expectRedirect(
 			saveStyle({ id: String(s.id), name: 'B', system_prompt: 'q' }) as Promise<unknown>,
@@ -265,9 +233,7 @@ describe('addStyle / saveStyle / removeStyle', () => {
 	it('saveStyle rejects bad input', async () => {
 		await expectError(saveStyle({ id: '0', name: 'x', system_prompt: 'y' }) as Promise<unknown>, 400);
 		// Force an existing row, then submit empty name
-		await addStyle({ name: 'A', system_prompt: 'p' }).catch((e) => {
-			if (!isRedirect(e)) throw e;
-		});
+		await runForm(addStyle({ name: 'A', system_prompt: 'p' }) as Promise<unknown>);
 		const [s] = await listStyles(env);
 		await expectError(
 			saveStyle({ id: String(s.id), name: '', system_prompt: 'y' }) as Promise<unknown>,
@@ -277,9 +243,7 @@ describe('addStyle / saveStyle / removeStyle', () => {
 	});
 
 	it('removeStyle clears the row and any conversation references', async () => {
-		await addStyle({ name: 'A', system_prompt: 'p' }).catch((e) => {
-			if (!isRedirect(e)) throw e;
-		});
+		await runForm(addStyle({ name: 'A', system_prompt: 'p' }) as Promise<unknown>);
 		const [s] = await listStyles(env);
 		await env.DB.prepare(
 			"INSERT INTO conversations (id, title, created_at, updated_at, style_id) VALUES (?, 'c', 1, 1, ?)",
@@ -319,10 +283,8 @@ describe('addMcpFromPreset', () => {
 describe('disconnectMcpServer', () => {
 	it('clears OAuth tokens and disables the row', async () => {
 		// Seed a server with OAuth client + access token.
-		await addMcpServer({ name: 'gh', transport: 'http', url: 'https://api.github.example/mcp' }).catch(
-			(e) => {
-				if (!isRedirect(e)) throw e;
-			},
+		await runForm(
+			addMcpServer({ name: 'gh', transport: 'http', url: 'https://api.github.example/mcp' }) as Promise<unknown>,
 		);
 		const [row] = await listMcpServers(env);
 		await setMcpServerOauthClient(env, row.id, {

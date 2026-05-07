@@ -1,14 +1,9 @@
-import { command, form, getRequestEvent } from '$app/server';
+import { command, form } from '$app/server';
 import { error, redirect } from '@sveltejs/kit';
 import { archiveConversation, createConversation, deleteConversation, unarchiveConversation } from '$lib/server/conversations';
 import { getConversationStub } from '$lib/server/durable_objects';
 import { CONVERSATION_ID_PATTERN } from '$lib/conversation-id';
-
-function getEnv(): Env {
-	const event = getRequestEvent();
-	if (!event.platform) error(500, 'Cloudflare platform bindings unavailable');
-	return event.platform.env;
-}
+import { getEnv, safeRedirectTo } from '$lib/server/remote-helpers';
 
 function stubFor(id: string) {
 	if (!CONVERSATION_ID_PATTERN.test(id)) error(400, `invalid conversation id: ${id}`);
@@ -116,12 +111,7 @@ export const archive = form('unchecked', async (data: { conversationId?: unknown
 	const id = String(data.conversationId ?? '');
 	if (!CONVERSATION_ID_PATTERN.test(id)) error(400, `invalid conversation id: ${id}`);
 	await archiveConversation(getEnv(), id);
-	// Restrict to same-origin paths so a malicious form post can't turn this
-	// into an open redirect. `//host` and `/\host` would otherwise be valid
-	// protocol-relative URLs to the browser.
-	const raw = String(data.redirectTo ?? '/');
-	const location = raw.startsWith('/') && !raw.startsWith('//') && !raw.startsWith('/\\') ? raw : '/';
-	redirect(303, location);
+	redirect(303, safeRedirectTo(data.redirectTo, '/'));
 });
 
 // Form: unarchive a conversation. Reverses `archive`.

@@ -1,12 +1,11 @@
 import { env, runInDurableObject } from 'cloudflare:test';
-import { isHttpError, isRedirect } from '@sveltejs/kit';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { clearMockRequestEvent, setMockRequestEvent } from '../../test/shims/app-server';
+import { type AnyArgs, expectError, expectRedirect, runForm } from '../../test/helpers';
 import * as remote from './schedules.remote';
 import { listSchedules } from './server/schedules';
 import { getSchedulerStub } from './server/durable_objects';
 
-type AnyArgs = (...args: unknown[]) => Promise<unknown>;
 const addSchedule = remote.addSchedule as unknown as AnyArgs;
 const removeSchedule = remote.removeSchedule as unknown as AnyArgs;
 const toggleSchedule = remote.toggleSchedule as unknown as AnyArgs;
@@ -27,35 +26,6 @@ afterEach(async () => {
 		await ctx.storage.deleteAlarm();
 	});
 });
-
-async function expectRedirect(promise: Promise<unknown>, locationStartsWith: string) {
-	try {
-		await promise;
-		throw new Error('expected redirect');
-	} catch (e) {
-		if (!isRedirect(e)) throw e;
-		expect(e.location.startsWith(locationStartsWith)).toBe(true);
-	}
-}
-
-async function expectError(promise: Promise<unknown>, status: number, msg?: RegExp) {
-	try {
-		await promise;
-		throw new Error('expected error');
-	} catch (e) {
-		if (!isHttpError(e)) throw e;
-		expect(e.status).toBe(status);
-		if (msg) expect(String(e.body.message)).toMatch(msg);
-	}
-}
-
-async function runForm(promise: Promise<unknown>): Promise<void> {
-	try {
-		await promise;
-	} catch (e) {
-		if (!isRedirect(e)) throw e;
-	}
-}
 
 async function readSchedulerAlarm(): Promise<number | null> {
 	const stub = getSchedulerStub(env);
