@@ -95,6 +95,22 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	// calls; without this, a late flush could clobber the canonical final
 	// row with a stale snapshot.
 	#flushPromise: Promise<void> | null = null;
+	// Number of long-running operations currently in flight on this DO.
+	// While > 0, the alarm() handler refreshes the heartbeat alarm so
+	// Cloudflare can't evict the DO before work finishes; on transition
+	// to 0 we delete the alarm so the DO hibernates. A counter (rather
+	// than a bool) tolerates concurrent callers — e.g. a regenerateTitle
+	// racing with a compactContext.
+	#activeWorkCount = 0;
+	// In-memory flag distinguishing a heartbeat-driven alarm from the
+	// constructor's eviction-recovery alarm. On a fresh activation
+	// (eviction during work) this resets to false, so alarm() falls
+	// through to #detectAndResume() — exactly the legacy behaviour.
+	#heartbeatActive = false;
+	// Heartbeat interval. 30s comfortably covers a typical streaming
+	// chunk gap; tool calls that exceed it get an in-loop refresh in
+	// #generate.
+	static readonly #HEARTBEAT_MS = 30_000;
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -113,10 +129,50 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		});
 	}
 
-	// Cloudflare invokes this when a previously-set alarm fires. Used as the
-	// no-traffic backstop for resume — see the constructor's comment.
+	// Cloudflare invokes this when a previously-set alarm fires. Two roles:
+	// (a) heartbeat — while work is in flight on this activation, refresh
+	//     the alarm so the runtime can't evict the DO before the next tick.
+	// (b) eviction-recovery backstop — if the DO died with a streaming row
+	//     (constructor schedules a +200ms alarm) or simply has nothing to
+	//     do, fall through to the existing resume path.
 	async alarm(): Promise<void> {
+		if (this.#heartbeatActive && this.#activeWorkCount > 0) {
+			await this.#scheduleHeartbeat();
+			return;
+		}
 		await this.#detectAndResume();
+	}
+
+	// A scheduled alarm prevents Cloudflare from evicting the DO until it
+	// fires, so we use one as a heartbeat: re-arm it every 30s while work
+	// is running, delete it when work ends. Callers of long-running ops
+	// own the begin/end pairs; #generate refreshes mid-loop because
+	// individual tool calls can exceed the heartbeat interval.
+	async #scheduleHeartbeat(): Promise<void> {
+		this.#heartbeatActive = true;
+		await this.ctx.storage.setAlarm(Date.now() + ConversationDurableObject.#HEARTBEAT_MS);
+	}
+
+	async #beginWork(): Promise<void> {
+		this.#activeWorkCount++;
+		await this.#scheduleHeartbeat();
+	}
+
+	async #endWork(): Promise<void> {
+		if (this.#activeWorkCount > 0) this.#activeWorkCount--;
+		if (this.#activeWorkCount === 0) {
+			this.#heartbeatActive = false;
+			// Don't clobber a constructor-scheduled eviction-recovery alarm:
+			// if a streaming row still exists, leave the alarm in place so
+			// the no-traffic resume path can fire.
+			const interrupted = execRows<{ id: string }>(
+				this.#sql,
+				"SELECT id FROM messages WHERE status = 'streaming' LIMIT 1",
+			);
+			if (interrupted.length === 0) {
+				await this.ctx.storage.deleteAlarm();
+			}
+		}
 	}
 
 	// `_meta` is a key/value table populated by migration 1. We piggy-back
@@ -412,19 +468,24 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 
 	async regenerateTitle(conversationId: string): Promise<void> {
 		this.#setConversationId(conversationId);
-		const history = execRows<{ role: string; content: string }>(
-			this.#sql,
-			`SELECT role, content FROM messages WHERE ${COMPLETE_PREDICATE} ORDER BY created_at ASC`,
-		);
-		const transcript = history.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n\n');
-		await writeTitle(
-			this.env,
-			conversationId,
-			transcript.slice(0, 4000),
-			{ systemPrompt: TITLE_REGEN_SYSTEM_PROMPT, onlyIfDefault: false },
-			{ routeLLM: (id, opts) => this.#routeLLM(id, opts), getContext: () => this.#getContext() },
-		);
-		this.#subscribers.broadcast('refresh', {});
+		await this.#beginWork();
+		try {
+			const history = execRows<{ role: string; content: string }>(
+				this.#sql,
+				`SELECT role, content FROM messages WHERE ${COMPLETE_PREDICATE} ORDER BY created_at ASC`,
+			);
+			const transcript = history.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n\n');
+			await writeTitle(
+				this.env,
+				conversationId,
+				transcript.slice(0, 4000),
+				{ systemPrompt: TITLE_REGEN_SYSTEM_PROMPT, onlyIfDefault: false },
+				{ routeLLM: (id, opts) => this.#routeLLM(id, opts), getContext: () => this.#getContext() },
+			);
+			this.#subscribers.broadcast('refresh', {});
+		} finally {
+			await this.#endWork();
+		}
 	}
 
 	async setThinkingBudget(conversationId: string, budget: number | null): Promise<void> {
@@ -490,55 +551,60 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		this.#setConversationId(conversationId);
 		if (this.#inProgress || this.#resumePromise) return { compacted: false, droppedCount: 0 };
 
-		const lastModelRow = execRows<{ model: string | null }>(
-			this.#sql,
-			`SELECT model FROM messages WHERE role = 'assistant' AND ${COMPLETE_PREDICATE} ORDER BY created_at DESC LIMIT 1`,
-		);
-		const model = lastModelRow[0]?.model;
-		if (!model) return { compacted: false, droppedCount: 0 };
+		await this.#beginWork();
+		try {
+			const lastModelRow = execRows<{ model: string | null }>(
+				this.#sql,
+				`SELECT model FROM messages WHERE role = 'assistant' AND ${COMPLETE_PREDICATE} ORDER BY created_at DESC LIMIT 1`,
+			);
+			const model = lastModelRow[0]?.model;
+			if (!model) return { compacted: false, droppedCount: 0 };
 
-		const historyRaw = execRows<{ id: string; role: string; content: string; parts: string | null }>(
-			this.#sql,
-			`SELECT id, role, content, parts FROM messages WHERE ${COMPLETE_PREDICATE} ORDER BY created_at ASC`,
-		);
-		const history = await hydrateRowParts(historyRaw, this.env);
+			const historyRaw = execRows<{ id: string; role: string; content: string; parts: string | null }>(
+				this.#sql,
+				`SELECT id, role, content, parts FROM messages WHERE ${COMPLETE_PREDICATE} ORDER BY created_at ASC`,
+			);
+			const history = await hydrateRowParts(historyRaw, this.env);
 
-		const { messages, rowIdAtIndex: rowIdAtLLMIndex } = buildHistoryWithRowIds(history);
+			const { messages, rowIdAtIndex: rowIdAtLLMIndex } = buildHistoryWithRowIds(history);
 
-		const compaction = await compactHistory(messages, model, this.env, null, {}, true);
-		if (!compaction.wasCompacted || !compaction.summary) return { compacted: false, droppedCount: 0 };
+			const compaction = await compactHistory(messages, model, this.env, null, {}, true);
+			if (!compaction.wasCompacted || !compaction.summary) return { compacted: false, droppedCount: 0 };
 
-		// Map dropped LLM message count to DB row IDs to soft-delete.
-		const rowsToDelete = new Set<string>();
-		let llmCount = 0;
-		for (const rowId of rowIdAtLLMIndex) {
-			if (llmCount >= compaction.droppedCount) break;
-			rowsToDelete.add(rowId);
-			llmCount++;
+			// Map dropped LLM message count to DB row IDs to soft-delete.
+			const rowsToDelete = new Set<string>();
+			let llmCount = 0;
+			for (const rowId of rowIdAtLLMIndex) {
+				if (llmCount >= compaction.droppedCount) break;
+				rowsToDelete.add(rowId);
+				llmCount++;
+			}
+
+			const now = nowMs();
+			for (const id of rowsToDelete) {
+				this.#sql.exec('UPDATE messages SET deleted_at = ? WHERE id = ?', now, id);
+			}
+
+			// Insert a visible info message summarising what was compacted.
+			const summaryId = uuid();
+			const infoPart: MessagePart = {
+				type: 'info',
+				text: `Context compacted: summarized ${rowsToDelete.size} earlier messages. Summary: ${compaction.summary}`,
+			};
+			this.#sql.exec(
+				"INSERT INTO messages (id, role, content, model, status, parts, created_at) VALUES (?, 'assistant', ?, ?, 'complete', ?, ?)",
+				summaryId,
+				compaction.summary,
+				model,
+				await partsToJson([infoPart], this.env, this.#uploadedBlobHashes),
+				now + 1,
+			);
+
+			this.#subscribers.broadcast('refresh', {});
+			return { compacted: true, droppedCount: rowsToDelete.size };
+		} finally {
+			await this.#endWork();
 		}
-
-		const now = nowMs();
-		for (const id of rowsToDelete) {
-			this.#sql.exec('UPDATE messages SET deleted_at = ? WHERE id = ?', now, id);
-		}
-
-		// Insert a visible info message summarising what was compacted.
-		const summaryId = uuid();
-		const infoPart: MessagePart = {
-			type: 'info',
-			text: `Context compacted: summarized ${rowsToDelete.size} earlier messages. Summary: ${compaction.summary}`,
-		};
-		this.#sql.exec(
-			"INSERT INTO messages (id, role, content, model, status, parts, created_at) VALUES (?, 'assistant', ?, ?, 'complete', ?, ?)",
-			summaryId,
-			compaction.summary,
-			model,
-			await partsToJson([infoPart], this.env, this.#uploadedBlobHashes),
-			now + 1,
-		);
-
-		this.#subscribers.broadcast('refresh', {});
-		return { compacted: true, droppedCount: rowsToDelete.size };
 	}
 
 	// Wipe all DO storage. Cloudflare doesn't expose a "delete this DO from
@@ -733,6 +799,11 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	async #generate(conversationId: string, assistantId: string, model: string): Promise<void> {
 		const ip = this.#inProgress!;
 		ip.startedAt = nowMs();
+		// Heartbeat: while #generate is running, keep an alarm scheduled so
+		// Cloudflare can't evict the DO mid-stream. All exit paths below
+		// (success / error / abort early-returns) call #endWork() to clear
+		// the alarm and let the DO hibernate.
+		await this.#beginWork();
 
 		// Live mirror of the turn lives on `this.#inProgress.parts` so a
 		// resubscribing client can pick up the timeline as it stands. We
@@ -898,6 +969,9 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			let resolvedForRoute: ResolvedModel | null = resolved;
 			let hitIterationCap = false;
 			for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+				// Slide the heartbeat alarm forward each iteration; a single
+				// LLM streaming round + tool call can exceed 30s.
+				await this.#scheduleHeartbeat();
 				const turnToolCalls: RecordedToolCall[] = [];
 				let turnText = '';
 				let providerError: string | null = null;
@@ -1037,6 +1111,10 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 					// post-exec result, and don't cancel an unrelated message's
 					// flush timer.
 					if (!this.#inProgress || this.#inProgress.messageId !== assistantId) break;
+					// Long-running tool just returned — refresh the heartbeat
+					// alarm so the next iteration's setup work has a full
+					// 30s window before the runtime can evict.
+					await this.#scheduleHeartbeat();
 					const callEndedAt = nowMs();
 					// Swap the preliminary streaming part for the final result.
 					const partsIdx = parts.findIndex((p) => p.type === 'tool_result' && p.toolUseId === call.id);
@@ -1150,6 +1228,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			if (!this.#inProgress || this.#inProgress.messageId !== assistantId) {
 				// Aborted by user — don't overwrite the row already persisted by abortGeneration.
 				await this.#cancelFlush();
+				await this.#endWork();
 				return;
 			}
 			// Cancel any pending debounced flush so a stale write doesn't land
@@ -1197,10 +1276,12 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 				this.#subscribers.broadcast('part', { messageId: assistantId, part: citationsPart });
 			}
 			this.#subscribers.broadcast('refresh', {});
+			await this.#endWork();
 		} catch (e) {
 			if (!this.#inProgress || this.#inProgress.messageId !== assistantId) {
 				// Already aborted and cleaned up by abortGeneration.
 				await this.#cancelFlush();
+				await this.#endWork();
 				return;
 			}
 			await this.#cancelFlush();
@@ -1217,6 +1298,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			);
 			this.#inProgress = null;
 			this.#subscribers.broadcast('refresh', {});
+			await this.#endWork();
 		}
 	}
 
