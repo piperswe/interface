@@ -7,6 +7,7 @@ import type LLM from '../llm/LLM';
 import type { ChatRequest, ContentBlock, Message, StreamEvent, ToolDefinition, Usage } from '../llm/LLM';
 import type { ToolCitation } from '../tools/registry';
 import { listMcpServers } from '../mcp_servers';
+import { listCustomTools } from '../custom_tools';
 import { listSubAgents } from '../sub_agents';
 import { listMemories } from '../memories';
 import { listStyles } from '../styles';
@@ -1308,7 +1309,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	async #getContext(): Promise<ConversationContext> {
 		const cached = this.#contextCache;
 		if (cached && nowMs() - cached.fetchedAt < CONTEXT_CACHE_TTL_MS) return cached.context;
-		const [systemPrompt, userBio, allModels, subAgents, mcpServers, memories, styles] = await Promise.all([
+		const [systemPrompt, userBio, allModels, subAgents, mcpServers, memories, styles, customTools] = await Promise.all([
 			getSystemPrompt(this.env),
 			getUserBio(this.env),
 			listAllModels(this.env),
@@ -1316,6 +1317,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			listMcpServers(this.env),
 			listMemories(this.env),
 			listStyles(this.env),
+			listCustomTools(this.env),
 		]);
 		const context: ConversationContext = {
 			systemPrompt,
@@ -1325,6 +1327,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			mcpServers,
 			memories,
 			styles,
+			customTools,
 		};
 		this.#contextCache = { fetchedAt: nowMs(), context };
 		return context;

@@ -13,12 +13,15 @@ import { createSwitchModelTool } from '../../tools/switch_model';
 import { createRememberTool } from '../../tools/remember';
 import { registerSandboxTools } from '../../tools/sandbox';
 import { runJsTool } from '../../tools/run_js';
+import { buildCustomTool } from '../../tools/custom_tool_runner';
+import { customToolMetaTools } from '../../tools/custom_tools_meta';
 import { buildGlobalModelId } from '../../providers/types';
 import type { McpServerRow, McpToolDescriptor } from '../../mcp/types';
 import type { ProviderModel } from '../../providers/types';
 import type { SubAgentRow } from '../../sub_agents';
 import type { MemoryRow } from '../../memories';
 import type { StyleRow } from '../../styles';
+import type { CustomToolRow } from '../../custom_tools';
 import { now as nowMs } from '../../clock';
 
 export const MCP_TOOL_CACHE_TTL_MS = 60_000;
@@ -38,15 +41,17 @@ export type ConversationContext = {
 	mcpServers: McpServerRow[];
 	memories: MemoryRow[];
 	styles: StyleRow[];
+	customTools: CustomToolRow[];
 };
 
-// Base registry — built-in tools + MCP. Used directly for the parent
-// loop (extended in `buildToolRegistry` with the `agent` tool) and re-built
-// fresh per sub-agent invocation as the inner tool set.
+// Base registry — built-in tools + MCP + custom tools. Used directly for the
+// parent loop (extended in `buildToolRegistry` with the `agent` tool) and
+// re-built fresh per sub-agent invocation as the inner tool set.
 export async function buildBaseToolRegistry(
 	env: Env,
 	mcpCache: McpCache,
 	mcpServers: McpServerRow[],
+	customTools: CustomToolRow[] = [],
 	getModels?: () => ProviderModel[],
 ): Promise<ToolRegistry> {
 	const registry = new ToolRegistry();
@@ -81,13 +86,25 @@ export async function buildBaseToolRegistry(
 	}
 	if (env.RUN_JS_LOADER) {
 		registry.register(runJsTool);
+		// Custom tools run in `RUN_JS_LOADER` isolates, and the meta tools let
+		// the agent author them. Both require the loader binding.
+		for (const row of customTools.filter((t) => t.enabled)) {
+			try {
+				registry.register(buildCustomTool(row));
+			} catch {
+				// One bad tool definition shouldn't take down the whole turn.
+			}
+		}
+		for (const tool of customToolMetaTools) {
+			registry.register(tool);
+		}
 	}
 	return registry;
 }
 
 export async function buildToolRegistry(env: Env, mcpCache: McpCache, model: string, context: ConversationContext): Promise<ToolRegistry> {
 	const getModels = () => context.allModels;
-	const registry = await buildBaseToolRegistry(env, mcpCache, context.mcpServers, getModels);
+	const registry = await buildBaseToolRegistry(env, mcpCache, context.mcpServers, context.customTools, getModels);
 	const globalIds = context.allModels.map((m) => buildGlobalModelId(m.providerId, m.id));
 	if (globalIds.length > 0) {
 		// `switch_model`'s description tells the model to call `get_models`
@@ -100,7 +117,8 @@ export async function buildToolRegistry(env: Env, mcpCache: McpCache, model: str
 	if (enabledSubAgents.length > 0) {
 		const agentTool = createAgentTool(
 			{
-				buildInnerToolRegistry: () => buildBaseToolRegistry(env, mcpCache, context.mcpServers, getModels),
+				buildInnerToolRegistry: () =>
+					buildBaseToolRegistry(env, mcpCache, context.mcpServers, context.customTools, getModels),
 				defaultModel: model,
 				availableModelGlobalIds: globalIds,
 			},

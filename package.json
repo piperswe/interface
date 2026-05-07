@@ -46,6 +46,7 @@
 		"marked-shiki": "^1.2.1",
 		"mermaid": "^11.14.0",
 		"mime-db": "^1.54.0",
+		"monaco-editor": "^0.55.1",
 		"openai": "^6.36.0",
 		"shiki": "^4.0.2",
 		"ynab": "^4.1.0",
