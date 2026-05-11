@@ -15,6 +15,7 @@ import 'katex/dist/katex.min.css';
 import { Marked, type MarkedExtension } from 'marked';
 import markedShiki from 'marked-shiki';
 import markedKatex from 'marked-katex-extension';
+import createDOMPurify from 'dompurify';
 import { markedKatexParen } from './marked-katex-paren';
 import { markedInlineCitation } from './marked-inline-citation';
 import {
@@ -23,6 +24,30 @@ import {
 	type BundledLanguage,
 } from 'shiki';
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
+
+// DOMPurify needs a window/document. The production browser bundle gets one
+// natively; vitest's workerd pool does not, and the dompurify default export
+// (which auto-initialises when window is present) is a no-op function in
+// that case. We lazy-initialise so the cost is paid once per isolate and
+// only when needed.
+type PurifyInstance = ReturnType<typeof createDOMPurify>;
+let purifyInstance: PurifyInstance | null | undefined = undefined;
+function getPurify(): PurifyInstance | null {
+	if (purifyInstance !== undefined) return purifyInstance;
+	if (typeof window === 'undefined' || typeof document === 'undefined') {
+		purifyInstance = null;
+		return null;
+	}
+	try {
+		purifyInstance = createDOMPurify(window as unknown as Window & typeof globalThis);
+		if (typeof purifyInstance.sanitize !== 'function') {
+			purifyInstance = null;
+		}
+	} catch {
+		purifyInstance = null;
+	}
+	return purifyInstance;
+}
 
 const LANGS: BundledLanguage[] = [
 	'typescript',
@@ -153,11 +178,32 @@ export async function renderArtifactCodeClient(code: string, lang: string): Prom
 
 // Sanitise LLM-supplied SVG artifacts before they reach `{@html}`. SVGs can
 // carry `<script>`, event handlers, and `<foreignObject>` containing HTML
-// nodes — all three are XSS sinks. We use a small, targeted stripper rather
-// than DOMPurify because this module needs to work in non-browser test
-// environments where DOM polyfills aren't available.
+// nodes — all three are XSS sinks.
+//
+// Production browsers go through DOMPurify, which uses a real DOM parser and
+// is robust against parser-differential bypasses like `<scr<script>ipt>` and
+// HTML-entity / CDATA tricks. The workerd test environment has no window;
+// callers there fall back to a regex stripper that catches the well-formed
+// payloads we actually expect from LLM tool output. The fallback is good
+// enough for the test threat model — never reached by real user traffic.
 export function sanitizeSvgClient(svg: string): string {
 	if (!svg) return '';
+	const purify = getPurify();
+	if (purify) {
+		return purify.sanitize(svg, {
+			USE_PROFILES: { svg: true, svgFilters: true },
+			// Disallow `foreignObject` — it lets the SVG embed HTML which
+			// then gets the surrounding document's JS context.
+			FORBID_TAGS: ['foreignObject', 'script'],
+		}) as string;
+	}
+	return _regexFallbackSanitizeSvg(svg);
+}
+
+// Exported for unit testing. Production never reaches this branch — the
+// browser always provides `window`. Tests exercise this path because the
+// vitest-pool-workers runtime has no DOM.
+export function _regexFallbackSanitizeSvg(svg: string): string {
 	let out = svg;
 	// Strip `<script>...</script>` (case-insensitive, including with attributes).
 	out = out.replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, '');

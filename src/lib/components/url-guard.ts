@@ -11,8 +11,15 @@ export function safeExternalUrl(value: string | null | undefined): string {
 	if (!value) return '#';
 	const trimmed = value.trim();
 	if (!trimmed) return '#';
-	// Relative URLs and same-page anchors are safe.
-	if (trimmed.startsWith('#') || trimmed.startsWith('/')) return trimmed;
+	// Same-page anchors are unambiguous.
+	if (trimmed.startsWith('#')) return trimmed;
+	// Relative URLs must start with a single `/` followed by something
+	// other than `/` or `\`. `//evil.example/foo` is protocol-relative —
+	// the browser navigates to evil.example under the page's current
+	// scheme, which would otherwise be an open redirect / phishing vector.
+	if (trimmed.startsWith('/') && !trimmed.startsWith('//') && !trimmed.startsWith('/\\')) {
+		return trimmed;
+	}
 	if (trimmed.startsWith('./') || trimmed.startsWith('../')) return trimmed;
 	let parsed: URL;
 	try {

@@ -42,6 +42,17 @@ describe('safeExternalUrl', () => {
 		expect(safeExternalUrl('../up')).toBe('../up');
 	});
 
+	// Regression: `startsWith('/')` alone let `//evil.example/foo` through.
+	// Browsers treat `//host` in an `href` as a protocol-relative URL and
+	// navigate off-origin under the page's current scheme. An LLM-supplied
+	// citation of `//attacker.example/session-steal` would otherwise render
+	// as a clickable cross-site link.
+	it('rejects protocol-relative URLs (// and /\\)', () => {
+		expect(safeExternalUrl('//evil.example/phishing')).toBe('#');
+		expect(safeExternalUrl('//evil.example')).toBe('#');
+		expect(safeExternalUrl('/\\evil.example')).toBe('#');
+	});
+
 	it('returns # for empty / nullish input', () => {
 		expect(safeExternalUrl('')).toBe('#');
 		expect(safeExternalUrl(null)).toBe('#');
