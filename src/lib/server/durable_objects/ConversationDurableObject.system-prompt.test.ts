@@ -75,7 +75,9 @@ describe('ConversationDurableObject — system prompt assembly', () => {
 		await stub.addUserMessage(id, 'hi', 'fake/model');
 		await waitForState(stub, (s) => s.messages.at(-1)?.status === 'complete');
 		const sp = await captureSystemPrompt(stub);
-		expect(sp).toMatch(/Memories/);
+		// Block is now wrapped in <user_memories>...</user_memories> so the
+		// model can treat the contents as data rather than instructions.
+		expect(sp).toMatch(/<user_memories/);
 		expect(sp).toContain('My dog is Pepper.');
 		expect(sp).toContain('I work in TypeScript.');
 	});
@@ -90,7 +92,8 @@ describe('ConversationDurableObject — system prompt assembly', () => {
 		await stub.addUserMessage(id, 'hi', 'fake/model');
 		await waitForState(stub, (s) => s.messages.at(-1)?.status === 'complete');
 		const sp = await captureSystemPrompt(stub);
-		expect(sp).toContain('User bio:');
+		// Wrapped in <user_bio>...</user_bio> delimiters now.
+		expect(sp).toContain('<user_bio>');
 		expect(sp).toContain('BIO_TEXT');
 	});
 

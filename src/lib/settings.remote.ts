@@ -33,6 +33,8 @@ const ALLOWED_SETTING_KEYS = new Set([
 	'workspace_io_mode',
 ]);
 
+import { assertPublicHttpsUrl } from '$lib/server/url-guard';
+
 type Theme = 'system' | 'light' | 'dark';
 function isTheme(v: string): v is Theme {
 	return v === 'system' || v === 'light' || v === 'dark';
@@ -103,9 +105,9 @@ export const addMcpServer = form(
 			error(400, 'Missing required fields (name, transport, url)');
 		}
 		try {
-			new URL(urlField);
-		} catch {
-			error(400, `Invalid URL: ${urlField}`);
+			assertPublicHttpsUrl(urlField);
+		} catch (e) {
+			error(400, e instanceof Error ? e.message : 'Invalid URL');
 		}
 		if (authJson) {
 			try {

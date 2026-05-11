@@ -89,6 +89,42 @@ describe('expiresAtFromResponse', () => {
 		expect(expiresAtFromResponse({ access_token: 't', token_type: 'Bearer' }, 1000)).toBeNull();
 		expect(expiresAtFromResponse({ access_token: 't', token_type: 'Bearer', expires_in: 0 }, 1000)).toBeNull();
 	});
+
+	// Regression: a malicious AS could previously return expires_in=Infinity
+	// to keep a stale token "valid" forever (`Infinity < nowMs() === false`,
+	// so the refresh path never fires). Clamp at 1 year and reject Infinity.
+	it('clamps obscenely large expires_in to the 1-year ceiling', () => {
+		const out = expiresAtFromResponse(
+			{ access_token: 't', token_type: 'Bearer', expires_in: 10_000_000_000 },
+			0,
+		);
+		expect(out).toBe(31_536_000 * 1000);
+	});
+
+	it('returns null for non-finite expires_in', () => {
+		expect(
+			expiresAtFromResponse(
+				{ access_token: 't', token_type: 'Bearer', expires_in: Infinity },
+				0,
+			),
+		).toBeNull();
+		expect(
+			expiresAtFromResponse(
+				{ access_token: 't', token_type: 'Bearer', expires_in: NaN },
+				0,
+			),
+		).toBeNull();
+	});
+});
+
+describe('generateState', () => {
+	// Regression: state generation was 16 bytes (128 bits). Bumped to 32 bytes
+	// to match the PKCE verifier strength and modern OAuth convention.
+	it('produces 43-char base64url strings (32 random bytes)', () => {
+		const s = generateState();
+		expect(s.length).toBeGreaterThanOrEqual(43);
+		expect(s).toMatch(/^[A-Za-z0-9_-]+$/);
+	});
 });
 
 describe('discoverEndpoints', () => {
@@ -147,6 +183,55 @@ describe('discoverEndpoints', () => {
 		const ep = await discoverEndpoints('https://rs.example/mcp');
 		expect(ep.authorizationServer).toBe('https://rs.example');
 		expect(ep.tokenEndpoint).toBe('https://rs.example/token');
+	});
+
+	// Regression: AS metadata used to be parsed without scheme validation.
+	// A compromised/MITM'd metadata response could redirect every token
+	// exchange (including PKCE verifier + refresh token) to attacker-
+	// controlled hosts. Now we require https:// on every endpoint.
+	it('rejects non-HTTPS token_endpoint in AS metadata', async () => {
+		vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+			const url = String(input);
+			if (url.endsWith('/.well-known/oauth-protected-resource')) {
+				return new Response('not found', { status: 404 });
+			}
+			if (url === 'https://rs.example/.well-known/oauth-authorization-server') {
+				return new Response(
+					JSON.stringify({
+						authorization_endpoint: 'https://rs.example/authorize',
+						token_endpoint: 'http://attacker.example/token',
+					}),
+					{ status: 200, headers: { 'Content-Type': 'application/json' } },
+				);
+			}
+			throw new Error(`unexpected fetch ${url}`);
+		});
+		await expect(discoverEndpoints('https://rs.example/mcp')).rejects.toThrow(
+			/https/i,
+		);
+	});
+
+	it('rejects mismatched issuer in AS metadata', async () => {
+		vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+			const url = String(input);
+			if (url.endsWith('/.well-known/oauth-protected-resource')) {
+				return new Response('not found', { status: 404 });
+			}
+			if (url === 'https://rs.example/.well-known/oauth-authorization-server') {
+				return new Response(
+					JSON.stringify({
+						issuer: 'https://different.example',
+						authorization_endpoint: 'https://rs.example/authorize',
+						token_endpoint: 'https://rs.example/token',
+					}),
+					{ status: 200, headers: { 'Content-Type': 'application/json' } },
+				);
+			}
+			throw new Error(`unexpected fetch ${url}`);
+		});
+		await expect(discoverEndpoints('https://rs.example/mcp')).rejects.toThrow(
+			/issuer/i,
+		);
 	});
 });
 

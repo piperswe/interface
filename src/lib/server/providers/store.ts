@@ -1,6 +1,7 @@
 // D1 CRUD for providers. Single-user mode reserves user_id=1.
 
 import { now as nowMs } from '../clock';
+import { assertPublicHttpsUrl } from '../url-guard';
 import type { Provider, ProviderType } from './types';
 
 const SINGLE_USER_ID = 1;
@@ -67,11 +68,24 @@ export type CreateProviderInput = {
 	gatewayId?: string | null;
 };
 
+// Reject provider endpoints that aren't HTTPS or that point at loopback /
+// RFC 1918 / link-local / cloud-metadata / IPv6 private ranges. The OpenAI
+// SDK ships the configured `Authorization: Bearer <apiKey>` header to
+// whatever baseURL it's given, so an unguarded endpoint is both an SSRF
+// surface and an API key exfiltration vector. Delegates to the shared
+// `assertPublicHttpsUrl` so this guard stays in lockstep with the MCP /
+// settings guards rather than drifting (and missing e.g. IPv6 literals or
+// `localhost.localdomain`). Exported for unit testing.
+export function _assertValidEndpoint(endpoint: string): void {
+	assertPublicHttpsUrl(endpoint);
+}
+
 export async function createProvider(
 	env: Env,
 	input: CreateProviderInput,
 	userId: number = SINGLE_USER_ID,
 ): Promise<void> {
+	if (input.endpoint) _assertValidEndpoint(input.endpoint);
 	const now = nowMs();
 	await env.DB.prepare(
 		`INSERT INTO providers (id, type, api_key, endpoint, gateway_id, created_at, updated_at, user_id)
@@ -98,6 +112,7 @@ export async function updateProvider(
 	input: UpdateProviderInput,
 	userId: number = SINGLE_USER_ID,
 ): Promise<void> {
+	if (input.endpoint) _assertValidEndpoint(input.endpoint);
 	const now = nowMs();
 	const fields: string[] = [];
 	const values: (string | number | null)[] = [];

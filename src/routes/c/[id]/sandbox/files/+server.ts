@@ -19,6 +19,10 @@ export const GET: RequestHandler = async ({ params, url, platform }) => {
 	if (path !== '/workspace' && !path.startsWith('/workspace/')) {
 		error(400, 'invalid path');
 	}
+	// Defense-in-depth against `..` segments — R2 doesn't normalise paths
+	// today, but a future backend swap could turn this into a cross-conversation
+	// read primitive otherwise.
+	if (path.split('/').includes('..')) error(400, 'invalid path');
 
 	// "/workspace" -> "" ; "/workspace/foo/bar" -> "foo/bar/"
 	const subPath = path.slice('/workspace'.length).replace(/^\//, '');

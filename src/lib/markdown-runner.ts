@@ -163,7 +163,9 @@ export function createMarkdownRunner(
 				? () => _markdownMod.then((m) => m.renderArtifactCodeClient(a.content, a.language ?? 'text'))
 				: a.type === 'markdown'
 					? () => _markdownMod.then((m) => m.renderMarkdownClient(a.content))
-					: async () => a.content;
+					// SVG artifacts are LLM-supplied and rendered with `{@html}`,
+					// so run them through DOMPurify's SVG profile first.
+					: () => _markdownMod.then((m) => m.sanitizeSvgClient(a.content));
 		scheduleRender(key, a.content, a.contentHtml, render, (html) => {
 			applyArtifactPatch(messageId, a.id, a.version, html);
 		});

@@ -95,7 +95,15 @@ export async function getValidAccessToken(
 				refreshToken: oauth.refreshToken,
 				scopes: oauth.scopes,
 			});
-			await persistTokens(env, serverId, refreshed);
+			// RFC 6749 §6: if the AS omits a new refresh_token, the client
+			// MUST retain the existing refresh token. Thread the previous
+			// value through so persistTokens preserves it. Also keep the
+			// operator's enabled/disabled choice — a background refresh
+			// should not re-enable a server the operator paused.
+			await persistTokens(env, serverId, refreshed, {
+				previousRefreshToken: oauth.refreshToken,
+				preserveEnabled: true,
+			});
 			return refreshed.access_token;
 		} catch {
 			// Refresh failed (revoked? expired?). Surface `null` so the caller
@@ -110,12 +118,36 @@ export async function getValidAccessToken(
 	return promise;
 }
 
-export async function persistTokens(env: Env, serverId: number, token: TokenResponse): Promise<void> {
-	await setMcpServerOauthTokens(env, serverId, {
-		accessToken: token.access_token,
-		refreshToken: token.refresh_token ?? null,
-		expiresAt: expiresAtFromResponse(token, nowMs()),
-	});
+export type PersistTokensOptions = {
+	// If the AS didn't return a new refresh_token, fall back to this prior
+	// value. RFC 6749 §6 requires retention; callers wanting initial-exchange
+	// semantics (where the absence of refresh_token is informative) should
+	// pass `undefined` / `null`.
+	previousRefreshToken?: string | null;
+	// If true, the underlying UPDATE will not flip `enabled = 1` — used by
+	// background refreshes so they don't silently revive a server the operator
+	// disabled.
+	preserveEnabled?: boolean;
+};
+
+export async function persistTokens(
+	env: Env,
+	serverId: number,
+	token: TokenResponse,
+	options: PersistTokensOptions = {},
+): Promise<void> {
+	const refreshToken =
+		token.refresh_token ?? options.previousRefreshToken ?? null;
+	await setMcpServerOauthTokens(
+		env,
+		serverId,
+		{
+			accessToken: token.access_token,
+			refreshToken,
+			expiresAt: expiresAtFromResponse(token, nowMs()),
+		},
+		{ reEnable: !options.preserveEnabled },
+	);
 }
 
 export async function exchangeAndPersist(

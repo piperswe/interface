@@ -15,6 +15,22 @@ function getEnv(): Env {
 	return event.platform.env;
 }
 
+// Same-origin redirect filter so `redirectTo` form fields can't be turned
+// into an open redirect. Mirrors the guard used by `archive` in
+// conversations.remote.ts but tightened to reject protocol-relative URLs,
+// tab/CRLF bypasses, and percent-encoded slashes. Returns `/settings` if
+// the input doesn't look like a benign same-origin path.
+function _safeRedirectPath(raw: unknown, fallback = '/settings'): string {
+	if (typeof raw !== 'string') return fallback;
+	const trimmed = raw.trim();
+	if (!trimmed.startsWith('/')) return fallback;
+	// Reject protocol-relative (`//host`, `/\host`, `/\thost`) and CRLF
+	// smuggling. Only allow the safe path/query/hash character class.
+	if (!/^\/[A-Za-z0-9_\-./?&=#%]*$/.test(trimmed)) return fallback;
+	if (trimmed.startsWith('//')) return fallback;
+	return trimmed;
+}
+
 export const addTag = form(
 	'unchecked',
 	async (data: { name?: unknown; color?: unknown; redirectTo?: unknown }) => {
@@ -26,8 +42,7 @@ export const addTag = form(
 		} catch (e) {
 			error(400, e instanceof Error ? e.message : String(e));
 		}
-		const target = String(data.redirectTo ?? '/settings');
-		redirect(303, target);
+		redirect(303, _safeRedirectPath(data.redirectTo));
 	},
 );
 

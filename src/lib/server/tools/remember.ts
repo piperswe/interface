@@ -3,7 +3,17 @@ import { safeValidate } from '$lib/zod-utils';
 import type { Tool, ToolContext, ToolExecutionResult } from './registry';
 import { createMemory } from '../memories';
 
-const inputArgsSchema = z.object({ content: z.string() });
+// Cap each memory at 1 KiB. Each memory is splatted into every future
+// conversation's system prompt, so a 10 KB attacker-supplied memory would
+// add 10 KB to every request indefinitely (and the LLM would see attacker
+// text in the system role — persistent prompt-injection).
+const MAX_MEMORY_CONTENT_LEN = 1024;
+
+const inputArgsSchema = z.object({
+	content: z.string().max(MAX_MEMORY_CONTENT_LEN, {
+		message: `content exceeds ${MAX_MEMORY_CONTENT_LEN} characters`,
+	}),
+});
 
 const inputSchema = {
 	type: 'object',

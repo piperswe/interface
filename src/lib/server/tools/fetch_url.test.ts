@@ -24,7 +24,49 @@ describe('fetch_url tool', () => {
 	it('rejects non-http schemes', async () => {
 		const result = await fetchUrlTool.execute(ctx, { url: 'file:///etc/passwd' });
 		expect(result.isError).toBe(true);
-		expect(result.content).toMatch(/non-HTTP/);
+		expect(result.content).toMatch(/Refusing to fetch/);
+	});
+
+	// Regression (H1): without the SSRF guard, the LLM could call `fetch_url`
+	// on localhost / RFC 1918 / cloud-metadata IPs and read internal HTTP
+	// endpoints. The guard rejects them before any fetch fires.
+	it('rejects loopback / private / metadata hostnames', async () => {
+		for (const url of [
+			'http://localhost/',
+			'http://127.0.0.1/',
+			'http://10.0.0.1/',
+			'http://192.168.1.1/',
+			'http://169.254.169.254/latest/meta-data/',
+			'http://[::1]/',
+			// Regression: IPv4-mapped IPv6 (`::ffff:127.0.0.1`) is the
+			// dual-stack representation of an IPv4 loopback. The WHATWG URL
+			// parser normalises it to `[::ffff:7f00:1]`, which doesn't match
+			// any of the bare IPv6 prefix checks. The IPv4-mapped helper now
+			// extracts the trailing octets and runs the IPv4 predicate.
+			'http://[::ffff:127.0.0.1]/',
+			'http://[::ffff:169.254.169.254]/',
+			'http://[::ffff:10.0.0.1]/',
+		]) {
+			const result = await fetchUrlTool.execute(ctx, { url });
+			expect(result.isError).toBe(true);
+			expect(result.content).toMatch(/Refusing to fetch|private|reserved|loopback|metadata/i);
+		}
+	});
+
+	// Regression (H2): redirect chasing used to be `redirect: 'follow'` with
+	// no guard. An attacker page could return `302 Location: http://169.254..`
+	// and the worker would read the metadata response. We now re-validate
+	// each hop.
+	it('refuses to follow a redirect to a private IP', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			new Response(null, {
+				status: 302,
+				headers: { location: 'http://169.254.169.254/latest/meta-data/' },
+			}),
+		);
+		const result = await fetchUrlTool.execute(ctx, { url: 'https://example.com/' });
+		expect(result.isError).toBe(true);
+		expect(result.content).toMatch(/redirect|private|metadata/i);
 	});
 
 	it('returns body for a 2xx response', async () => {

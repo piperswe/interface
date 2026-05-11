@@ -121,15 +121,26 @@ export class McpHttpClient {
 		) as McpToolCallResult;
 	}
 
-	async #buildHeaders(force: boolean): Promise<Record<string, string>> {
-		const headers: Record<string, string> = {
+	async #buildHeaders(force: boolean): Promise<Headers> {
+		// Use the Headers API so duplicates with different casing collapse
+		// correctly — `Object.assign({}, ...)` is case-sensitive on JS object
+		// keys, so an `auth_json` containing `authorization` (lowercase) would
+		// shadow our uppercase `Authorization`. `Headers.set` is canonical.
+		const headers = new Headers({
 			'Content-Type': 'application/json',
 			Accept: 'application/json, text/event-stream',
-		};
-		if (this.#auth) Object.assign(headers, this.#auth);
+		});
+		if (this.#auth) {
+			for (const [name, value] of Object.entries(this.#auth)) {
+				headers.set(name, value);
+			}
+		}
 		if (this.#getAccessToken) {
 			const token = await this.#getAccessToken({ force });
-			if (token) headers.Authorization = `Bearer ${token}`;
+			// OAuth token wins over any static `Authorization` in auth_json so
+			// the two sources can't fight (and we can't accidentally ship the
+			// wrong bearer to the upstream MCP).
+			if (token) headers.set('Authorization', `Bearer ${token}`);
 		}
 		return headers;
 	}
@@ -163,6 +174,12 @@ export class McpHttpClient {
 	}
 }
 
+// 1 MiB upper bound on the in-memory SSE accumulator. A misbehaving upstream
+// MCP server that never emits `\n\n` would otherwise grow the buffer until the
+// Worker's 128 MB heap cap kills the isolate. Frames in JSON-RPC are normally
+// small; this is generous.
+const MAX_SSE_BUFFER_BYTES = 1024 * 1024;
+
 async function readSseSingleResponse(res: Response): Promise<McpJsonRpcResponse> {
 	if (!res.body) throw new Error('MCP response has no body');
 	const reader = res.body.getReader();
@@ -171,6 +188,16 @@ async function readSseSingleResponse(res: Response): Promise<McpJsonRpcResponse>
 	while (true) {
 		const { value, done } = await reader.read();
 		if (value) buffer += decoder.decode(value, { stream: true });
+		if (buffer.length > MAX_SSE_BUFFER_BYTES) {
+			try {
+				await reader.cancel();
+			} catch {
+				/* ignore */
+			}
+			throw new Error(
+				`MCP SSE frame exceeded ${MAX_SSE_BUFFER_BYTES} bytes without a delimiter`,
+			);
+		}
 		const newlineIdx = buffer.indexOf('\n\n');
 		if (newlineIdx !== -1) {
 			const frame = buffer.slice(0, newlineIdx);

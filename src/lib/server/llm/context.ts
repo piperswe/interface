@@ -80,7 +80,14 @@ export async function compactHistory(
 	}
 
 	const resolved = await getResolvedModel(env, modelGlobalId);
-	const contextWindow = resolved?.model.maxContextLength ?? 128_000;
+	// Defensive clamp: corrupt model rows (Infinity / NaN / negative) would
+	// otherwise make `maxAllowed` non-finite, which short-circuits compaction
+	// either way (Infinity = never fires, NaN = always fires).
+	const rawContextWindow = resolved?.model.maxContextLength;
+	const contextWindow =
+		typeof rawContextWindow === 'number' && Number.isFinite(rawContextWindow) && rawContextWindow > 0
+			? Math.min(rawContextWindow, 10_000_000)
+			: 128_000;
 	const summaryTokens = await getContextCompactionSummaryTokens(env);
 	const maxAllowed = Math.floor(contextWindow * ((force ? 50 : threshold) / 100));
 

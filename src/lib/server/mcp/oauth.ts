@@ -25,10 +25,13 @@ const protectedResourceMetadataSchema = z
 
 const authorizationServerMetadataSchema = z
 	.object({
+		// `issuer` is later validated to match the AS URL we fetched from
+		// (RFC 8414 §3.3) — having it be a string here just means the field
+		// was present; the URL check happens after parsing.
 		issuer: z.string().optional(),
-		authorization_endpoint: z.string(),
-		token_endpoint: z.string(),
-		registration_endpoint: z.string().optional(),
+		authorization_endpoint: z.string().url(),
+		token_endpoint: z.string().url(),
+		registration_endpoint: z.string().url().optional(),
 		scopes_supported: z.array(z.string()).optional(),
 		code_challenge_methods_supported: z.array(z.string()).optional(),
 		grant_types_supported: z.array(z.string()).optional(),
@@ -47,7 +50,11 @@ const tokenResponseSchema = z
 	.object({
 		access_token: z.string(),
 		token_type: z.string(),
-		expires_in: z.number().optional(),
+		// Cap to 1 year so a malicious AS can't return Infinity / NaN /
+		// MAX_SAFE_INTEGER and keep a stale token "valid" forever from our
+		// perspective. `finite()` rejects Infinity/NaN; `positive()` rejects
+		// negative; `int()` rejects fractional seconds.
+		expires_in: z.number().int().positive().finite().max(31_536_000).optional(),
 		refresh_token: z.string().optional(),
 		scope: z.string().optional(),
 	})
@@ -80,7 +87,28 @@ function joinWellKnown(base: string, path: string): string {
 	u.pathname = path;
 	u.search = '';
 	u.hash = '';
+	// Drop any user-info embedded in an operator-pasted URL so basic-auth
+	// credentials don't leak into the discovery fetch (or the surfaced
+	// `OauthDiscoveryError` message).
+	u.username = '';
+	u.password = '';
 	return u.toString();
+}
+
+// Reject endpoint URLs that aren't HTTPS or that wouldn't round-trip through
+// `URL`. Centralised so the schema's `z.string().url()` only has to confirm
+// "looks like a URL" and this guard catches scheme issues plus `javascript:`,
+// `data:`, etc. Exported for unit testing.
+export function _assertHttpsUrl(value: string, label: string): void {
+	let url: URL;
+	try {
+		url = new URL(value);
+	} catch {
+		throw new OauthDiscoveryError(`${label} is not a valid URL: ${value}`);
+	}
+	if (url.protocol !== 'https:') {
+		throw new OauthDiscoveryError(`${label} must use https:// (got ${url.protocol}//)`);
+	}
 }
 
 export async function discoverProtectedResource(serverUrl: string): Promise<ProtectedResourceMetadata | null> {
@@ -127,6 +155,25 @@ export async function discoverAuthorizationServer(asUrl: string): Promise<Author
 	}
 	if (!meta.authorization_endpoint || !meta.token_endpoint) {
 		throw new OauthDiscoveryError('Authorization server metadata missing endpoints');
+	}
+	// RFC 8414 §3.3: an AS metadata response that names endpoints we then send
+	// the authorization code, PKCE verifier, and refresh token to must come
+	// from somewhere we trust. Enforce https:// and (when present) that
+	// `issuer` matches the URL we fetched from.
+	_assertHttpsUrl(meta.authorization_endpoint, 'authorization_endpoint');
+	_assertHttpsUrl(meta.token_endpoint, 'token_endpoint');
+	if (meta.registration_endpoint) {
+		_assertHttpsUrl(meta.registration_endpoint, 'registration_endpoint');
+	}
+	if (meta.issuer !== undefined && meta.issuer !== asUrl) {
+		// Allow `asUrl` with a trailing slash and `issuer` without (or vice
+		// versa) — both forms appear in the wild.
+		const trim = (s: string) => s.replace(/\/$/, '');
+		if (trim(meta.issuer) !== trim(asUrl)) {
+			throw new OauthDiscoveryError(
+				`Authorization server metadata issuer (${meta.issuer}) does not match the URL it was fetched from (${asUrl})`,
+			);
+		}
 	}
 	return meta;
 }
@@ -200,7 +247,9 @@ export async function s256Challenge(verifier: string): Promise<string> {
 }
 
 export function generateState(): string {
-	const bytes = new Uint8Array(16);
+	// 32 random bytes (256 bits) to match the PKCE verifier strength. The
+	// 16-byte version was within RFC bounds but below modern convention.
+	const bytes = new Uint8Array(32);
 	crypto.getRandomValues(bytes);
 	return base64UrlEncode(bytes);
 }
@@ -292,8 +341,12 @@ async function tokenRequest(endpoint: string, params: URLSearchParams): Promise<
 }
 
 export function expiresAtFromResponse(token: TokenResponse, now: number): number | null {
-	if (typeof token.expires_in !== 'number' || token.expires_in <= 0) return null;
-	return now + token.expires_in * 1000;
+	const v = token.expires_in;
+	if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0) return null;
+	// Cap at 1 year so a corrupt or malicious AS can't poison the stored
+	// expiry with Infinity or a value that would never refresh.
+	const capped = Math.min(v, 31_536_000);
+	return now + capped * 1000;
 }
 
 export const STATE_TTL_MS = AUTH_STATE_TTL_MS;

@@ -47,7 +47,17 @@ export async function writeTitle(
 			if (ev.type === 'text_delta') buf += ev.delta;
 			if (ev.type === 'error') throw new Error(ev.message);
 		}
-		title = buf.trim().replace(/^"|"$/g, '').slice(0, TITLE_MAX);
+		// Collapse newlines/whitespace so a multi-line title doesn't break the
+		// sidebar's single-line layout or downstream consumers that expect a
+		// flat string. The LLM is told to reply with just the title; this is
+		// defensive against models that emit a leading "Title: ..." preamble
+		// or trailing reasoning.
+		title = buf
+			.replace(/[\r\n]+/g, ' ')
+			.replace(/\s+/g, ' ')
+			.trim()
+			.replace(/^"|"$/g, '')
+			.slice(0, TITLE_MAX);
 		if (!title) throw new Error('empty title from LLM');
 	} catch {
 		title = collapsed.length <= TITLE_MAX ? collapsed : collapsed.slice(0, TITLE_MAX).trimEnd() + '…';

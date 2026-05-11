@@ -51,6 +51,10 @@ export type CreateMemoryInput = {
 	source: string;
 };
 
+// Each memory is splatted into every future conversation's system prompt;
+// cap so a single oversized entry can't multiply token cost per turn.
+const MAX_MEMORY_CONTENT_LEN = 4_000;
+
 export async function createMemory(
 	env: Env,
 	input: CreateMemoryInput,
@@ -58,6 +62,9 @@ export async function createMemory(
 ): Promise<number> {
 	const content = input.content.trim();
 	if (!content) throw new Error('Memory content is required');
+	if (content.length > MAX_MEMORY_CONTENT_LEN) {
+		throw new Error(`Memory content exceeds ${MAX_MEMORY_CONTENT_LEN} characters`);
+	}
 	const result = await env.DB.prepare(
 		`INSERT INTO memories (user_id, type, content, source, created_at)
 		 VALUES (?, ?, ?, ?, ?)

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { ToolCallRecord, ToolResultRecord } from '$lib/types/conversation';
 	import { ChevronRight } from 'lucide-svelte';
+	import { safeExternalUrl, safeImageUrl } from './url-guard';
 
 	let {
 		call,
@@ -429,7 +430,7 @@
 					<ol class="search-results">
 						{#each searchResults as r (r.index)}
 							<li class="search-result">
-								<a class="result-title" href={r.url} target="_blank" rel="noopener noreferrer">{r.title}</a>
+								<a class="result-title" href={safeExternalUrl(r.url)} target="_blank" rel="noopener noreferrer">{r.title}</a>
 								<div class="result-url">{r.url}</div>
 								{#if r.snippet}<div class="result-snippet">{r.snippet}</div>{/if}
 							</li>
@@ -478,7 +479,7 @@
 					{#each loadImageParsed.images as img, i (i)}
 						<img
 							class="image-preview"
-							src={`data:${img.mimeType};base64,${img.data}`}
+							src={safeImageUrl(`data:${img.mimeType};base64,${img.data}`)}
 							alt={loadImageInput.path ?? 'loaded image'}
 							loading="lazy"
 							decoding="async"

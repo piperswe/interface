@@ -46,6 +46,16 @@ describe('sandbox/file +server.ts — GET', () => {
 		await expectError(callGet(VALID_ID, 'path='), 400);
 	});
 
+	// Regression: `startsWith('/workspace/')` alone let `..` segments through.
+	// Today's R2 backend treats keys as opaque flat strings (so the lookup just
+	// misses), but any backend that normalises paths would turn this into a
+	// cross-conversation read. Reject defensively before constructing the key.
+	it('rejects paths containing `..` segments with 400', async () => {
+		await expectError(callGet(VALID_ID, 'path=/workspace/../etc/passwd'), 400);
+		await expectError(callGet(VALID_ID, 'path=/workspace/foo/../../bar'), 400);
+		await expectError(callGet(VALID_ID, 'path=/workspace/..'), 400);
+	});
+
 	it('returns 404 when the R2 object does not exist', async () => {
 		await expectError(callGet(VALID_ID, 'path=/workspace/missing.txt'), 404);
 	});

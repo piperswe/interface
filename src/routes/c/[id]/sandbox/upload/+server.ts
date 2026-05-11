@@ -20,14 +20,22 @@ function stripControlChars(s: string): string {
 // Strip path separators, reject anything that looks like a traversal, and
 // collapse whitespace to underscores. Returns a safe basename ready to be
 // appended after our timestamp prefix.
-function sanitizeFilename(raw: string): string | null {
+//
+// The old guard used `trimmed.includes('..')` which (a) over-rejected
+// legitimate names like `report.v..1.pdf` and (b) was path-traversal-
+// irrelevant once we take the basename. The check now lives where it matters:
+// on the post-basename `cleaned` string itself.
+export function _sanitizeFilename(raw: string): string | null {
 	const trimmed = raw.trim();
 	if (!trimmed) return null;
-	if (trimmed.includes('..')) return null;
 	// Take only the basename - slashes/backslashes from the client are dropped.
 	const last = trimmed.split(/[\/\\]/).pop() ?? '';
 	const cleaned = stripControlChars(last).replace(/\s+/g, '_');
 	if (!cleaned || cleaned === '.' || cleaned === '..') return null;
+	// Hidden files (`.gitignore`, `.htaccess`, `.env`) are unsafe defaults for
+	// an upload landing zone since the agent's tool calls don't escape leading
+	// dots when shelling out.
+	if (cleaned.startsWith('.')) return null;
 	// Cap length to avoid pathological R2 keys.
 	return cleaned.slice(0, 240);
 }
@@ -46,16 +54,25 @@ export const POST: RequestHandler = async ({ params, url, request, platform }) =
 
 	const filenameParam = url.searchParams.get('filename');
 	if (!filenameParam) error(400, 'filename query param required');
-	const filename = sanitizeFilename(filenameParam);
+	const filename = _sanitizeFilename(filenameParam);
 	if (!filename) error(400, 'invalid filename');
 
+	if (!request.body) error(400, 'request body required');
+
+	// Require an explicit, finite, digit-only Content-Length so chunked
+	// uploads can't slip past the size cap by omitting the header
+	// (`parseInt(null, 10) === NaN`, `Number.isFinite(NaN) === false`, so the
+	// old guard was skipped entirely).
 	const contentLengthHeader = request.headers.get('content-length');
-	const contentLength = contentLengthHeader ? Number.parseInt(contentLengthHeader, 10) : NaN;
-	if (Number.isFinite(contentLength) && contentLength > MAX_UPLOAD_BYTES) {
+	if (!contentLengthHeader) error(411, 'Content-Length header required');
+	if (!/^[0-9]+$/.test(contentLengthHeader)) error(400, 'invalid Content-Length');
+	const contentLength = Number.parseInt(contentLengthHeader, 10);
+	if (!Number.isFinite(contentLength) || contentLength < 0) {
+		error(400, 'invalid Content-Length');
+	}
+	if (contentLength > MAX_UPLOAD_BYTES) {
 		error(413, `file too large (max ${MAX_UPLOAD_BYTES} bytes)`);
 	}
-
-	if (!request.body) error(400, 'request body required');
 
 	const headerContentType = request.headers.get('content-type') ?? '';
 	// Browsers default unknown POST bodies to `application/octet-stream` for

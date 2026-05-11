@@ -10,13 +10,18 @@ const DEFAULT_SUBREQUESTS = 50;
 // to source OR secrets change the hash, evicting the cached worker —
 // otherwise an agent that updates a tool would keep running the old code (or
 // reading the old env) on its next invocation.
+//
+// We use the full 64-hex SHA-256 rather than truncating to 16 hex chars
+// (64 bits) — the birthday bound on 64 bits is ~2^32 entries, well below
+// the cap on what an agent could plausibly write. There is no length budget
+// on the cache key.
 async function buildCacheKey(row: CustomToolRow): Promise<string> {
 	const data = new TextEncoder().encode(row.source + '\0' + (row.secretsJson ?? ''));
 	const hashBuf = await crypto.subtle.digest('SHA-256', data);
 	const hashHex = Array.from(new Uint8Array(hashBuf))
 		.map((b) => b.toString(16).padStart(2, '0'))
 		.join('');
-	return `custom-${row.id}-${hashHex.slice(0, 16)}`;
+	return `custom-${row.id}-${hashHex}`;
 }
 
 export function customToolNamespacedName(row: CustomToolRow): string {
@@ -72,8 +77,22 @@ function formatResult(result: unknown): ToolExecutionResult {
 		return { content: result };
 	}
 	try {
-		return { content: JSON.stringify(result, null, 2) };
-	} catch {
-		return { content: String(result) };
+		// `replacer` handles BigInt (JSON.stringify throws on it by default) and
+		// any other non-serialisable value: stringify it so the agent gets a
+		// reasonable representation rather than `[object Object]`.
+		const replacer = (_key: string, value: unknown) => {
+			if (typeof value === 'bigint') return value.toString();
+			if (typeof value === 'function') return `[Function: ${value.name || 'anonymous'}]`;
+			if (typeof value === 'symbol') return value.toString();
+			if (typeof value === 'undefined') return null;
+			return value;
+		};
+		return { content: JSON.stringify(result, replacer, 2) };
+	} catch (e) {
+		return {
+			content: `(unable to serialise return value: ${e instanceof Error ? e.message : String(e)})`,
+			isError: true,
+			errorCode: 'execution_failure',
+		};
 	}
 }

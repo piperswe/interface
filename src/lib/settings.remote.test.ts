@@ -165,6 +165,62 @@ describe('addMcpServer', () => {
 		);
 	});
 
+	// Regression (F3): operator-supplied URL was only checked with `new URL()`,
+	// which accepts http://, file://, javascript:, and private IPs. The
+	// .well-known discovery chain then fetches these server-side, turning the
+	// addMcpServer form into an SSRF surface.
+	it('rejects non-HTTPS schemes (SSRF guard)', async () => {
+		await expectError(
+			addMcpServer({ name: 'x', transport: 'http', url: 'http://example.com' }) as Promise<unknown>,
+			400,
+			/https/i,
+		);
+		await expectError(
+			addMcpServer({ name: 'x', transport: 'http', url: 'file:///etc/passwd' }) as Promise<unknown>,
+			400,
+			/https/i,
+		);
+	});
+
+	it('rejects localhost and loopback IPs (SSRF guard)', async () => {
+		await expectError(
+			addMcpServer({ name: 'x', transport: 'http', url: 'https://localhost/' }) as Promise<unknown>,
+			400,
+			/localhost|private/i,
+		);
+		await expectError(
+			addMcpServer({ name: 'x', transport: 'http', url: 'https://127.0.0.1/' }) as Promise<unknown>,
+			400,
+			/private|reserved/i,
+		);
+	});
+
+	it('rejects cloud metadata and RFC 1918 IPs (SSRF guard)', async () => {
+		await expectError(
+			addMcpServer({ name: 'x', transport: 'http', url: 'https://169.254.169.254/' }) as Promise<unknown>,
+			400,
+			/private|reserved/i,
+		);
+		await expectError(
+			addMcpServer({ name: 'x', transport: 'http', url: 'https://10.0.0.1/' }) as Promise<unknown>,
+			400,
+			/private|reserved/i,
+		);
+		await expectError(
+			addMcpServer({ name: 'x', transport: 'http', url: 'https://192.168.1.1/' }) as Promise<unknown>,
+			400,
+			/private|reserved/i,
+		);
+	});
+
+	it('rejects URLs with embedded userinfo', async () => {
+		await expectError(
+			addMcpServer({ name: 'x', transport: 'http', url: 'https://user:pass@example.com/' }) as Promise<unknown>,
+			400,
+			/credentials|userinfo/i,
+		);
+	});
+
 	it('rejects malformed auth_json', async () => {
 		await expectError(
 			addMcpServer({

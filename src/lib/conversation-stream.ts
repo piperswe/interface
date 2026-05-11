@@ -141,17 +141,26 @@ export function applyToolOutput(state: ConversationState, ev: ToolOutputEvent): 
 		return {
 			...m,
 			parts: partsHasIt
-				? parts.map((p) =>
-						p.type === 'tool_result' && p.toolUseId === ev.toolUseId
-							? {
-									type: 'tool_result',
-									toolUseId: ev.toolUseId,
-									content: (p as { content: string }).content + ev.chunk,
-									isError: false,
-									streaming: true as const,
-								}
-							: p,
-					)
+				? parts.map((p) => {
+						if (p.type !== 'tool_result' || p.toolUseId !== ev.toolUseId) return p;
+						// Preserve existing timing metadata and isError flag — the
+						// original code rebuilt the part from scratch and dropped
+						// startedAt/endedAt + force-set isError to false. It also
+						// force-cast `content` to string, corrupting parts whose
+						// content was a ToolResultBlock[] (e.g. image results).
+						if (typeof p.content !== 'string') {
+							// Don't concatenate text onto a structured-block result;
+							// just keep the existing part. This is defensive — the
+							// server doesn't currently emit tool_output after a
+							// structured tool_result, but the type union allows it.
+							return p;
+						}
+						return {
+							...p,
+							content: p.content + ev.chunk,
+							streaming: true as const,
+						};
+					})
 				: [...parts, { type: 'tool_result', toolUseId: ev.toolUseId, content: ev.chunk, isError: false, streaming: true as const }],
 		};
 	});
@@ -254,9 +263,40 @@ export function attachConversationStream(
 	// Only reload when the connection is genuinely closed (readyState=CLOSED);
 	// the browser handles transient reconnects on its own and any sync gap is
 	// healed by the next `sync` event.
+	//
+	// Backoff: if `/c/:id/events` is hard-down (401, mid-deploy 500, etc.)
+	// each onReload() re-runs the page loader and reopens a fresh EventSource,
+	// which CLOSED-trips again immediately — a tight loop hammering the
+	// server. Track close timestamps and apply an exponential backoff before
+	// triggering the reload. The window resets on the first successful event.
+	let closeCount = 0;
+	let pendingReload: ReturnType<typeof setTimeout> | null = null;
+	let cancelled = false;
+	const resetBackoffOnFirstEvent = () => {
+		closeCount = 0;
+	};
+	es.addEventListener('sync', resetBackoffOnFirstEvent);
+	es.addEventListener('delta', resetBackoffOnFirstEvent);
+
 	es.addEventListener('error', () => {
-		if (es.readyState === EventSource.CLOSED) onReload();
+		if (es.readyState !== EventSource.CLOSED) return;
+		if (cancelled) return;
+		closeCount += 1;
+		const delayMs = Math.min(15_000, 500 * 2 ** Math.min(closeCount - 1, 5));
+		const jitter = Math.floor(Math.random() * 250);
+		if (pendingReload) clearTimeout(pendingReload);
+		pendingReload = setTimeout(() => {
+			pendingReload = null;
+			if (!cancelled) onReload();
+		}, delayMs + jitter);
 	});
 
-	return () => es.close();
+	return () => {
+		cancelled = true;
+		if (pendingReload) {
+			clearTimeout(pendingReload);
+			pendingReload = null;
+		}
+		es.close();
+	};
 }

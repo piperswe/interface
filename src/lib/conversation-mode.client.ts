@@ -112,6 +112,11 @@ export class ConversationMode {
 
 	private failureCount = 0;
 	private toggling = false;
+	// Set true by `dispose()`. Async paths that await between calls (e.g.
+	// `getUserMedia` waiting for the permission dialog) check this after
+	// each `await` so a stream / context that lands after dispose can be
+	// torn down rather than leaking the microphone indefinitely.
+	private disposed = false;
 
 	constructor(private deps: ConversationModeDeps) {}
 
@@ -157,6 +162,7 @@ export class ConversationMode {
 	}
 
 	dispose(): void {
+		this.disposed = true;
 		this.teardown();
 		this.listeners.clear();
 	}
@@ -229,8 +235,9 @@ export class ConversationMode {
 
 	private async start(): Promise<void> {
 		this.failureCount = 0;
+		let requestedStream: MediaStream;
 		try {
-			this.stream = await navigator.mediaDevices.getUserMedia({
+			requestedStream = await navigator.mediaDevices.getUserMedia({
 				audio: {
 					echoCancellation: true,
 					noiseSuppression: true,
@@ -241,8 +248,33 @@ export class ConversationMode {
 			this.fail(explainMicError(err));
 			return;
 		}
+		// If dispose() ran while the permission dialog was open, the stream
+		// lands on a disposed instance. Stop the tracks immediately so the
+		// microphone indicator doesn't stay on.
+		if (this.disposed) {
+			for (const t of requestedStream.getTracks()) {
+				try {
+					t.stop();
+				} catch {
+					/* ignore */
+				}
+			}
+			return;
+		}
+		this.stream = requestedStream;
 		try {
 			const ctx = new AudioContext();
+			if (this.disposed) {
+				try {
+					await ctx.close();
+				} catch {
+					/* ignore */
+				}
+				for (const t of requestedStream.getTracks()) {
+					try { t.stop(); } catch { /* ignore */ }
+				}
+				return;
+			}
 			this.audioContext = ctx;
 			const source = ctx.createMediaStreamSource(this.stream);
 			const analyser = ctx.createAnalyser();

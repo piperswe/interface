@@ -66,11 +66,20 @@
 	</div>
 	<div class="preview-frame flex-fill">
 		{#if selectedPort}
+			<!--
+				The preview is served from the same origin as the app, so
+				`allow-same-origin + allow-scripts` would defeat the sandbox
+				entirely — user-supplied dev-server code could reach
+				`window.parent`, document.cookie, and the operator's session.
+				Drop `allow-same-origin` so the iframe is treated as an opaque
+				origin; the previewed app can still execute scripts inside the
+				frame, just without access to ours.
+			-->
 			<iframe
 				title="Sandbox preview"
 				src="/c/{conversationId}/preview/{selectedPort}/"
 				class="preview-iframe"
-				sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+				sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
 			></iframe>
 		{:else}
 			<div class="empty p-3 small text-muted text-center">Select a port to preview the running service.</div>

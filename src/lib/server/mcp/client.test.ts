@@ -71,7 +71,10 @@ describe('McpHttpClient', () => {
 		});
 		await client.listTools();
 		const init = fetchSpy.mock.calls[0][1] as RequestInit;
-		expect((init.headers as Record<string, string>)['X-Api-Key']).toBe('secret');
+		const headers = init.headers instanceof Headers
+			? init.headers
+			: new Headers(init.headers as Record<string, string>);
+		expect(headers.get('X-Api-Key')).toBe('secret');
 	});
 
 	it('throws when the HTTP response is non-2xx', async () => {
@@ -122,6 +125,16 @@ describe('McpHttpClient', () => {
 	});
 
 	describe('OAuth bearer token integration', () => {
+		// `headers` is now a `Headers` instance (was a plain object) so the
+		// case-insensitive merge in #buildHeaders works correctly across both
+		// `auth_json` and the OAuth getter.
+		function authOf(init: RequestInit | undefined): string | null {
+			if (!init) return null;
+			if (init.headers instanceof Headers) return init.headers.get('Authorization');
+			const rec = init.headers as Record<string, string> | undefined;
+			return rec?.['Authorization'] ?? null;
+		}
+
 		it('attaches the Bearer header when getAccessToken returns a string', async () => {
 			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
 				jsonResponse({ jsonrpc: '2.0', id: 1, result: { tools: [] } }),
@@ -132,7 +145,7 @@ describe('McpHttpClient', () => {
 			});
 			await client.listTools();
 			const init = fetchSpy.mock.calls[0][1] as RequestInit;
-			expect((init.headers as Record<string, string>)['Authorization']).toBe('Bearer AT');
+			expect(authOf(init)).toBe('Bearer AT');
 		});
 
 		it('skips the Bearer header when getAccessToken returns null', async () => {
@@ -145,14 +158,14 @@ describe('McpHttpClient', () => {
 			});
 			await client.listTools();
 			const init = fetchSpy.mock.calls[0][1] as RequestInit;
-			expect((init.headers as Record<string, string>)['Authorization']).toBeUndefined();
+			expect(authOf(init)).toBeNull();
 		});
 
 		it('retries once on 401 with force:true and succeeds on the second attempt', async () => {
 			const tokens = ['stale', 'fresh'];
 			const calls: string[] = [];
 			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
-				const auth = (init?.headers as Record<string, string> | undefined)?.['Authorization'];
+				const auth = authOf(init);
 				calls.push(auth ?? '');
 				if (auth === 'Bearer stale') return new Response('unauth', { status: 401 });
 				return jsonResponse({ jsonrpc: '2.0', id: 1, result: { tools: [{ name: 'ok' }] } });
@@ -188,6 +201,25 @@ describe('McpHttpClient', () => {
 			const client = new McpHttpClient({ url: 'https://mcp.test/jsonrpc' });
 			await expect(client.listTools()).rejects.toBeInstanceOf(McpAuthError);
 			expect(fetchSpy).toHaveBeenCalledTimes(1);
+		});
+
+		// Regression: header merging used to be `Object.assign(obj, auth)`,
+		// which is case-sensitive on plain object keys. An `auth_json` with a
+		// lowercase `authorization` key would shadow the OAuth `Authorization`,
+		// silently sending the wrong bearer (or none at all). With the Headers
+		// API the OAuth token wins regardless of casing.
+		it('OAuth token overrides a lowercase `authorization` from auth_json', async () => {
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+				jsonResponse({ jsonrpc: '2.0', id: 1, result: { tools: [] } }),
+			);
+			const client = new McpHttpClient({
+				url: 'https://mcp.test/jsonrpc',
+				authJson: '{"authorization": "Token static"}',
+				getAccessToken: async () => 'AT-oauth',
+			});
+			await client.listTools();
+			const init = fetchSpy.mock.calls[0][1] as RequestInit;
+			expect(authOf(init)).toBe('Bearer AT-oauth');
 		});
 	});
 });
