@@ -70,14 +70,29 @@ export async function buildBaseToolRegistry(
 			registry.register(tool);
 		}
 	}
-	try {
-		await Promise.all(
-			mcpServers
-				.filter((s) => s.enabled && (s.transport === 'http' || s.transport === 'sse') && s.url)
-				.map((s) => registerMcpServerTools(env, mcpCache, registry, s)),
-		);
-	} catch {
-		// MCP enumeration failures are best-effort.
+	// Use `allSettled` rather than `all` so one bad MCP server doesn't take
+	// down sibling registrations. Log each rejection so operators can see why
+	// a tool is missing (`Promise.all` + bare catch swallowed everything).
+	const mcpResults = await Promise.allSettled(
+		mcpServers
+			.filter((s) => s.enabled && (s.transport === 'http' || s.transport === 'sse') && s.url)
+			.map(async (s) => {
+				try {
+					await registerMcpServerTools(env, mcpCache, registry, s);
+				} catch (e) {
+					console.warn(
+						`MCP server ${s.id} (${s.name}) tool registration failed:`,
+						e instanceof Error ? e.message : String(e),
+					);
+					throw e;
+				}
+			}),
+	);
+	// Defensive: surface any settled errors not already logged.
+	for (const r of mcpResults) {
+		if (r.status === 'rejected' && r.reason instanceof Error && !r.reason.message) {
+			console.warn('MCP server registration rejected without a message');
+		}
 	}
 	if (env.SANDBOX) {
 		registerSandboxTools(registry, {
@@ -91,8 +106,13 @@ export async function buildBaseToolRegistry(
 		for (const row of customTools.filter((t) => t.enabled)) {
 			try {
 				registry.register(buildCustomTool(row));
-			} catch {
-				// One bad tool definition shouldn't take down the whole turn.
+			} catch (e) {
+				// One bad tool definition shouldn't take down the whole turn,
+				// but log so operators can diagnose a malformed schema.
+				console.warn(
+					`Custom tool ${row.id} (${row.name}) build failed:`,
+					e instanceof Error ? e.message : String(e),
+				);
 			}
 		}
 		for (const tool of customToolMetaTools) {

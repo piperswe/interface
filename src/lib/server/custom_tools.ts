@@ -143,29 +143,91 @@ export type CreateCustomToolInput = {
 	secretsJson?: string | null;
 };
 
+// Caps to prevent unbounded growth (D1 row limits, system-prompt budget,
+// cache-key rebuilds). Custom tool descriptions land in the LLM tool list
+// on every turn, so a long description bloats every prompt.
+export const MAX_TOOL_NAME_LEN = 64;
+export const MAX_TOOL_DESCRIPTION_LEN = 1024;
+export const MAX_TOOL_SOURCE_LEN = 64_000;
+export const MAX_TOOL_SCHEMA_LEN = 8_000;
+export const MAX_TOOL_SECRETS_LEN = 16_000;
+
+const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+// Validate (and normalise) the secrets blob. The original validator only
+// checked that the JSON was an object; values could be non-strings and keys
+// could be `__proto__` / `constructor`. Both flow into the loaded Worker's
+// `env`, where they violate the documented contract (string secret values)
+// and seed prototype-pollution chains in any downstream consumer that does
+// `Object.assign({}, secrets)`.
+function validateSecretsJsonOrThrow(json: string): Record<string, string> {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(json);
+	} catch {
+		throw new Error('secrets_json must be valid JSON.');
+	}
+	if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+		throw new Error('secrets_json must be a JSON object.');
+	}
+	const out: Record<string, string> = {};
+	for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+		if (FORBIDDEN_KEYS.has(key)) {
+			throw new Error(`secrets_json contains forbidden key: ${key}`);
+		}
+		if (typeof value !== 'string') {
+			throw new Error(`secrets_json value for "${key}" must be a string.`);
+		}
+		out[key] = value;
+	}
+	return out;
+}
+
+// Validate the input_schema JSON — must be an object (not an array) with
+// `type: "object"` if it specifies a top-level type.
+function validateInputSchemaOrThrow(json: string): void {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(json);
+	} catch {
+		throw new Error('input_schema must be valid JSON.');
+	}
+	if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+		throw new Error('input_schema must be a JSON object.');
+	}
+	const t = (parsed as { type?: unknown }).type;
+	if (t !== undefined && t !== 'object') {
+		throw new Error('input_schema.type must be "object" (or omitted).');
+	}
+}
+
+function validateLengthOrThrow(label: string, value: string, max: number): void {
+	if (value.length > max) {
+		throw new Error(`${label} exceeds maximum length of ${max} characters.`);
+	}
+}
+
 export async function createCustomTool(
 	env: Env,
 	input: CreateCustomToolInput,
 	userId: number = SINGLE_USER_ID,
 ): Promise<number> {
+	if (typeof input.name !== 'string') throw new Error('Tool name must be a string.');
+	if (typeof input.description !== 'string') throw new Error('Description must be a string.');
+	if (typeof input.source !== 'string') throw new Error('Source must be a string.');
+	if (typeof input.inputSchema !== 'string') throw new Error('input_schema must be a JSON string.');
 	const nameErr = customToolNameError(input.name);
 	if (nameErr) throw new Error(nameErr);
 	if (!input.description.trim()) throw new Error('Description is required.');
 	if (!input.source.trim()) throw new Error('Source is required.');
-	try {
-		JSON.parse(input.inputSchema);
-	} catch {
-		throw new Error('input_schema must be valid JSON.');
-	}
+	validateLengthOrThrow('Tool name', input.name, MAX_TOOL_NAME_LEN);
+	validateLengthOrThrow('Description', input.description, MAX_TOOL_DESCRIPTION_LEN);
+	validateLengthOrThrow('Source', input.source, MAX_TOOL_SOURCE_LEN);
+	validateLengthOrThrow('input_schema', input.inputSchema, MAX_TOOL_SCHEMA_LEN);
+	validateInputSchemaOrThrow(input.inputSchema);
 	if (input.secretsJson) {
-		try {
-			const parsed = JSON.parse(input.secretsJson);
-			if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-				throw new Error('secrets_json must be a JSON object.');
-			}
-		} catch {
-			throw new Error('secrets_json must be valid JSON.');
-		}
+		validateLengthOrThrow('secrets_json', input.secretsJson, MAX_TOOL_SECRETS_LEN);
+		validateSecretsJsonOrThrow(input.secretsJson);
 	}
 
 	const existing = await getCustomToolByName(env, input.name, userId);
@@ -211,6 +273,8 @@ export async function updateCustomTool(
 	const values: unknown[] = [];
 
 	if (patch.name !== undefined) {
+		if (typeof patch.name !== 'string') throw new Error('Tool name must be a string.');
+		validateLengthOrThrow('Tool name', patch.name, MAX_TOOL_NAME_LEN);
 		const nameErr = customToolNameError(patch.name);
 		if (nameErr) throw new Error(nameErr);
 		const collision = await getCustomToolByName(env, patch.name, userId);
@@ -221,34 +285,30 @@ export async function updateCustomTool(
 		values.push(patch.name);
 	}
 	if (patch.description !== undefined) {
+		if (typeof patch.description !== 'string') throw new Error('Description must be a string.');
 		if (!patch.description.trim()) throw new Error('Description is required.');
+		validateLengthOrThrow('Description', patch.description, MAX_TOOL_DESCRIPTION_LEN);
 		sets.push('description = ?');
 		values.push(patch.description);
 	}
 	if (patch.source !== undefined) {
+		if (typeof patch.source !== 'string') throw new Error('Source must be a string.');
 		if (!patch.source.trim()) throw new Error('Source is required.');
+		validateLengthOrThrow('Source', patch.source, MAX_TOOL_SOURCE_LEN);
 		sets.push('source = ?');
 		values.push(patch.source);
 	}
 	if (patch.inputSchema !== undefined) {
-		try {
-			JSON.parse(patch.inputSchema);
-		} catch {
-			throw new Error('input_schema must be valid JSON.');
-		}
+		if (typeof patch.inputSchema !== 'string') throw new Error('input_schema must be a JSON string.');
+		validateLengthOrThrow('input_schema', patch.inputSchema, MAX_TOOL_SCHEMA_LEN);
+		validateInputSchemaOrThrow(patch.inputSchema);
 		sets.push('input_schema = ?');
 		values.push(patch.inputSchema);
 	}
 	if (patch.secretsJson !== undefined) {
 		if (patch.secretsJson) {
-			try {
-				const parsed = JSON.parse(patch.secretsJson);
-				if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-					throw new Error('secrets_json must be a JSON object.');
-				}
-			} catch {
-				throw new Error('secrets_json must be valid JSON.');
-			}
+			validateLengthOrThrow('secrets_json', patch.secretsJson, MAX_TOOL_SECRETS_LEN);
+			validateSecretsJsonOrThrow(patch.secretsJson);
 		}
 		sets.push('secrets_json = ?');
 		values.push(patch.secretsJson ?? null);
@@ -288,17 +348,27 @@ export async function setCustomToolEnabled(
 		.run();
 }
 
-export function parseSecretsJson(json: string | null | undefined): Record<string, unknown> {
+// Defensive: never return `__proto__` / `constructor` / `prototype` as keys,
+// and drop any non-string value. Validators upstream should already have
+// rejected these, but legacy rows in D1 might have them. Returns a plain
+// object (not Object.create(null)) so it round-trips through structured-
+// clone when handed to the Worker loader as `env`.
+export function parseSecretsJson(json: string | null | undefined): Record<string, string> {
 	if (!json) return {};
+	let parsed: unknown;
 	try {
-		const parsed = JSON.parse(json);
-		if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-			return parsed as Record<string, unknown>;
-		}
+		parsed = JSON.parse(json);
 	} catch {
-		// fall through
+		return {};
 	}
-	return {};
+	if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {};
+	const out: Record<string, string> = {};
+	for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+		if (FORBIDDEN_KEYS.has(key)) continue;
+		if (typeof value !== 'string') continue;
+		out[key] = value;
+	}
+	return out;
 }
 
 export function secretKeys(json: string | null | undefined): string[] {
@@ -308,7 +378,11 @@ export function secretKeys(json: string | null | undefined): string[] {
 export function parseInputSchema(json: string): object {
 	try {
 		const parsed = JSON.parse(json);
-		if (parsed && typeof parsed === 'object') return parsed as object;
+		// Reject arrays — an array is a JSON object by JSON spec but not by
+		// JSON Schema. The Anthropic / OpenAI adapters expect an object shape.
+		if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+			return parsed as object;
+		}
 	} catch {
 		// fall through
 	}

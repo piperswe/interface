@@ -209,9 +209,24 @@ export const updateCustomToolTool: Tool = {
 			return { content: '`id` is required.', isError: true, errorCode: 'invalid_input' };
 		}
 		const patch: Parameters<typeof updateCustomTool>[2] = {};
-		if (args.name !== undefined) patch.name = args.name;
-		if (args.description !== undefined) patch.description = args.description;
-		if (args.source !== undefined) patch.source = args.source;
+		if (args.name !== undefined) {
+			if (typeof args.name !== 'string') {
+				return { content: '`name` must be a string.', isError: true, errorCode: 'invalid_input' };
+			}
+			patch.name = args.name;
+		}
+		if (args.description !== undefined) {
+			if (typeof args.description !== 'string') {
+				return { content: '`description` must be a string.', isError: true, errorCode: 'invalid_input' };
+			}
+			patch.description = args.description;
+		}
+		if (args.source !== undefined) {
+			if (typeof args.source !== 'string') {
+				return { content: '`source` must be a string.', isError: true, errorCode: 'invalid_input' };
+			}
+			patch.source = args.source;
+		}
 		if (args.input_schema !== undefined) {
 			patch.inputSchema =
 				typeof args.input_schema === 'string'
@@ -224,7 +239,12 @@ export const updateCustomToolTool: Tool = {
 					? JSON.stringify(args.secrets)
 					: null;
 		}
-		if (args.enabled !== undefined) patch.enabled = args.enabled;
+		if (args.enabled !== undefined) {
+			if (typeof args.enabled !== 'boolean') {
+				return { content: '`enabled` must be a boolean.', isError: true, errorCode: 'invalid_input' };
+			}
+			patch.enabled = args.enabled;
+		}
 		try {
 			await updateCustomTool(ctx.env, args.id, patch);
 			return { content: `Updated custom tool #${args.id}. Changes apply on the next turn.` };

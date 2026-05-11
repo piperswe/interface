@@ -135,6 +135,63 @@ describe('custom_tools CRUD', () => {
 		).rejects.toThrow(/secrets_json/);
 	});
 
+	// Regression (F1): secrets values were not validated to be strings, so the
+	// LLM could pass `{KEY: {prototype: ...}}` and the non-string value would
+	// land in the loaded worker's env. Reject non-string values.
+	it('rejects non-string values in secrets_json', async () => {
+		await expect(
+			createCustomTool(env, {
+				name: 'badsec2',
+				description: 'd',
+				source: STUB_SOURCE,
+				inputSchema: STUB_SCHEMA,
+				secretsJson: '{"KEY": 123}',
+			}),
+		).rejects.toThrow(/must be a string/);
+	});
+
+	// Regression (F1 / F7): keys like `__proto__` survive JSON.parse and would
+	// reach the loaded worker's env. Reject them upstream.
+	it('rejects forbidden keys (__proto__, constructor, prototype) in secrets_json', async () => {
+		await expect(
+			createCustomTool(env, {
+				name: 'badsec3',
+				description: 'd',
+				source: STUB_SOURCE,
+				inputSchema: STUB_SCHEMA,
+				secretsJson: '{"__proto__":"x"}',
+			}),
+		).rejects.toThrow(/forbidden key/);
+	});
+
+	// Regression (F4): no length cap on description meant the LLM could
+	// silently inflate the system prompt by self-authoring a tool with a
+	// gigantic description.
+	it('rejects descriptions longer than the cap', async () => {
+		await expect(
+			createCustomTool(env, {
+				name: 'longdesc',
+				description: 'x'.repeat(2000),
+				source: STUB_SOURCE,
+				inputSchema: STUB_SCHEMA,
+			}),
+		).rejects.toThrow(/maximum length/);
+	});
+
+	// Regression (F8): parseInputSchema used to accept arrays as schemas,
+	// which the LLM adapters then forwarded as `input_schema` (expecting an
+	// object shape).
+	it('rejects arrays in input_schema', async () => {
+		await expect(
+			createCustomTool(env, {
+				name: 'arrschema',
+				description: 'd',
+				source: STUB_SOURCE,
+				inputSchema: '[]',
+			}),
+		).rejects.toThrow(/must be a JSON object/);
+	});
+
 	it('updateCustomTool patches partial fields', async () => {
 		const id = await createCustomTool(env, {
 			name: 'foo',
@@ -193,5 +250,20 @@ describe('parseSecretsJson / secretKeys', () => {
 		expect(parseSecretsJson('not-json')).toEqual({});
 		expect(parseSecretsJson('[1,2]')).toEqual({});
 		expect(secretKeys(null)).toEqual([]);
+	});
+
+	// Regression (F7): legacy rows might still have __proto__ in their stored
+	// JSON. The runtime parser must drop it defensively so it never reaches
+	// the loaded worker's env, and never appears in `secretKeys()` output.
+	it('drops __proto__, constructor, prototype keys', () => {
+		expect(parseSecretsJson('{"__proto__":"x","KEY":"v"}')).toEqual({ KEY: 'v' });
+		expect(parseSecretsJson('{"constructor":"x","KEY":"v"}')).toEqual({ KEY: 'v' });
+		expect(parseSecretsJson('{"prototype":"x","KEY":"v"}')).toEqual({ KEY: 'v' });
+		expect(secretKeys('{"__proto__":"x","KEY":"v"}')).toEqual(['KEY']);
+	});
+
+	it('drops non-string values', () => {
+		expect(parseSecretsJson('{"KEY":"v","BAD":123}')).toEqual({ KEY: 'v' });
+		expect(parseSecretsJson('{"KEY":"v","BAD":{"nested":1}}')).toEqual({ KEY: 'v' });
 	});
 });
