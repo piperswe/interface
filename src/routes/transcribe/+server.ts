@@ -26,13 +26,23 @@ export const POST: RequestHandler = async ({ request, platform, url }) => {
 		error(403, 'cross-origin request');
 	}
 
+	if (!request.body) error(400, 'request body required');
+
+	// Require an explicit, finite, digit-only Content-Length so a chunked /
+	// header-less upload can't slip past the size cap by skipping the guard
+	// entirely (`parseInt(null, 10) === NaN`, `Number.isFinite(NaN) ===
+	// false` — the old `if (Number.isFinite(...) && ...)` branch was a no-op
+	// without the header). Matches the sandbox upload endpoint's contract.
 	const contentLengthHeader = request.headers.get('content-length');
-	const contentLength = contentLengthHeader ? Number.parseInt(contentLengthHeader, 10) : NaN;
-	if (Number.isFinite(contentLength) && contentLength > MAX_AUDIO_BYTES) {
+	if (!contentLengthHeader) error(411, 'Content-Length header required');
+	if (!/^[0-9]+$/.test(contentLengthHeader)) error(400, 'invalid Content-Length');
+	const contentLength = Number.parseInt(contentLengthHeader, 10);
+	if (!Number.isFinite(contentLength) || contentLength < 0) {
+		error(400, 'invalid Content-Length');
+	}
+	if (contentLength > MAX_AUDIO_BYTES) {
 		error(413, `audio too large (max ${MAX_AUDIO_BYTES} bytes)`);
 	}
-
-	if (!request.body) error(400, 'request body required');
 
 	const buf = await request.arrayBuffer();
 	if (buf.byteLength === 0) error(400, 'empty audio body');
