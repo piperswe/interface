@@ -1,0 +1,57 @@
+// Reject URLs that aren't HTTPS or that point at loopback / RFC 1918 /
+// link-local / cloud-metadata addresses. Shared by anywhere we accept an
+// operator-supplied URL that the worker will then fetch server-side
+// (MCP discovery, provider endpoints).
+//
+// Lives under `src/lib/server` rather than `src/lib` so it can't be bundled
+// into client code. Exported names start with `assert*` (throw) rather than
+// `is*` (boolean) — the throwing form forces callers to handle the failure
+// at the input boundary.
+
+export function assertPublicHttpsUrl(value: string): void {
+	let url: URL;
+	try {
+		url = new URL(value);
+	} catch {
+		throw new Error(`Invalid URL: ${value}`);
+	}
+	if (url.protocol !== 'https:') {
+		throw new Error(`URL must use https:// (got ${url.protocol}//)`);
+	}
+	if (url.username || url.password) {
+		throw new Error('URL must not contain credentials in userinfo');
+	}
+	const host = url.hostname.toLowerCase();
+	if (host === 'localhost' || host === 'localhost.localdomain') {
+		throw new Error('URL must not target localhost');
+	}
+	// IPv4 literal? Check for loopback / RFC 1918 / link-local / metadata.
+	const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+	if (v4) {
+		const [a, b] = [Number(v4[1]), Number(v4[2])];
+		if (
+			a === 127 || // loopback
+			a === 10 || // RFC 1918
+			(a === 172 && b >= 16 && b <= 31) || // RFC 1918
+			(a === 192 && b === 168) || // RFC 1918
+			(a === 169 && b === 254) || // link-local incl. 169.254.169.254
+			a === 0 ||
+			a >= 224 // multicast / reserved
+		) {
+			throw new Error(`URL must not target a private/reserved IP (${host})`);
+		}
+	}
+	// IPv6 literal — workerd surfaces these as bracketed.
+	if (host.startsWith('[') || host.includes(':')) {
+		const bare = host.replace(/^\[/, '').replace(/\]$/, '');
+		if (
+			bare === '::1' ||
+			bare === '::' ||
+			bare.startsWith('fc') ||
+			bare.startsWith('fd') || // fc00::/7 unique-local
+			bare.startsWith('fe80:') // link-local
+		) {
+			throw new Error(`URL must not target a private/reserved IPv6 (${host})`);
+		}
+	}
+}

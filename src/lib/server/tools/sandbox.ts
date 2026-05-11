@@ -82,7 +82,12 @@ const SSH_CONFIG = `Host github.com
 const FINGERPRINT_CACHE_MAX = 64;
 const fingerprintCache = new Map<string, string>();
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
-	const digest = await crypto.subtle.digest('SHA-256', bytes);
+	// `crypto.subtle.digest` wants a `BufferSource` whose buffer is an
+	// `ArrayBuffer` (not `SharedArrayBuffer`). `bytes.buffer` is typed
+	// `ArrayBufferLike` so a slice off the matching range gives us a
+	// concrete `ArrayBuffer` the lib types accept.
+	const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+	const digest = await crypto.subtle.digest('SHA-256', ab);
 	return Array.from(new Uint8Array(digest))
 		.map((b) => b.toString(16).padStart(2, '0'))
 		.join('');
