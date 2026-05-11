@@ -41,6 +41,32 @@ export function _ftsQueryForTest(input: string): string {
 	return buildFtsQuery(input);
 }
 
+// FTS5's `snippet()` interpolates user/LLM content between the open/close
+// markers. We can't use `<mark>` directly because the snippet was previously
+// rendered into the DOM via `{@html}`, executing any raw HTML in the indexed
+// text (e.g. `<img onerror>` from a prior message). Use NUL bytes as
+// placeholders, HTML-escape the entire snippet, then re-introduce the marker
+// tags. Exported for unit testing.
+const SNIPPET_OPEN_SENTINEL = '';
+const SNIPPET_CLOSE_SENTINEL = '';
+
+export function _renderSnippetSafe(snippet: string): string {
+	// Order matters: escape the user content first so any literal `<mark>`
+	// in the indexed text becomes `&lt;mark&gt;`, then swap our sentinels
+	// for the real tags.
+	const escaped = snippet
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;')
+		.replace(/'/g, '&#39;');
+	return escaped
+		.split(SNIPPET_OPEN_SENTINEL)
+		.join('<mark>')
+		.split(SNIPPET_CLOSE_SENTINEL)
+		.join('</mark>');
+}
+
 export async function searchConversations(env: Env, query: string, limit = 30): Promise<SearchHit[]> {
 	const trimmed = query.trim();
 	if (!trimmed) return [];
@@ -49,7 +75,8 @@ export async function searchConversations(env: Env, query: string, limit = 30): 
 
 	// LEFT JOIN onto conversations to fetch the title for each hit (search
 	// rows already store conversation_id). FTS5's `snippet()` returns up to
-	// 12 tokens around the match wrapped in `<mark>`...`</mark>`.
+	// 12 tokens around the match wrapped in the open/close sentinels; we
+	// HTML-escape and re-introduce `<mark>` in `_renderSnippetSafe`.
 	type Row = {
 		conversation_id: string;
 		message_id: string;
@@ -62,7 +89,7 @@ export async function searchConversations(env: Env, query: string, limit = 30): 
 	const result = await env.DB.prepare(
 		`SELECT s.conversation_id, s.message_id, s.role, s.created_at,
 		        c.title AS conversation_title, c.archived_at,
-		        snippet(conversation_search, 4, '<mark>', '</mark>', '…', 12) AS snippet
+		        snippet(conversation_search, 4, char(1), char(2), '…', 12) AS snippet
 		   FROM conversation_search s
 		   JOIN conversations c ON c.id = s.conversation_id
 		  WHERE conversation_search MATCH ?
@@ -78,7 +105,7 @@ export async function searchConversations(env: Env, query: string, limit = 30): 
 		conversationTitle: r.conversation_title ?? '(untitled)',
 		messageId: r.message_id === TITLE_SENTINEL ? null : r.message_id,
 		role: (r.role === 'title' || r.role === 'user' || r.role === 'assistant') ? r.role : 'assistant',
-		snippet: r.snippet,
+		snippet: _renderSnippetSafe(r.snippet),
 		createdAt: r.created_at,
 	}));
 }

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { CitationsPart } from '$lib/types/conversation';
+	import { safeExternalUrl } from './url-guard';
 
 	let { part }: { part: CitationsPart } = $props();
 </script>
@@ -16,7 +17,7 @@
 					<span class="citation-num text-muted">[{i + 1}]</span>
 					<a
 						class="citation-link text-decoration-none"
-						href={c.url}
+						href={safeExternalUrl(c.url)}
 						target="_blank"
 						rel="noopener noreferrer"
 					>{c.title || c.url}</a>

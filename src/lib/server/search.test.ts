@@ -2,6 +2,7 @@ import { env } from 'cloudflare:test';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
 	_ftsQueryForTest,
+	_renderSnippetSafe,
 	indexMessage,
 	indexTitle,
 	searchConversations,
@@ -62,6 +63,12 @@ describe('searchConversations', () => {
 		expect(ours?.snippet).toContain('<mark>');
 	});
 
+	it('renders snippets with control-char sentinels swapped for <mark>', () => {
+		const raw = '\x01needle\x02 found in <text>';
+		const html = _renderSnippetSafe(raw);
+		expect(html).toBe('<mark>needle</mark> found in &lt;text&gt;');
+	});
+
 	it('returns the indexed message body and exposes its messageId', async () => {
 		const id = await createConversation(env);
 		await indexMessage(env, {
@@ -76,6 +83,34 @@ describe('searchConversations', () => {
 		expect(messageHit).toBeDefined();
 		expect(messageHit?.conversationId).toBe(id);
 		expect(messageHit?.snippet).toContain('quartz');
+	});
+
+	// Regression: the search palette renders `hit.snippet` with `{@html}`,
+	// and FTS5's `snippet()` interpolates the matched user text between the
+	// open/close markers. A message containing `<img src=x onerror=...>`
+	// previously executed when shown in Cmd-K. The snippet is now built
+	// with sentinel control chars, HTML-escaped, and the sentinels are
+	// swapped for `<mark>` tags.
+	it('escapes HTML in the FTS snippet', async () => {
+		const id = await createConversation(env);
+		await indexMessage(env, {
+			conversationId: id,
+			messageId: 'm-xss',
+			role: 'user',
+			text: 'before <img src=x onerror=alert(1)> needle after',
+			createdAt: 1,
+		});
+		const hits = await searchConversations(env, 'needle');
+		const hit = hits.find((h) => h.messageId === 'm-xss');
+		expect(hit).toBeDefined();
+		// `<mark>` survives as a real tag (we need the highlight).
+		expect(hit!.snippet).toContain('<mark>needle</mark>');
+		// `<img>` from the indexed text must NOT survive as a real tag — it's
+		// HTML-escaped so the browser renders it as text, not as an element.
+		expect(hit!.snippet).not.toMatch(/<img\s/i);
+		expect(hit!.snippet).toContain('&lt;img');
+		// The literal "onerror=" appears as escaped text but cannot fire.
+		expect(hit!.snippet).not.toMatch(/<[a-z]+\s[^>]*onerror=/i);
 	});
 
 	it('omits hits whose conversation is archived', async () => {
