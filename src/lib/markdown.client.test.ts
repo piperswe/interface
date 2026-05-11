@@ -146,4 +146,18 @@ describe('_isSafeUrl', () => {
 		expect(_isSafeUrl('mailto:x@y')).toBe(true);
 		expect(_isSafeUrl('tel:+1')).toBe(true);
 	});
+	// Regression: the bare `/` prefix check used to also match `//host` and
+	// `/\host` (protocol-relative URLs). A markdown link of
+	// `[click](//evil.example)` would resolve in the browser against the
+	// current scheme and navigate off-origin — open redirect / phishing.
+	it('rejects protocol-relative URLs', () => {
+		expect(_isSafeUrl('//evil.example')).toBe(false);
+		expect(_isSafeUrl('//evil.example/path')).toBe(false);
+		expect(_isSafeUrl('/\\evil.example')).toBe(false);
+	});
+	it('does not render protocol-relative URLs as link hrefs', async () => {
+		const html = await renderMarkdownClient('[click](//evil.example)');
+		expect(html).not.toMatch(/href=["']\/\//);
+		expect(html).toContain('href="#"');
+	});
 });

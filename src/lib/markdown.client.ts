@@ -83,6 +83,12 @@ function getHighlighter(): Promise<Highlighter> {
 function isSafeUrl(value: string): boolean {
 	const v = value.trim().toLowerCase();
 	if (v === '') return true;
+	// Reject protocol-relative URLs (`//evil.example`, `/\evil.example`) up
+	// front so the later `/`-prefix branch doesn't let them through. Browsers
+	// resolve `//host` in `href` against the current scheme and navigate
+	// off-origin — that's the open-redirect / phishing surface the sibling
+	// `components/url-guard.ts` already guards against.
+	if (v.startsWith('//') || v.startsWith('/\\')) return false;
 	if (
 		v.startsWith('http:') ||
 		v.startsWith('https:') ||
