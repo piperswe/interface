@@ -91,16 +91,28 @@ export type StoredOauthTokens = {
 	expiresAt: number | null;
 };
 
+export type SetTokensOptions = {
+	// True for initial exchange (we want the operator to see the newly-
+	// connected server enabled). False for background refresh, where we must
+	// not silently revive a server the operator paused via `enabled = 0`.
+	reEnable?: boolean;
+};
+
 export async function setMcpServerOauthTokens(
 	env: Env,
 	id: number,
 	tokens: StoredOauthTokens,
+	options: SetTokensOptions = {},
 ): Promise<void> {
-	await env.DB.prepare(
-		`UPDATE mcp_servers
+	const reEnable = options.reEnable !== false;
+	const sql = reEnable
+		? `UPDATE mcp_servers
 		 SET oauth_access_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?, enabled = 1
-		 WHERE id = ?`,
-	)
+		 WHERE id = ?`
+		: `UPDATE mcp_servers
+		 SET oauth_access_token = ?, oauth_refresh_token = ?, oauth_expires_at = ?
+		 WHERE id = ?`;
+	await env.DB.prepare(sql)
 		.bind(tokens.accessToken, tokens.refreshToken, tokens.expiresAt, id)
 		.run();
 }

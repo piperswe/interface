@@ -128,6 +128,79 @@ describe('getValidAccessToken', () => {
 		expect(fetchSpy).not.toHaveBeenCalled();
 	});
 
+	// Regression (F1): RFC 6749 §6 says "if a new refresh token is issued, ...
+	// otherwise, the client MUST RETAIN the refresh token." persistTokens used
+	// to do `token.refresh_token ?? null`, wiping the stored refresh token
+	// on every refresh against an AS that doesn't rotate it. Now we keep the
+	// existing refresh token when the AS omits a new one.
+	it('retains the existing refresh token when AS returns none', async () => {
+		const id = await seedServer();
+		await setMcpServerOauthClient(env, id, {
+			authorizationServer: 'https://as.example',
+			authorizationEndpoint: 'https://as.example/authorize',
+			tokenEndpoint: 'https://as.example/token',
+			registrationEndpoint: null,
+			clientId: 'cid',
+			clientSecret: null,
+			scopes: null,
+		});
+		await setMcpServerOauthTokens(env, id, {
+			accessToken: 'AT-old',
+			refreshToken: 'RT-keep',
+			expiresAt: Date.now() + 5_000,
+		});
+		const row = await getMcpServer(env, id);
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+			new Response(
+				JSON.stringify({ access_token: 'AT-new', token_type: 'Bearer', expires_in: 60 }),
+				{ status: 200, headers: { 'Content-Type': 'application/json' } },
+			),
+		);
+		const tok = await getValidAccessToken(env, id, row!.oauth);
+		expect(tok).toBe('AT-new');
+		const after = await getMcpServer(env, id);
+		expect(after?.oauth?.accessToken).toBe('AT-new');
+		expect(after?.oauth?.refreshToken).toBe('RT-keep');
+	});
+
+	// Regression (F4): refresh used to flip `enabled = 1` on the row,
+	// silently re-enabling a server the operator had explicitly disabled.
+	it('does not re-enable a disabled server on background refresh', async () => {
+		const id = await seedServer();
+		await setMcpServerOauthClient(env, id, {
+			authorizationServer: 'https://as.example',
+			authorizationEndpoint: 'https://as.example/authorize',
+			tokenEndpoint: 'https://as.example/token',
+			registrationEndpoint: null,
+			clientId: 'cid',
+			clientSecret: null,
+			scopes: null,
+		});
+		await setMcpServerOauthTokens(env, id, {
+			accessToken: 'AT-old',
+			refreshToken: 'RT-old',
+			expiresAt: Date.now() + 5_000,
+		});
+		// Operator-level disable.
+		await env.DB.prepare('UPDATE mcp_servers SET enabled = 0 WHERE id = ?').bind(id).run();
+		const row = await getMcpServer(env, id);
+		expect(row?.enabled).toBe(false);
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					access_token: 'AT-new',
+					token_type: 'Bearer',
+					expires_in: 60,
+					refresh_token: 'RT-new',
+				}),
+				{ status: 200, headers: { 'Content-Type': 'application/json' } },
+			),
+		);
+		await getValidAccessToken(env, id, row!.oauth);
+		const after = await getMcpServer(env, id);
+		expect(after?.enabled).toBe(false);
+	});
+
 	it('refreshes when within the buffer and persists new tokens', async () => {
 		const id = await seedServer();
 		await setMcpServerOauthClient(env, id, {
