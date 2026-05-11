@@ -1,6 +1,7 @@
 // D1 CRUD for providers. Single-user mode reserves user_id=1.
 
 import { now as nowMs } from '../clock';
+import { assertPublicHttpsUrl } from '../url-guard';
 import type { Provider, ProviderType } from './types';
 
 const SINGLE_USER_ID = 1;
@@ -68,38 +69,15 @@ export type CreateProviderInput = {
 };
 
 // Reject provider endpoints that aren't HTTPS or that point at loopback /
-// RFC 1918 / cloud-metadata IPs. The OpenAI SDK ships the configured
-// `Authorization: Bearer <apiKey>` header to whatever baseURL it's given,
-// so an unguarded endpoint is both an SSRF surface and an API key
-// exfiltration vector. Exported for unit testing.
+// RFC 1918 / link-local / cloud-metadata / IPv6 private ranges. The OpenAI
+// SDK ships the configured `Authorization: Bearer <apiKey>` header to
+// whatever baseURL it's given, so an unguarded endpoint is both an SSRF
+// surface and an API key exfiltration vector. Delegates to the shared
+// `assertPublicHttpsUrl` so this guard stays in lockstep with the MCP /
+// settings guards rather than drifting (and missing e.g. IPv6 literals or
+// `localhost.localdomain`). Exported for unit testing.
 export function _assertValidEndpoint(endpoint: string): void {
-	let url: URL;
-	try {
-		url = new URL(endpoint);
-	} catch {
-		throw new Error(`Invalid provider endpoint: ${endpoint}`);
-	}
-	if (url.protocol !== 'https:') {
-		throw new Error(`Provider endpoint must use https:// (got ${url.protocol})`);
-	}
-	const host = url.hostname.toLowerCase();
-	const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
-	if (host === 'localhost' || v4) {
-		const a = v4 ? Number(v4[1]) : NaN;
-		const b = v4 ? Number(v4[2]) : NaN;
-		if (
-			host === 'localhost' ||
-			a === 127 ||
-			a === 10 ||
-			(a === 172 && b >= 16 && b <= 31) ||
-			(a === 192 && b === 168) ||
-			(a === 169 && b === 254) ||
-			a === 0 ||
-			a >= 224
-		) {
-			throw new Error(`Provider endpoint must not target a private/reserved address (${host})`);
-		}
-	}
+	assertPublicHttpsUrl(endpoint);
 }
 
 export async function createProvider(

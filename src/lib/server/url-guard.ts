@@ -22,7 +22,10 @@ export function assertPublicHttpsUrl(value: string): void {
 		throw new Error('URL must not contain credentials in userinfo');
 	}
 	const host = url.hostname.toLowerCase();
-	if (host === 'localhost' || host === 'localhost.localdomain') {
+	if (host === 'localhost' || host === 'localhost.localdomain' || host.endsWith('.local')) {
+		// `.local` is mDNS / Bonjour and rarely resolves on cloud workers, but
+		// match the sibling fetch_url guard so all three SSRF predicates have
+		// identical hostname coverage.
 		throw new Error('URL must not target localhost');
 	}
 	// IPv4 literal? Check for loopback / RFC 1918 / link-local / metadata.

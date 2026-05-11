@@ -7,6 +7,7 @@ import {
 	isValidProviderId,
 	listProviders,
 	updateProvider,
+	_assertValidEndpoint,
 } from './store';
 
 afterEach(async () => {
@@ -164,5 +165,53 @@ describe('deleteProvider', () => {
 	it('is a no-op for unknown ids', async () => {
 		// Should not throw.
 		await deleteProvider(env, 'missing');
+	});
+});
+
+describe('_assertValidEndpoint', () => {
+	it('accepts public https URLs', () => {
+		expect(() => _assertValidEndpoint('https://api.example.com/v1')).not.toThrow();
+	});
+
+	it('rejects non-https schemes', () => {
+		expect(() => _assertValidEndpoint('http://api.example.com/v1')).toThrow(/https/i);
+		expect(() => _assertValidEndpoint('ftp://api.example.com/v1')).toThrow(/https/i);
+	});
+
+	it('rejects unparseable URLs', () => {
+		expect(() => _assertValidEndpoint('not a url')).toThrow();
+	});
+
+	it('rejects loopback and RFC 1918 IPv4 literals', () => {
+		expect(() => _assertValidEndpoint('https://127.0.0.1/v1')).toThrow();
+		expect(() => _assertValidEndpoint('https://10.0.0.1/v1')).toThrow();
+		expect(() => _assertValidEndpoint('https://192.168.1.1/v1')).toThrow();
+		expect(() => _assertValidEndpoint('https://172.16.0.1/v1')).toThrow();
+		expect(() => _assertValidEndpoint('https://169.254.169.254/v1')).toThrow();
+	});
+
+	it('rejects localhost and localhost.localdomain', () => {
+		expect(() => _assertValidEndpoint('https://localhost/v1')).toThrow();
+		expect(() => _assertValidEndpoint('https://localhost.localdomain/v1')).toThrow();
+	});
+
+	// Regression: the previous implementation only ran its private-address
+	// check when the host was `localhost` or an IPv4 literal, so an operator
+	// who entered `https://[::1]:8443/v1` bypassed the guard and the OpenAI
+	// SDK would ship the configured `Authorization: Bearer <apiKey>` to the
+	// loopback interface. The consolidated guard now uses the same shared
+	// `assertPublicHttpsUrl` predicate the MCP path uses, which covers IPv6.
+	it('rejects IPv6 loopback and ULA literals', () => {
+		expect(() => _assertValidEndpoint('https://[::1]/v1')).toThrow();
+		expect(() => _assertValidEndpoint('https://[fc00::1]/v1')).toThrow();
+		expect(() => _assertValidEndpoint('https://[fd00::1]/v1')).toThrow();
+		expect(() => _assertValidEndpoint('https://[fe80::1]/v1')).toThrow();
+	});
+
+	// Regression: an endpoint with userinfo (`https://user:pass@host/v1`) was
+	// previously accepted; the shared guard now rejects it so a malicious
+	// endpoint string can't smuggle credentials past the URL parser.
+	it('rejects URLs that embed userinfo credentials', () => {
+		expect(() => _assertValidEndpoint('https://user:pass@api.example.com/v1')).toThrow();
 	});
 });
