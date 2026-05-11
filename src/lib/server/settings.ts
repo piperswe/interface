@@ -56,7 +56,10 @@ export async function getContextCompactionSummaryTokens(env: Env, userId: number
 	if (raw == null) return 16_384;
 	const n = Number.parseInt(raw, 10);
 	if (!Number.isFinite(n)) return 16_384;
-	return Math.max(256, n);
+	// Floor at 256 (a summary needs room), cap at 65_536 so a misconfigured
+	// setting cannot let the summarizer emit a multi-million-token "summary"
+	// and exhaust the heartbeat / cost budget.
+	return Math.max(256, Math.min(65_536, n));
 }
 
 // ---- Cost configuration helpers --------------------------------------------------------

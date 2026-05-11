@@ -43,13 +43,25 @@ export class AnthropicLLM implements LLM {
 		let stopReason: string | null = null;
 
 		try {
+			// Anthropic's API splits messages from the system instruction. Any
+			// `role: 'system'` entries in our cross-provider message list (e.g.
+			// the compaction summary, or a `Summarize...` instruction passed
+			// inline) must be merged into the `system` param — otherwise the
+			// filter in `toAnthropicMessages` would drop them silently.
+			const inlineSystem = request.messages
+				.filter((m) => m.role === 'system')
+				.map((m) => (typeof m.content === 'string' ? m.content : m.content.map((b) => (b.type === 'text' ? b.text : '')).join('')))
+				.filter((s) => s.length > 0);
+			const combinedSystemPrompt = [request.systemPrompt, ...inlineSystem]
+				.filter((s): s is string => !!s && s.length > 0)
+				.join('\n\n');
 			const params: Messages.MessageCreateParamsStreaming = {
 				model: this.model,
 				max_tokens: request.maxTokens ?? DEFAULT_MAX_TOKENS,
 				messages: toAnthropicMessages(request.messages),
 				stream: true,
 			};
-			const system = toAnthropicSystem(request.systemPrompt, request.cacheControl);
+			const system = toAnthropicSystem(combinedSystemPrompt || undefined, request.cacheControl);
 			if (system) params.system = system;
 			if (request.tools && request.tools.length > 0) {
 				params.tools = toAnthropicTools(request.tools, request.cacheControl);

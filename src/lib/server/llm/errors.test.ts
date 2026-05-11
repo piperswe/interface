@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatError } from './errors';
+import { formatError, redactSecrets } from './errors';
 
 describe('formatError', () => {
 	it('returns the message of an Error instance', () => {
@@ -49,5 +49,31 @@ describe('formatError', () => {
 	it('truncates oversized primitive String() outputs', () => {
 		const big = 'q'.repeat(1500);
 		expect(formatError(big)).toHaveLength(500);
+	});
+
+	// Regression (F3): formatError was documented as "redacts API keys" but
+	// did nothing. The function now strips Anthropic / OpenAI / OpenRouter
+	// key shapes plus Authorization / api-key header values before truncation.
+	it('redacts sk-ant- (Anthropic) keys', () => {
+		expect(formatError(new Error('401 from sk-ant-api03-AbCdEf1234567890XyZ'))).not.toMatch(
+			/sk-ant-api03-AbCdEf1234567890XyZ/,
+		);
+		expect(formatError(new Error('401 from sk-ant-api03-AbCdEf1234567890XyZ'))).toMatch(/REDACTED/);
+	});
+
+	it('redacts sk- (OpenAI / OpenRouter) keys', () => {
+		expect(formatError(new Error('401 sk-proj-AbCdEf1234567890XyZ'))).toMatch(/REDACTED/);
+		expect(formatError(new Error('401 sk-or-AbCdEf1234567890XyZ'))).toMatch(/REDACTED/);
+	});
+
+	it('redacts Authorization: Bearer headers in JSON payloads', () => {
+		const errObj = { headers: { authorization: 'Bearer abc123def456ghi789' } };
+		const out = formatError(errObj);
+		expect(out).not.toMatch(/abc123def456ghi789/);
+		expect(out).toMatch(/REDACTED/);
+	});
+
+	it('redactSecrets is exported for use elsewhere', () => {
+		expect(redactSecrets('Bearer abc123def456ghi789xyz')).toMatch(/REDACTED/);
 	});
 });
