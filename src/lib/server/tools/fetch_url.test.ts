@@ -38,6 +38,14 @@ describe('fetch_url tool', () => {
 			'http://192.168.1.1/',
 			'http://169.254.169.254/latest/meta-data/',
 			'http://[::1]/',
+			// Regression: IPv4-mapped IPv6 (`::ffff:127.0.0.1`) is the
+			// dual-stack representation of an IPv4 loopback. The WHATWG URL
+			// parser normalises it to `[::ffff:7f00:1]`, which doesn't match
+			// any of the bare IPv6 prefix checks. The IPv4-mapped helper now
+			// extracts the trailing octets and runs the IPv4 predicate.
+			'http://[::ffff:127.0.0.1]/',
+			'http://[::ffff:169.254.169.254]/',
+			'http://[::ffff:10.0.0.1]/',
 		]) {
 			const result = await fetchUrlTool.execute(ctx, { url });
 			expect(result.isError).toBe(true);

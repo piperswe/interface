@@ -76,4 +76,26 @@ describe('formatError', () => {
 	it('redactSecrets is exported for use elsewhere', () => {
 		expect(redactSecrets('Bearer abc123def456ghi789xyz')).toMatch(/REDACTED/);
 	});
+
+	// Regression: for capture-group-less patterns, `String.prototype.replace`
+	// passes `(match, offset, string)` to the callback, so the second arg is
+	// a number, not the captured prefix. The previous implementation treated
+	// any truthy value as a prefix and concatenated it before `***REDACTED***`,
+	// producing output like `"401 from 9***REDACTED***"` (where 9 is the
+	// match offset). The fix typeof-checks the prefix arg.
+	it('does not splice the match offset into the redacted output', () => {
+		// Match starts at index 9 — a non-zero offset triggered the bug.
+		const out = redactSecrets('401 from sk-ant-api03-AbCdEf1234567890XyZ end');
+		expect(out).toBe('401 from ***REDACTED*** end');
+		expect(out).not.toMatch(/\d\*\*\*REDACTED/);
+	});
+
+	it('preserves the captured prefix for capture-group patterns', () => {
+		// `Bearer <token>` pattern has a capture group; the callback must
+		// still emit `Bearer ***REDACTED***` rather than swallowing the
+		// `Bearer ` prefix.
+		const out = redactSecrets('Authorization: Bearer abc123def456ghi789');
+		expect(out).toContain('Bearer ***REDACTED***');
+		expect(out).not.toMatch(/abc123def456ghi789/);
+	});
 });

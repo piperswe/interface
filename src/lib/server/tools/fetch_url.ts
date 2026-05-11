@@ -10,6 +10,28 @@ const MAX_BYTES = 256 * 1024;
 // cloud-metadata, or other reserved ranges. The LLM should not be able to
 // fetch the worker's own routes or the operator's internal infrastructure.
 // Exported for unit testing.
+function ipv4OctetsArePrivate(a: number, b: number): boolean {
+	return (
+		a === 127 || // loopback
+		a === 10 || // RFC 1918
+		(a === 172 && b >= 16 && b <= 31) ||
+		(a === 192 && b === 168) ||
+		(a === 169 && b === 254) || // link-local incl. 169.254.169.254 metadata
+		a === 0 ||
+		a >= 224 // multicast / reserved
+	);
+}
+
+// IPv4-mapped IPv6 (`::ffff:a.b.c.d`) → first two IPv4 octets. The WHATWG
+// URL parser normalises `[::ffff:127.0.0.1]` to `[::ffff:7f00:1]`, so the
+// bare IPv6 prefix checks would otherwise miss them.
+function ipv4MappedOctets(bareIPv6: string): [number, number] | null {
+	const m = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(bareIPv6);
+	if (!m) return null;
+	const h1 = parseInt(m[1], 16);
+	return [(h1 >> 8) & 0xff, h1 & 0xff];
+}
+
 export function _hostIsPrivate(hostname: string): boolean {
 	const host = hostname.toLowerCase();
 	if (host === 'localhost' || host === 'localhost.localdomain' || host.endsWith('.local')) {
@@ -17,20 +39,8 @@ export function _hostIsPrivate(hostname: string): boolean {
 	}
 	// IPv4 literal
 	const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
-	if (v4) {
-		const a = Number(v4[1]);
-		const b = Number(v4[2]);
-		if (
-			a === 127 || // loopback
-			a === 10 || // RFC 1918
-			(a === 172 && b >= 16 && b <= 31) ||
-			(a === 192 && b === 168) ||
-			(a === 169 && b === 254) || // link-local incl. 169.254.169.254 metadata
-			a === 0 ||
-			a >= 224 // multicast / reserved
-		) {
-			return true;
-		}
+	if (v4 && ipv4OctetsArePrivate(Number(v4[1]), Number(v4[2]))) {
+		return true;
 	}
 	// IPv6 literal — workerd surfaces these as bracketed.
 	if (host.startsWith('[') || host.includes(':')) {
@@ -42,6 +52,10 @@ export function _hostIsPrivate(hostname: string): boolean {
 			bare.startsWith('fd') ||
 			bare.startsWith('fe80:')
 		) {
+			return true;
+		}
+		const mapped = ipv4MappedOctets(bare);
+		if (mapped && ipv4OctetsArePrivate(mapped[0], mapped[1])) {
 			return true;
 		}
 	}

@@ -33,7 +33,15 @@ const REDACT_PATTERNS: RegExp[] = [
 export function redactSecrets(s: string): string {
 	let out = s;
 	for (const re of REDACT_PATTERNS) {
-		out = out.replace(re, (_match, prefix?: string) => {
+		// `replace` calls back with `(match, ...args)` where the trailing args
+		// vary by regex shape: with a capture group it's `(match, p1, offset,
+		// string)`; without one it's `(match, offset, string)`. The first
+		// extra arg is therefore a string only when the regex actually has a
+		// capture group — typeof-checking before concatenating prevents the
+		// offset number from being stringified into the output (e.g. an
+		// echoed `sk-ant-…` at index 9 was producing `"9***REDACTED***"`).
+		out = out.replace(re, (_match: string, ...args: unknown[]) => {
+			const prefix = typeof args[0] === 'string' ? args[0] : undefined;
 			return prefix ? prefix + REDACTED : REDACTED;
 		});
 	}

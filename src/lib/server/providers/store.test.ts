@@ -208,6 +208,16 @@ describe('_assertValidEndpoint', () => {
 		expect(() => _assertValidEndpoint('https://[fe80::1]/v1')).toThrow();
 	});
 
+	// Regression: IPv4-mapped IPv6 (`::ffff:a.b.c.d`) is the dual-stack
+	// representation of an IPv4 address; the WHATWG URL parser normalises
+	// `[::ffff:127.0.0.1]` to `[::ffff:7f00:1]`, which the bare IPv6 prefix
+	// checks miss entirely.
+	it('rejects IPv4-mapped IPv6 private literals', () => {
+		expect(() => _assertValidEndpoint('https://[::ffff:127.0.0.1]/v1')).toThrow();
+		expect(() => _assertValidEndpoint('https://[::ffff:169.254.169.254]/v1')).toThrow();
+		expect(() => _assertValidEndpoint('https://[::ffff:10.0.0.1]/v1')).toThrow();
+	});
+
 	// Regression: an endpoint with userinfo (`https://user:pass@host/v1`) was
 	// previously accepted; the shared guard now rejects it so a malicious
 	// endpoint string can't smuggle credentials past the URL parser.
