@@ -2,6 +2,7 @@ import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
 import { z } from 'zod';
 import { safeValidate } from '$lib/zod-utils';
+import { ipv4OctetsArePrivate, ipv4MappedOctets } from '../url-guard';
 import type { Tool, ToolContext, ToolExecutionResult } from './registry';
 
 const MAX_BYTES = 256 * 1024;
@@ -9,29 +10,10 @@ const MAX_BYTES = 256 * 1024;
 // SSRF guard: reject hosts that resolve to loopback, link-local, RFC 1918,
 // cloud-metadata, or other reserved ranges. The LLM should not be able to
 // fetch the worker's own routes or the operator's internal infrastructure.
+// Shares its IPv4/IPv6 predicates with `url-guard.ts`'s throwing variant —
+// the boolean shape here exists because `fetch_url` allows http:// in
+// addition to https:// (the scheme check is one frame up in `urlIsSafe`).
 // Exported for unit testing.
-function ipv4OctetsArePrivate(a: number, b: number): boolean {
-	return (
-		a === 127 || // loopback
-		a === 10 || // RFC 1918
-		(a === 172 && b >= 16 && b <= 31) ||
-		(a === 192 && b === 168) ||
-		(a === 169 && b === 254) || // link-local incl. 169.254.169.254 metadata
-		a === 0 ||
-		a >= 224 // multicast / reserved
-	);
-}
-
-// IPv4-mapped IPv6 (`::ffff:a.b.c.d`) → first two IPv4 octets. The WHATWG
-// URL parser normalises `[::ffff:127.0.0.1]` to `[::ffff:7f00:1]`, so the
-// bare IPv6 prefix checks would otherwise miss them.
-function ipv4MappedOctets(bareIPv6: string): [number, number] | null {
-	const m = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(bareIPv6);
-	if (!m) return null;
-	const h1 = parseInt(m[1], 16);
-	return [(h1 >> 8) & 0xff, h1 & 0xff];
-}
-
 export function _hostIsPrivate(hostname: string): boolean {
 	const host = hostname.toLowerCase();
 	if (host === 'localhost' || host === 'localhost.localdomain' || host.endsWith('.local')) {

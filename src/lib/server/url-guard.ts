@@ -11,8 +11,9 @@
 // Whether an IPv4 dotted-quad represented as its first two octets falls in
 // loopback / RFC 1918 / link-local / multicast / reserved space. The IPv4
 // branch and the IPv4-mapped IPv6 branch share this predicate so they can't
-// drift.
-function ipv4OctetsArePrivate(a: number, b: number): boolean {
+// drift. Exported so the sibling `fetch_url` boolean-predicate guard can
+// reuse the same private-range definition.
+export function ipv4OctetsArePrivate(a: number, b: number): boolean {
 	return (
 		a === 127 || // loopback
 		a === 10 || // RFC 1918
@@ -29,7 +30,7 @@ function ipv4OctetsArePrivate(a: number, b: number): boolean {
 // hex form (`::ffff:HHHH:HHHH`), so the bare IPv6 prefix checks miss them.
 // Return the first two IPv4 octets so the same private-range predicate can
 // run on them.
-export function _ipv4MappedOctets(bareIPv6: string): [number, number] | null {
+export function ipv4MappedOctets(bareIPv6: string): [number, number] | null {
 	const m = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(bareIPv6);
 	if (!m) return null;
 	const h1 = parseInt(m[1], 16);
@@ -73,7 +74,7 @@ export function assertPublicHttpsUrl(value: string): void {
 		) {
 			throw new Error(`URL must not target a private/reserved IPv6 (${host})`);
 		}
-		const mapped = _ipv4MappedOctets(bare);
+		const mapped = ipv4MappedOctets(bare);
 		if (mapped && ipv4OctetsArePrivate(mapped[0], mapped[1])) {
 			throw new Error(`URL must not target a private/reserved IP (${host})`);
 		}
