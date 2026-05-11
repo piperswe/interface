@@ -67,11 +67,47 @@ export type CreateProviderInput = {
 	gatewayId?: string | null;
 };
 
+// Reject provider endpoints that aren't HTTPS or that point at loopback /
+// RFC 1918 / cloud-metadata IPs. The OpenAI SDK ships the configured
+// `Authorization: Bearer <apiKey>` header to whatever baseURL it's given,
+// so an unguarded endpoint is both an SSRF surface and an API key
+// exfiltration vector. Exported for unit testing.
+export function _assertValidEndpoint(endpoint: string): void {
+	let url: URL;
+	try {
+		url = new URL(endpoint);
+	} catch {
+		throw new Error(`Invalid provider endpoint: ${endpoint}`);
+	}
+	if (url.protocol !== 'https:') {
+		throw new Error(`Provider endpoint must use https:// (got ${url.protocol})`);
+	}
+	const host = url.hostname.toLowerCase();
+	const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+	if (host === 'localhost' || v4) {
+		const a = v4 ? Number(v4[1]) : NaN;
+		const b = v4 ? Number(v4[2]) : NaN;
+		if (
+			host === 'localhost' ||
+			a === 127 ||
+			a === 10 ||
+			(a === 172 && b >= 16 && b <= 31) ||
+			(a === 192 && b === 168) ||
+			(a === 169 && b === 254) ||
+			a === 0 ||
+			a >= 224
+		) {
+			throw new Error(`Provider endpoint must not target a private/reserved address (${host})`);
+		}
+	}
+}
+
 export async function createProvider(
 	env: Env,
 	input: CreateProviderInput,
 	userId: number = SINGLE_USER_ID,
 ): Promise<void> {
+	if (input.endpoint) _assertValidEndpoint(input.endpoint);
 	const now = nowMs();
 	await env.DB.prepare(
 		`INSERT INTO providers (id, type, api_key, endpoint, gateway_id, created_at, updated_at, user_id)
@@ -98,6 +134,7 @@ export async function updateProvider(
 	input: UpdateProviderInput,
 	userId: number = SINGLE_USER_ID,
 ): Promise<void> {
+	if (input.endpoint) _assertValidEndpoint(input.endpoint);
 	const now = nowMs();
 	const fields: string[] = [];
 	const values: (string | number | null)[] = [];

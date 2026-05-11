@@ -19,7 +19,16 @@ export async function getSetting(env: Env, key: string, userId: number = SINGLE_
 	return row?.value ?? null;
 }
 
+// Defensive cap so a malformed `saveSetting` request can't push a megabyte
+// of text into the system_prompt / user_bio setting and then have it
+// included in every chat turn. Specific settings (system_prompt, user_bio)
+// have their own UI bounds; this is a hard upper limit for any future key.
+const MAX_SETTING_VALUE_LEN = 32_768;
+
 export async function setSetting(env: Env, key: string, value: string, userId: number = SINGLE_USER_ID): Promise<void> {
+	if (value.length > MAX_SETTING_VALUE_LEN) {
+		throw new Error(`setting "${key}" value exceeds ${MAX_SETTING_VALUE_LEN} characters`);
+	}
 	const now = nowMs();
 	await env.DB.prepare(
 		`INSERT INTO settings (user_id, key, value, updated_at)

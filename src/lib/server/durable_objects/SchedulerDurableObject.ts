@@ -52,18 +52,34 @@ export default class SchedulerDurableObject extends DurableObject<Env> {
 
 	async alarm(): Promise<void> {
 		const now = nowMs();
-		const due = await listDueSchedules(this.env, now);
-		for (const s of due) {
+		try {
+			const due = await listDueSchedules(this.env, now);
+			for (const s of due) {
+				try {
+					await this.#runOne(s);
+				} catch (e) {
+					console.error('schedule run failed', s.id, e);
+				}
+				try {
+					await markScheduleRun(this.env, s.id, now);
+				} catch (e) {
+					// A transient D1 outage on `markScheduleRun` previously
+					// propagated out of `alarm()` (it was in `finally`),
+					// preventing `bump()` from rearming the alarm. The
+					// deployment-wide scheduler would then stay silent until
+					// an operator action called `bump`. Log and continue.
+					console.error('markScheduleRun failed', s.id, e);
+				}
+			}
+		} finally {
+			// Always re-arm so a partial loop failure can't permanently
+			// freeze the scheduler.
 			try {
-				await this.#runOne(s);
+				await this.bump();
 			} catch (e) {
-				console.error('schedule run failed', s.id, e);
-			} finally {
-				await markScheduleRun(this.env, s.id, now);
+				console.error('scheduler bump failed', e);
 			}
 		}
-		// Re-arm for the next due schedule.
-		await this.bump();
 	}
 
 	async #runOne(s: Schedule): Promise<void> {
