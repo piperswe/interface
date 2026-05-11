@@ -137,10 +137,19 @@ export const archive = form('unchecked', async (data: { conversationId?: unknown
 	if (!CONVERSATION_ID_PATTERN.test(id)) error(400, `invalid conversation id: ${id}`);
 	await archiveConversation(getEnv(), id);
 	// Restrict to same-origin paths so a malicious form post can't turn this
-	// into an open redirect. `//host` and `/\host` would otherwise be valid
-	// protocol-relative URLs to the browser.
-	const raw = String(data.redirectTo ?? '/');
-	const location = raw.startsWith('/') && !raw.startsWith('//') && !raw.startsWith('/\\') ? raw : '/';
+	// into an open redirect. We require the path to start with `/` followed
+	// only by URL-safe characters — this rejects protocol-relative
+	// (`//host`, `/\host`), tab/CRLF smuggling, and percent-encoded slash
+	// bypasses (`/%2F%2Fhost`).
+	const raw = data.redirectTo;
+	const candidate = typeof raw === 'string' ? raw.trim() : '/';
+	const location =
+		candidate.startsWith('/') &&
+		!candidate.startsWith('//') &&
+		!candidate.startsWith('/\\') &&
+		/^\/[A-Za-z0-9_\-./?&=#%]*$/.test(candidate)
+			? candidate
+			: '/';
 	redirect(303, location);
 });
 
