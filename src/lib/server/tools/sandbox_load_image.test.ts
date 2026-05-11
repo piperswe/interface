@@ -63,6 +63,38 @@ describe('sandbox_load_image tool', () => {
 		expect(result.errorCode).toBe('invalid_input');
 	});
 
+	// Regression: defense-in-depth — even though R2 keys are opaque flat
+	// strings today, reject `..` segments so the surface isn't fragile under
+	// any backend that normalises path components.
+	it('rejects paths containing `..` segments', async () => {
+		const tool = createSandboxLoadImageTool({ getModels: () => [model({ supportsImageInput: true })] });
+		const a = await tool.execute(ctx(), { path: '/workspace/../etc/passwd.png' });
+		expect(a.isError).toBe(true);
+		expect(a.errorCode).toBe('invalid_input');
+		const b = await tool.execute(ctx(), { path: '/workspace/foo/../../bar.png' });
+		expect(b.isError).toBe(true);
+		expect(b.errorCode).toBe('invalid_input');
+	});
+
+	// Regression: `.webp` was historically mapped to `image/jpeg` in the
+	// raw-passthrough branch (no IMAGES binding). Vision providers reject
+	// the request when bytes don't match the declared MIME, so WEBP uploads
+	// silently failed. The map must use `image/webp` so the raw bytes ship
+	// with the correct content-type.
+	it('returns image/webp for .webp files when no IMAGES binding is configured', async () => {
+		const tool = createSandboxLoadImageTool({
+			getModels: () => [model({ supportsImageInput: true })],
+		});
+		const bytes = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]); // 'RIFF....WEBP'
+		await bucket.put(`conversations/${CONV_ID}/uploads/icon.webp`, bytes);
+		const result = await tool.execute(ctx(), { path: '/workspace/uploads/icon.webp' });
+		expect(result.isError).toBeFalsy();
+		const blocks = result.content as Array<{ type: string; mimeType?: string }>;
+		const img = blocks.find((b) => b.type === 'image');
+		expect(img).toBeDefined();
+		expect(img!.mimeType).toBe('image/webp');
+	});
+
 	it('rejects unsupported file extensions', async () => {
 		const tool = createSandboxLoadImageTool({ getModels: () => [model({ supportsImageInput: true })] });
 		const result = await tool.execute(ctx(), { path: '/workspace/note.pdf' });

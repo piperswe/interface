@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:test';
 import { isHttpError } from '@sveltejs/kit';
 import { afterEach, describe, expect, it } from 'vitest';
-import { POST } from './+server';
+import { POST, _sanitizeFilename } from './+server';
 
 const VALID_ID = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
 
@@ -23,6 +23,7 @@ async function callPost(
 		body?: BodyInit | null;
 		contentType?: string;
 		contentLength?: number;
+		omitContentLength?: boolean;
 	} = {},
 ): Promise<Response> {
 	const params = new URLSearchParams();
@@ -30,11 +31,21 @@ async function callPost(
 	const url = new URL(`http://localhost/c/${conversationId}/sandbox/upload?${params}`);
 	const headers = new Headers();
 	if (options.contentType) headers.set('content-type', options.contentType);
-	if (options.contentLength != null) headers.set('content-length', String(options.contentLength));
+	const body = options.body ?? 'hello';
+	if (options.contentLength != null) {
+		headers.set('content-length', String(options.contentLength));
+	} else if (!options.omitContentLength) {
+		// Auto-compute for the common case so tests don't have to.
+		if (typeof body === 'string') {
+			headers.set('content-length', String(new TextEncoder().encode(body).byteLength));
+		} else if (body instanceof Uint8Array) {
+			headers.set('content-length', String(body.byteLength));
+		}
+	}
 	const request = new Request(url.toString(), {
 		method: 'POST',
 		headers,
-		body: options.body ?? 'hello',
+		body,
 	});
 	const event = {
 		params: { id: conversationId },
@@ -64,8 +75,16 @@ describe('sandbox/upload +server.ts — POST', () => {
 		await expectError(callPost(VALID_ID), 400);
 	});
 
-	it('rejects path-traversal attempts', async () => {
-		await expectError(callPost(VALID_ID, { filename: '../etc/passwd' }), 400);
+	// Regression: the old guard `trimmed.includes('..')` rejected legitimate
+	// names like `report.v..1.pdf`. The traversal threat is already neutralised
+	// by `split(/[\/\\]/).pop()` (taking the basename), so the safer behaviour
+	// is to strip path segments and accept the safe basename. The result here
+	// lands under `uploads/{ts}-passwd` — `..` segments cannot escape.
+	it('strips path-traversal segments down to the safe basename', async () => {
+		const res = await callPost(VALID_ID, { filename: '../etc/passwd' });
+		expect(res.ok).toBe(true);
+		const body = (await res.json()) as { path: string };
+		expect(body.path).toMatch(/^\/workspace\/uploads\/\d+-passwd$/);
 	});
 
 	it('rejects oversized uploads via Content-Length', async () => {
@@ -76,6 +95,53 @@ describe('sandbox/upload +server.ts — POST', () => {
 			}),
 			413,
 		);
+	});
+
+	// Regression: an upload without `Content-Length` used to fall through the
+	// size guard (`parseInt(null, 10) === NaN`, `Number.isFinite(NaN) === false`).
+	// We now require Content-Length and reject with 411.
+	it('rejects uploads with no Content-Length header (411)', async () => {
+		await expectError(
+			callPost(VALID_ID, { filename: 'x.bin', omitContentLength: true }),
+			411,
+		);
+	});
+
+	it('rejects non-numeric Content-Length with 400', async () => {
+		await expectError(
+			callPost(VALID_ID, { filename: 'x.bin', contentLength: '12abc' as unknown as number }),
+			400,
+		);
+	});
+});
+
+describe('_sanitizeFilename', () => {
+	it('accepts normal filenames', () => {
+		expect(_sanitizeFilename('photo.png')).toBe('photo.png');
+		expect(_sanitizeFilename('report.v1.pdf')).toBe('report.v1.pdf');
+	});
+
+	// Regression: the old guard `trimmed.includes('..')` over-rejected legitimate
+	// names like `report.v..2.pdf`. Now we only reject after taking the basename,
+	// and only if the basename itself is `..`.
+	it('accepts names with double-dots embedded', () => {
+		expect(_sanitizeFilename('version.1..2.txt')).toBe('version.1..2.txt');
+	});
+
+	it('rejects hidden files (leading dot)', () => {
+		expect(_sanitizeFilename('.htaccess')).toBeNull();
+		expect(_sanitizeFilename('.env')).toBeNull();
+	});
+
+	it('rejects "." and ".." basenames', () => {
+		expect(_sanitizeFilename('.')).toBeNull();
+		expect(_sanitizeFilename('..')).toBeNull();
+		expect(_sanitizeFilename('foo/..')).toBeNull();
+	});
+
+	it('strips path separators down to the basename', () => {
+		expect(_sanitizeFilename('sub/deeper/photo.png')).toBe('photo.png');
+		expect(_sanitizeFilename('C:\\users\\me\\file.txt')).toBe('file.txt');
 	});
 
 	it('writes the body to R2 at conversations/{id}/uploads/{ts}-{name}', async () => {

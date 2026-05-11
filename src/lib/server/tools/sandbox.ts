@@ -49,7 +49,18 @@ function getConversationSandbox(ctx: ToolContext) {
 // `SANDBOX_SSH_KEY` causes a re-injection on the next call (instead of
 // every conversation that already saw the old key being stuck with it
 // until the isolate cycles).
+//
+// Bounded so a long-lived Worker isolate that handles many conversations or
+// rotates the SSH key frequently can't accumulate entries indefinitely.
+const SSH_INJECTED_CACHE_MAX = 256;
 const sshKeyInjected = new Set<string>();
+function rememberSshKeyInjected(cacheKey: string): void {
+	if (sshKeyInjected.size >= SSH_INJECTED_CACHE_MAX) {
+		const first = sshKeyInjected.values().next().value;
+		if (first !== undefined) sshKeyInjected.delete(first);
+	}
+	sshKeyInjected.add(cacheKey);
+}
 
 const SSH_KEY_PATH = '/root/.ssh/sandbox_key';
 const SSH_CONFIG_PATH = '/root/.ssh/config';
@@ -64,19 +75,30 @@ const SSH_CONFIG = `Host github.com
 
 // Stable, low-collision fingerprint of the key bytes. Not cryptographic —
 // just used to detect rotation. Hash via Web Crypto (SHA-256, first 16 hex
-// chars). Cached so we don't re-hash every call.
+// chars). Cached so we don't re-hash every call. The map key is the
+// SHA-256 hex of the input key bytes (rather than the raw key text) so the
+// raw private key doesn't sit in isolate memory across calls; the LRU bound
+// prevents unbounded growth across many key rotations.
+const FINGERPRINT_CACHE_MAX = 64;
 const fingerprintCache = new Map<string, string>();
-async function fingerprintKey(key: string): Promise<string> {
-	const cached = fingerprintCache.get(key);
-	if (cached) return cached;
-	const bytes = new TextEncoder().encode(key);
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
 	const digest = await crypto.subtle.digest('SHA-256', bytes);
-	const hex = Array.from(new Uint8Array(digest))
-		.slice(0, 8)
+	return Array.from(new Uint8Array(digest))
 		.map((b) => b.toString(16).padStart(2, '0'))
 		.join('');
-	fingerprintCache.set(key, hex);
-	return hex;
+}
+async function fingerprintKey(key: string): Promise<string> {
+	const bytes = new TextEncoder().encode(key);
+	const fullHash = await sha256Hex(bytes);
+	const cached = fingerprintCache.get(fullHash);
+	if (cached) return cached;
+	const fp = fullHash.slice(0, 16);
+	if (fingerprintCache.size >= FINGERPRINT_CACHE_MAX) {
+		const first = fingerprintCache.keys().next().value;
+		if (first !== undefined) fingerprintCache.delete(first);
+	}
+	fingerprintCache.set(fullHash, fp);
+	return fp;
 }
 
 async function injectSshKey(sandbox: ReturnType<typeof getSandbox>, key: string): Promise<void> {
@@ -101,7 +123,7 @@ async function ensureSshKey(ctx: ToolContext): Promise<void> {
 	if (sshKeyInjected.has(cacheKey)) return;
 	const sandbox = getConversationSandbox(ctx);
 	await injectSshKey(sandbox, key);
-	sshKeyInjected.add(cacheKey);
+	rememberSshKeyInjected(cacheKey);
 }
 
 // ---------------------------------------------------------------------------
@@ -591,8 +613,13 @@ export const sandboxExecTool: Tool = {
 				void (async () => {
 					try {
 						for await (const ev of parseSSEStream<ExecEvent>(stream, callAc.signal)) {
+							// `armIdle` must NOT run after `resolved` flips, or a
+							// slow/hanging upstream keeps scheduling 60s timers on a
+							// caller that's already returned. The outer block cleared
+							// `idleTimer` once; we don't want the floating consumer
+							// to keep re-arming it.
+							if (resolved) continue;
 							armIdle();
-							if (resolved) continue; // suppress late chunks
 							if (ev.type === 'stdout' || ev.type === 'stderr') {
 								if (ev.data) {
 									if (ev.type === 'stdout') stdout += ev.data;
@@ -1099,7 +1126,7 @@ const IMAGE_EXTENSIONS: Record<string, string> = {
 	jpg: 'image/jpeg',
 	jpeg: 'image/jpeg',
 	gif: 'image/gif',
-	webp: 'image/jpeg',
+	webp: 'image/webp',
 };
 
 // Cap the in-context image size. Provider request bodies and token
@@ -1152,6 +1179,16 @@ export function createSandboxLoadImageTool(deps: SandboxLoadImageDeps): Tool {
 			if (!path.startsWith('/workspace/')) {
 				return {
 					content: 'Path must start with /workspace/.',
+					isError: true,
+					errorCode: 'invalid_input',
+				};
+			}
+			// Defense-in-depth: reject `..` segments so the R2 key construction
+			// can't produce a cross-conversation read primitive under any future
+			// backend that normalises path components.
+			if (path.split('/').includes('..')) {
+				return {
+					content: 'Path must not contain ".." segments.',
 					isError: true,
 					errorCode: 'invalid_input',
 				};

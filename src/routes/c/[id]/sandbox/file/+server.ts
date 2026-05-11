@@ -12,6 +12,10 @@ export const GET: RequestHandler = async ({ params, url, platform }) => {
 
 	const path = url.searchParams.get('path') ?? '';
 	if (!path.startsWith('/workspace/')) error(400, 'invalid path');
+	// Defense-in-depth: R2 treats keys as opaque flat strings today, but reject
+	// `..` segments so the surface isn't fragile under any backend that ever
+	// normalises path components (local FS emulator, alternative bucket).
+	if (path.split('/').includes('..')) error(400, 'invalid path');
 
 	const bucket = platform.env.WORKSPACE_BUCKET;
 	if (!bucket) error(503, 'workspace bucket not configured');

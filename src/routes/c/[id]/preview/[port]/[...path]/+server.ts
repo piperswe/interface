@@ -28,13 +28,59 @@ export function _buildPreviewUrl(opts: {
 	return new URL(targetPath, `http://${previewHostname}`);
 }
 
+// Strict port parser. `parseInt('3000abc', 10) === 3000`, so the original
+// guard let trailing junk through — the actual `exposePort` call would
+// quietly succeed with a normalised number while link templates upstream
+// reflected the attacker-supplied form. Exported for unit testing.
+export function _parsePreviewPort(raw: string): number | null {
+	if (!/^[0-9]+$/.test(raw)) return null;
+	const n = Number(raw);
+	if (!Number.isInteger(n) || n <= 0 || n > 65535) return null;
+	return n;
+}
+
+// Inbound headers that we MUST strip before proxying into the sandbox
+// container. The container is running LLM- or user-supplied code that the
+// operator does not control; forwarding browser auth/cookies/IP hands the
+// container the operator's session for the app and their real client IP.
+const STRIPPED_HEADER_PREFIXES = ['x-forwarded-', 'cf-'];
+const STRIPPED_HEADERS = new Set([
+	'cookie',
+	'authorization',
+	'proxy-authorization',
+	'x-real-ip',
+	'forwarded',
+]);
+
+export function _buildSanitizedProxyRequest(targetUrl: URL, request: Request): Request {
+	const headers = new Headers();
+	for (const [name, value] of request.headers) {
+		const lower = name.toLowerCase();
+		if (STRIPPED_HEADERS.has(lower)) continue;
+		if (STRIPPED_HEADER_PREFIXES.some((p) => lower.startsWith(p))) continue;
+		headers.set(name, value);
+	}
+	// `new Request(url, init)` requires a mode-compatible body when method is
+	// not GET/HEAD; passing `request.body` keeps the original ReadableStream.
+	const init: RequestInit = {
+		method: request.method,
+		headers,
+		redirect: 'manual',
+	};
+	if (request.method !== 'GET' && request.method !== 'HEAD') {
+		init.body = request.body;
+		(init as RequestInit & { duplex?: string }).duplex = 'half';
+	}
+	return new Request(targetUrl, init);
+}
+
 async function proxyToPreview({ params, request, url, platform }: Parameters<RequestHandler>[0]) {
 	if (!platform) error(500, 'Cloudflare platform bindings unavailable');
 	const conversationId = params.id;
 	if (!CONVERSATION_ID_PATTERN.test(conversationId)) error(404, 'not found');
 
-	const port = parseInt(params.port, 10);
-	if (Number.isNaN(port) || port <= 0) error(400, 'invalid port');
+	const port = _parsePreviewPort(params.port);
+	if (port === null) error(400, 'invalid port');
 	if (!platform.env.SANDBOX) error(503, 'sandbox not configured');
 
 	const ns = platform.env.SANDBOX as unknown as DurableObjectNamespace<Sandbox>;
@@ -59,7 +105,7 @@ async function proxyToPreview({ params, request, url, platform }: Parameters<Req
 
 	const id = ns.idFromName(conversationId);
 	const stub = ns.get(id);
-	const proxyRequest = new Request(previewUrl, request);
+	const proxyRequest = _buildSanitizedProxyRequest(previewUrl, request);
 	return await stub.fetch(proxyRequest);
 }
 

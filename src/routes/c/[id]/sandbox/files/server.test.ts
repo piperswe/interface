@@ -51,6 +51,13 @@ describe('sandbox/files +server.ts — GET', () => {
 		await expectError(callGet(VALID_ID, 'path=/etc'), 400);
 	});
 
+	// Regression: defense-in-depth against `..` segments. See sandbox/file
+	// server.test.ts for the matching test on the file endpoint.
+	it('rejects paths containing `..` segments with 400', async () => {
+		await expectError(callGet(VALID_ID, 'path=/workspace/../etc'), 400);
+		await expectError(callGet(VALID_ID, 'path=/workspace/sub/..'), 400);
+	});
+
 	it('lists files and directories at /workspace, sorted', async () => {
 		await bucket.put(`conversations/${VALID_ID}/zeta.txt`, 'z');
 		await bucket.put(`conversations/${VALID_ID}/alpha.txt`, 'a');
