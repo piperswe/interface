@@ -217,7 +217,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		// with an inverted ordering. The previous one's await-on-R2 might
 		// finish second otherwise.
 		const previous = this.#flushPromise ?? Promise.resolve();
-		this.#flushPromise = previous.then(async () => {
+		const mine = previous.then(async () => {
 			const ip = this.#inProgress;
 			if (!ip) return;
 			// Snapshot the live parts before the await so a mutation during
@@ -234,14 +234,19 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 				ip.messageId,
 			);
 		});
+		this.#flushPromise = mine;
 		try {
-			await this.#flushPromise;
+			await mine;
 		} catch {
 			// Swallow — caller (the timer) has no recourse and a failed
 			// debounced write isn't fatal: the next per-tool persist or the
 			// end-of-turn write will overwrite the row.
 		} finally {
-			this.#flushPromise = null;
+			// Compare-and-swap: only clear if no later flush has chained on
+			// top of this one. Without this guard, a three-deep overlap would
+			// reset the chain head while p2 was still pending, letting p3
+			// race p2 to write the row.
+			if (this.#flushPromise === mine) this.#flushPromise = null;
 		}
 	}
 
@@ -499,6 +504,9 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 
 	async setSystemPrompt(conversationId: string, prompt: string | null): Promise<void> {
 		this.#setConversationId(conversationId);
+		if (prompt != null && prompt.length > 16_384) {
+			throw new Error('system_prompt exceeds 16384 characters');
+		}
 		const trimmed = prompt?.trim() || null;
 		await this.env.DB.prepare('UPDATE conversations SET system_prompt = ? WHERE id = ?').bind(trimmed, conversationId).run();
 		this.#subscribers.broadcast('refresh', {});
@@ -616,8 +624,28 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 	// they don't keep streaming on an already-vanished conversation.
 	async destroy(): Promise<void> {
 		const conversationId = this.#conversationId;
+		// Abort the in-flight generation BEFORE nulling the reference so the
+		// running llm.chat({signal}) and registry.execute({signal}) actually
+		// stop. Without this the current iteration finishes, fires R2 puts /
+		// tool HTTP calls, and tries to UPDATE the now-deleteAll()'d table.
+		const inProgress = this.#inProgress;
+		if (inProgress) {
+			try {
+				inProgress.abortController.abort('destroyed');
+			} catch {
+				/* ignore */
+			}
+		}
 		this.#inProgress = null;
 		await this.#cancelFlush();
+		// Clear per-activation caches so a re-resolved DO with the same id
+		// doesn't inherit stale state.
+		this.#mcpCache = new Map();
+		this.#contextCache = null;
+		this.#uploadedBlobHashes = new Set();
+		this.#resumePromise = null;
+		this.#activeWorkCount = 0;
+		this.#heartbeatActive = false;
 		this.#conversationId = null;
 		this.#subscribers.closeAll();
 		await this.ctx.storage.deleteAll();
