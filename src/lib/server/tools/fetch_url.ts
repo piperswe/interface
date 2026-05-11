@@ -6,6 +6,54 @@ import type { Tool, ToolContext, ToolExecutionResult } from './registry';
 
 const MAX_BYTES = 256 * 1024;
 
+// SSRF guard: reject hosts that resolve to loopback, link-local, RFC 1918,
+// cloud-metadata, or other reserved ranges. The LLM should not be able to
+// fetch the worker's own routes or the operator's internal infrastructure.
+// Exported for unit testing.
+export function _hostIsPrivate(hostname: string): boolean {
+	const host = hostname.toLowerCase();
+	if (host === 'localhost' || host === 'localhost.localdomain' || host.endsWith('.local')) {
+		return true;
+	}
+	// IPv4 literal
+	const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+	if (v4) {
+		const a = Number(v4[1]);
+		const b = Number(v4[2]);
+		if (
+			a === 127 || // loopback
+			a === 10 || // RFC 1918
+			(a === 172 && b >= 16 && b <= 31) ||
+			(a === 192 && b === 168) ||
+			(a === 169 && b === 254) || // link-local incl. 169.254.169.254 metadata
+			a === 0 ||
+			a >= 224 // multicast / reserved
+		) {
+			return true;
+		}
+	}
+	// IPv6 literal — workerd surfaces these as bracketed.
+	if (host.startsWith('[') || host.includes(':')) {
+		const bare = host.replace(/^\[/, '').replace(/\]$/, '');
+		if (
+			bare === '::1' ||
+			bare === '::' ||
+			bare.startsWith('fc') ||
+			bare.startsWith('fd') ||
+			bare.startsWith('fe80:')
+		) {
+			return true;
+		}
+	}
+	return false;
+}
+
+function urlIsSafe(url: URL): boolean {
+	if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+	if (_hostIsPrivate(url.hostname)) return false;
+	return true;
+}
+
 const inputArgsSchema = z.object({
 	url: z.string(),
 	max_bytes: z.number().optional(),
@@ -94,17 +142,46 @@ export const fetchUrlTool: Tool = {
 		} catch {
 			return { content: `Invalid URL: ${args.url}`, isError: true };
 		}
-		if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-			return { content: `Refusing to fetch non-HTTP URL: ${args.url}`, isError: true };
+		if (!urlIsSafe(parsed)) {
+			return {
+				content: `Refusing to fetch URL: ${args.url} (must be public http(s) — loopback / private / metadata IPs are blocked)`,
+				isError: true,
+			};
 		}
 		const cap = Math.min(args.max_bytes ?? MAX_BYTES, MAX_BYTES);
 		const useReadability = args.readability !== false;
 		try {
-			const res = await fetch(parsed.toString(), {
-				headers: { 'User-Agent': 'Interface/0.0 (+https://github.com/piperswe/interface)' },
-				redirect: 'follow',
-				signal: ctx.signal,
-			});
+			// `redirect: 'manual'` so we can re-validate each redirect target
+			// against the same SSRF guard. A naive `redirect: 'follow'` would
+			// happily chase a 302 to http://169.254.169.254/.
+			let current = parsed;
+			let res: Response | null = null;
+			for (let hop = 0; hop < 5; hop++) {
+				res = await fetch(current.toString(), {
+					headers: { 'User-Agent': 'Interface/0.0 (+https://github.com/piperswe/interface)' },
+					redirect: 'manual',
+					signal: ctx.signal,
+				});
+				if (res.status < 300 || res.status >= 400 || res.status === 304) break;
+				const loc = res.headers.get('location');
+				if (!loc) break;
+				let next: URL;
+				try {
+					next = new URL(loc, current);
+				} catch {
+					return { content: `Invalid redirect target: ${loc}`, isError: true };
+				}
+				if (!urlIsSafe(next)) {
+					return {
+						content: `Refusing to follow redirect to ${next.href} (loopback / private / metadata IP)`,
+						isError: true,
+					};
+				}
+				current = next;
+			}
+			if (!res) {
+				return { content: 'fetch_url: no response after redirect chain', isError: true };
+			}
 			const contentType = res.headers.get('content-type');
 			const { text, originalBytes, hitCap } = await readBodyWithCap(res, cap);
 

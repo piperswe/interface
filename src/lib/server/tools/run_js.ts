@@ -30,13 +30,12 @@ const inputSchema = {
 	required: ['code'],
 } as const;
 
-// Template wrapping the user's code in a `WorkerEntrypoint` whose `run()` RPC
-// method captures console output, runs the snippet, and returns a structured
-// result. The user code is interpolated as the body of an inner async IIFE so
-// it can `await` and `return` naturally. The loaded Worker has `env: {}` and
-// the default outbound (network) — no project bindings cross the isolate.
-function buildModuleSource(userCode: string): string {
-	return `import { WorkerEntrypoint } from 'cloudflare:workers';
+// Host module that loads a separate `user.js` module from the loader's
+// `modules` map. Keeping the user code in its own module entry means there's
+// no lexical embedding (i.e. no `${userCode}` interpolation) — the agent
+// can't terminate a wrapping function and redefine `export default`.
+const HOST_MODULE = `import { WorkerEntrypoint } from 'cloudflare:workers';
+import * as userMod from './user.js';
 
 function fmt(v) {
 	if (typeof v === 'string') return v;
@@ -50,11 +49,15 @@ function makeConsole(logs) {
 export default class extends WorkerEntrypoint {
 	async run() {
 		const logs = [];
-		const console = makeConsole(logs);
+		const userConsole = makeConsole(logs);
 		try {
-			const result = await (async () => {
-${userCode}
-			})();
+			const entry = typeof userMod.default === 'function'
+				? userMod.default
+				: (typeof userMod.run === 'function' ? userMod.run : null);
+			if (!entry) {
+				return { ok: false, error: 'run_js: module must export a default function or a "run" function', logs };
+			}
+			const result = await entry({ console: userConsole });
 			if (result === undefined) return { ok: true, logs };
 			let serialized;
 			try { serialized = JSON.parse(JSON.stringify(result)); }
@@ -69,6 +72,13 @@ ${userCode}
 	}
 }
 `;
+
+// Wrap user code in an async default-export function. The body sees a
+// `console` captured by the host. Since user.js is its own module entry in
+// the loader's modules map, the host module never lexically embeds the user
+// string — eliminating the template-injection vector.
+function buildUserModule(userCode: string): string {
+	return `export default async function ({ console }) {\n${userCode}\n}\n`;
 }
 
 type RunLog = { level: string; msg: string };
@@ -103,7 +113,10 @@ export const runJsTool: Tool = {
 				compatibilityDate: HOST_COMPAT_DATE,
 				compatibilityFlags: ['nodejs_compat'],
 				mainModule: 'main.js',
-				modules: { 'main.js': { js: buildModuleSource(args.code) } },
+				modules: {
+					'main.js': { js: HOST_MODULE },
+					'user.js': { js: buildUserModule(args.code) },
+				},
 				env: {},
 				limits: { cpuMs, subRequests: DEFAULT_SUBREQUESTS },
 			});
