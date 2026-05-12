@@ -2,7 +2,7 @@ import { form, command, getRequestEvent } from '$app/server';
 import { error, redirect } from '@sveltejs/kit';
 import { z } from 'zod';
 import { createProvider, deleteProvider, getProvider, updateProvider, isValidProviderId } from '$lib/server/providers/store';
-import { createModel, deleteModel, getModel, listModelsForProvider, updateModel, swapModelOrder } from '$lib/server/providers/models';
+import { createModel, deleteModel, getModel, listModelsForProvider, moveModelToPosition, updateModel, swapModelOrder } from '$lib/server/providers/models';
 import { fetchOpenRouterModels } from '$lib/server/providers/fetch';
 import { getPresetById } from '$lib/server/providers/presets';
 import { fetchModelsDevCatalog, mapToCreateModelInput } from '$lib/server/providers/modelsDev';
@@ -188,6 +188,17 @@ export const reorderProviderModel = form(
 
 		await swapModelOrder(env, provider_id, model_id, models[swapIdx].id);
 		redirect(303, '/settings');
+	},
+);
+
+export const moveProviderModel = command(
+	z.object({
+		provider_id: trimmedNonEmpty('Provider ID required'),
+		model_id: trimmedNonEmpty('Model ID required'),
+		before_model_id: z.string().optional(),
+	}),
+	async ({ provider_id, model_id, before_model_id }) => {
+		await moveModelToPosition(getEnv(), provider_id, model_id, before_model_id || null);
 	},
 );
 

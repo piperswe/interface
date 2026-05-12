@@ -6,6 +6,7 @@
 		saveProviderModel,
 		deleteProviderModel,
 		reorderProviderModel,
+		moveProviderModel,
 		addPresetProvider,
 		fetchPresetModels,
 		searchModelsDev,
@@ -312,6 +313,57 @@
 	}
 	function cancelEditModel() {
 		editModelKey = null;
+	}
+
+	// Model drag-and-drop state
+	let dragModelId = $state<string | null>(null);
+	let dragProviderId = $state<string | null>(null);
+	// dropBeforeModelId: insert dragged model BEFORE this model; null = move to end of list
+	let dropBeforeModelId = $state<string | null>(null);
+	let dropProviderId = $state<string | null>(null);
+
+	function modelDragStart(e: DragEvent, providerId: string, modelId: string) {
+		dragModelId = modelId;
+		dragProviderId = providerId;
+		e.dataTransfer!.effectAllowed = 'move';
+	}
+
+	function modelDragOver(e: DragEvent, providerId: string, modelId: string, models: ProviderModelLite[]) {
+		if (dragProviderId !== providerId || !dragModelId) return;
+		e.preventDefault();
+		e.dataTransfer!.dropEffect = 'move';
+		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		const inTopHalf = e.clientY < rect.top + rect.height / 2;
+		dropProviderId = providerId;
+		if (inTopHalf) {
+			dropBeforeModelId = modelId;
+		} else {
+			const idx = models.findIndex((m) => m.id === modelId);
+			dropBeforeModelId = idx < models.length - 1 ? models[idx + 1].id : null;
+		}
+	}
+
+	async function modelDrop(e: DragEvent, providerId: string) {
+		e.preventDefault();
+		if (dragProviderId !== providerId || !dragModelId) return;
+		const fromModelId = dragModelId;
+		const beforeId = dropBeforeModelId;
+		dragModelId = null;
+		dragProviderId = null;
+		dropBeforeModelId = null;
+		dropProviderId = null;
+		await moveProviderModel({
+			provider_id: providerId,
+			model_id: fromModelId,
+			before_model_id: beforeId ?? undefined,
+		});
+	}
+
+	function modelDragEnd() {
+		dragModelId = null;
+		dragProviderId = null;
+		dropBeforeModelId = null;
+		dropProviderId = null;
 	}
 
 	// models.dev picker state. Only one provider's picker is open at a time, and
@@ -1174,7 +1226,16 @@
 						</form>
 					{/if}
 
-					<div class="provider-models">
+					<div
+						class="provider-models"
+						role="list"
+						ondragleave={(e) => {
+							if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) {
+								dropBeforeModelId = null;
+								dropProviderId = null;
+							}
+						}}
+					>
 						{#if providerModels.length === 0}
 							<div class="model-empty small text-muted">
 								No models yet. Add one below or use a preset.
@@ -1294,7 +1355,26 @@
 									</div>
 								</form>
 							{:else}
-								<div class="model-row" class:default={isDefault}>
+								{@const isDropBefore = dropProviderId === p.id && dropBeforeModelId === m.id && dragModelId !== m.id}
+								{@const isDropAfter = dropProviderId === p.id && dropBeforeModelId === null && i === providerModels.length - 1 && dragModelId !== m.id}
+								<div
+									class="model-row"
+									class:default={isDefault}
+									class:dragging={dragModelId === m.id}
+									class:drop-before={isDropBefore}
+									class:drop-after={isDropAfter}
+									role="listitem"
+									ondragover={(e) => modelDragOver(e, p.id, m.id, providerModels)}
+									ondrop={(e) => modelDrop(e, p.id)}
+								>
+									<span
+										class="drag-handle"
+										draggable="true"
+										ondragstart={(e) => modelDragStart(e, p.id, m.id)}
+										ondragend={modelDragEnd}
+										title="Drag to reorder"
+										aria-hidden="true"
+									>⠿</span>
 									<div class="model-row-main">
 										<div class="model-row-title">
 											<code class="model-id">{m.id}</code>
@@ -2807,6 +2887,32 @@
 
 	.model-row.default {
 		background: var(--accent-soft);
+	}
+
+	.model-row.dragging {
+		opacity: 0.4;
+	}
+
+	.model-row.drop-before {
+		box-shadow: inset 0 3px 0 var(--accent, #0d6efd);
+	}
+
+	.model-row.drop-after {
+		box-shadow: inset 0 -3px 0 var(--accent, #0d6efd);
+	}
+
+	.drag-handle {
+		cursor: grab;
+		color: var(--muted-2);
+		font-size: 1rem;
+		padding: 0 0.3rem 0 0;
+		user-select: none;
+		flex-shrink: 0;
+		line-height: 1;
+	}
+
+	.drag-handle:active {
+		cursor: grabbing;
 	}
 
 	.model-row-main {
