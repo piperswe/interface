@@ -42,7 +42,7 @@ const AI_GATEWAY_PRESET: ProviderPreset = {
 	defaultEndpoint: 'https://gateway.ai.cloudflare.com/v1/{account_id}/{gateway_id}',
 	requiresApiKey: true,
 	defaultModels: [
-		{ id: 'workers-ai/@cf/moonshotai/kimi-k2.6', name: 'Kimi K2.6', maxContextLength: 262_144, reasoningType: 'effort' },
+		{ id: 'workers-ai/@cf/moonshotai/kimi-k2.6', name: 'Kimi K2.6', maxContextLength: 262_144, reasoningType: 'max_tokens' },
 		{ id: 'openai/gpt-5.5', name: 'GPT-5.5', maxContextLength: 1_000_000, reasoningType: 'effort' },
 		{ id: 'anthropic/claude-sonnet-4-6', name: 'Claude Sonnet 4.6', maxContextLength: 200_000, reasoningType: 'max_tokens' },
 		{ id: 'anthropic/claude-opus-4-7', name: 'Claude Opus 4.7', maxContextLength: 1_000_000, reasoningType: 'max_tokens' },
