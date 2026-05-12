@@ -12,6 +12,7 @@
 		importModelsFromDev,
 	} from '$lib/providers.remote';
 	import type { ModelsDevEntry } from '$lib/server/providers/modelsDev';
+	import { computeAutoPrefixUpdate } from '$lib/modelsDevPickerState';
 	import {
 		saveSetting,
 		addMcpServer,
@@ -378,26 +379,16 @@
 	});
 
 	$effect(() => {
-		// When the user narrows to a single models.dev provider key, suggest a
-		// matching id prefix (e.g. `anthropic/`). Only auto-fill when the filter
-		// itself changes — so if the user clears the field (wanting bare ids) or
-		// types a custom prefix, we don't fight them on the next reactive tick.
-		//
-		// Anthropic-typed providers talk to the Anthropic API directly and expect
-		// bare model ids (`claude-opus-4-6`), so skip auto-prefixing for them —
-		// otherwise filtering to "anthropic" would produce `anthropic/...` ids
-		// that the Anthropic API rejects.
-		if (modelsDevPickerProviderType === 'anthropic') return;
-		const filter = modelsDevProviderKeyFilter;
-		if (filter === modelsDevIdPrefixAutoFilter) return;
-		const previousAuto = modelsDevIdPrefixAutoFilter
-			? `${modelsDevIdPrefixAutoFilter}/`
-			: '';
-		const looksAutoSet = modelsDevIdPrefix === previousAuto;
-		modelsDevIdPrefixAutoFilter = filter;
-		if (looksAutoSet) {
-			modelsDevIdPrefix = filter ? `${filter}/` : '';
-		}
+		// Delegate the state transition to a pure helper so it's regression-
+		// testable without a Svelte runtime — see modelsDevPickerState.test.ts.
+		const next = computeAutoPrefixUpdate({
+			providerType: modelsDevPickerProviderType,
+			filter: modelsDevProviderKeyFilter,
+			previousAutoFilter: modelsDevIdPrefixAutoFilter,
+			currentPrefix: modelsDevIdPrefix,
+		});
+		modelsDevIdPrefix = next.prefix;
+		modelsDevIdPrefixAutoFilter = next.autoFilter;
 	});
 
 	// Provider edit state
