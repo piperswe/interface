@@ -106,6 +106,28 @@ export async function getWorkspaceIoMode(env: Env, userId: number = SINGLE_USER_
 	return DEFAULT_WORKSPACE_IO_MODE;
 }
 
+// ---- Sandbox backend ------------------------------------------------------------------
+
+// Selects which backend implementation backs the conversation sandbox.
+//  - 'cloudflare' (default): the existing Cloudflare Containers + Sandbox
+//    DO path. Requires the `SANDBOX` binding.
+//  - 'fly': fly.io Machines. Requires the `FLY_API_TOKEN` and `FLY_APP_NAME`
+//    Worker secrets.
+// The setting is honored only when the selected backend's prerequisites
+// are present; otherwise `getBackend` falls back to whichever is available.
+export type SandboxBackendId = 'cloudflare' | 'fly';
+
+export const DEFAULT_SANDBOX_BACKEND: SandboxBackendId = 'cloudflare';
+
+export async function getSandboxBackendId(
+	env: Env,
+	userId: number = SINGLE_USER_ID,
+): Promise<SandboxBackendId> {
+	const raw = await getSetting(env, 'sandbox_backend', userId);
+	if (raw === 'cloudflare' || raw === 'fly') return raw;
+	return DEFAULT_SANDBOX_BACKEND;
+}
+
 // ---- TTS voice ------------------------------------------------------------------------
 
 import { DEFAULT_TTS_VOICE, isValidTtsVoice, type TtsVoice } from './tts';

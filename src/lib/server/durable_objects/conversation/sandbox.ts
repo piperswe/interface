@@ -1,14 +1,16 @@
-import { getSandbox } from '@cloudflare/sandbox';
-import type { Sandbox } from '@cloudflare/sandbox';
+import { getSandboxInstance } from '$lib/server/sandbox';
+import type { ExposedPort } from '$lib/server/sandbox/backend';
 
 // Exported for unit testing — lets tests inject a fake sandbox without
 // needing the Cloudflare SDK at all.
 export async function _listExposedPorts(
 	sandbox: { getExposedPorts: (hostname: string) => Promise<unknown> },
 	hostname: string,
-): Promise<{ port: number; url: string; name?: string }[]> {
-	// The @cloudflare/sandbox SDK return shape drifts across versions;
-	// defensively normalise both array and object shapes.
+): Promise<ExposedPort[]> {
+	// The Sandbox SDK return shape drifts across versions; defensively
+	// normalise both array and object shapes here so legacy fakes in the
+	// test suite keep pinning the contract. The Cloudflare backend's
+	// adapter delegates to this same helper internally.
 	const result = await sandbox.getExposedPorts(hostname);
 	const ports = Array.isArray(result) ? result : ((result as { ports?: unknown[] }).ports ?? []);
 	return (ports as Array<{ port: number; url: string; name?: string }>).map((p) => ({
@@ -22,21 +24,23 @@ export async function getSandboxPreviewPorts(
 	env: Env,
 	conversationId: string | null,
 	hostname: string,
-): Promise<{ port: number; url: string; name?: string }[]> {
-	if (!env.SANDBOX || !conversationId) return [];
+): Promise<ExposedPort[]> {
+	if (!conversationId) return [];
 	try {
-		const sandbox = getSandbox(env.SANDBOX as unknown as DurableObjectNamespace<Sandbox>, conversationId, { sleepAfter: '1h' });
-		return await _listExposedPorts(sandbox as unknown as { getExposedPorts: (hostname: string) => Promise<unknown> }, hostname);
+		const instance = await getSandboxInstance(env, conversationId);
+		if (!instance) return [];
+		return await instance.getExposedPorts(hostname);
 	} catch {
 		return [];
 	}
 }
 
 export async function destroySandbox(env: Env, conversationId: string | null): Promise<void> {
-	if (!env.SANDBOX || !conversationId) return;
+	if (!conversationId) return;
 	try {
-		const sandbox = getSandbox(env.SANDBOX as unknown as DurableObjectNamespace<Sandbox>, conversationId, { sleepAfter: '1h' });
-		await sandbox.destroy();
+		const instance = await getSandboxInstance(env, conversationId);
+		if (!instance) return;
+		await instance.destroy();
 	} catch {
 		/* ignore */
 	}

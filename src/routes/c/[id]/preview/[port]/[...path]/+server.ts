@@ -1,11 +1,10 @@
 import { error } from '@sveltejs/kit';
-import { getSandbox } from '@cloudflare/sandbox';
-import type { Sandbox } from '@cloudflare/sandbox';
 import { CONVERSATION_ID_PATTERN } from '$lib/conversation-id';
+import { getSandboxInstance } from '$lib/server/sandbox';
 import type { RequestHandler } from './$types';
 
-// Build the upstream URL that hits the Sandbox DO's preview hostname. The
-// Sandbox routes by hostname pattern `{port}-{id}-{token}.{host}`; we
+// Build the upstream URL that hits the sandbox's preview hostname. Both
+// backends route by hostname pattern `{port}-{id}-{token}.{host}`; we
 // reconstruct that and preserve the original path + query string.
 //
 // Exported for unit testing — `new URL(path, base)` drops query strings if
@@ -81,15 +80,16 @@ async function proxyToPreview({ params, request, url, platform }: Parameters<Req
 
 	const port = _parsePreviewPort(params.port);
 	if (port === null) error(400, 'invalid port');
-	if (!platform.env.SANDBOX) error(503, 'sandbox not configured');
 
-	const ns = platform.env.SANDBOX as unknown as DurableObjectNamespace<Sandbox>;
-	const sandbox = getSandbox(ns, conversationId, { sleepAfter: '1h' });
+	const instance = await getSandboxInstance(platform.env, conversationId);
+	if (!instance) error(503, 'sandbox not configured');
 
-	// Ensure the port is exposed with a stable token.
+	// Ensure the port is exposed with a stable token. Cloudflare's backend
+	// hits the DO; fly's backend records the (port, token) tuple in D1 so
+	// `getExposedPorts` can return the list later.
 	const hostname = url.host;
 	try {
-		await sandbox.exposePort(port, { hostname, token: 'preview' });
+		await instance.exposePort(port, { hostname, token: 'preview' });
 	} catch (e) {
 		// Already exposed with the same token — fine. Log for observability.
 		console.warn('exposePort failed:', e instanceof Error ? e.message : String(e));
@@ -103,10 +103,8 @@ async function proxyToPreview({ params, request, url, platform }: Parameters<Req
 		search: url.search,
 	});
 
-	const id = ns.idFromName(conversationId);
-	const stub = ns.get(id);
 	const proxyRequest = _buildSanitizedProxyRequest(previewUrl, request);
-	return await stub.fetch(proxyRequest);
+	return await instance.fetch(proxyRequest);
 }
 
 export const GET: RequestHandler = proxyToPreview;

@@ -1,8 +1,8 @@
-import { getSandbox, parseSSEStream } from '@cloudflare/sandbox';
-import type { Sandbox, ExecEvent, ExecResult } from '@cloudflare/sandbox';
 import { z } from 'zod';
 import { safeValidate } from '$lib/zod-utils';
 import { getWorkspaceIoMode, type WorkspaceIoMode } from '$lib/server/settings';
+import { getSandboxInstance } from '$lib/server/sandbox';
+import type { ExecEvent, ExecResult, SandboxInstance } from '$lib/server/sandbox/backend';
 import type { Tool, ToolContext, ToolExecutionResult } from './registry';
 import type { ProviderModel } from '../providers/types';
 import { parseGlobalModelId } from '../providers/types';
@@ -35,11 +35,16 @@ const createArtifactArgsSchema = z.object({
 // ---------------------------------------------------------------------------
 // Helper: resolve a sandbox instance scoped to the current conversation.
 // ---------------------------------------------------------------------------
-function getConversationSandbox(ctx: ToolContext) {
-	if (!ctx.env.SANDBOX) {
-		throw new Error('Sandbox binding is not configured.');
+// Returns the backend-agnostic SandboxInstance for the active backend
+// (`cloudflare` or `fly`, per the user's `sandbox_backend` setting).
+// Throws if no backend is available — the tool registration gate already
+// ensures these tools are only registered when one is.
+async function getConversationSandbox(ctx: ToolContext): Promise<SandboxInstance> {
+	const instance = await getSandboxInstance(ctx.env, ctx.conversationId);
+	if (!instance) {
+		throw new Error('Sandbox backend is not configured.');
 	}
-	return getSandbox(ctx.env.SANDBOX as unknown as DurableObjectNamespace<Sandbox>, ctx.conversationId, { sleepAfter: '1h' });
+	return instance;
 }
 
 // ---------------------------------------------------------------------------
@@ -106,7 +111,7 @@ async function fingerprintKey(key: string): Promise<string> {
 	return fp;
 }
 
-async function injectSshKey(sandbox: ReturnType<typeof getSandbox>, key: string): Promise<void> {
+async function injectSshKey(sandbox: SandboxInstance, key: string): Promise<void> {
 	try {
 		await sandbox.mkdir('/root/.ssh', { recursive: true });
 	} catch {
@@ -126,7 +131,7 @@ async function ensureSshKey(ctx: ToolContext): Promise<void> {
 	const fp = await fingerprintKey(key);
 	const cacheKey = `${ctx.conversationId}:${fp}`;
 	if (sshKeyInjected.has(cacheKey)) return;
-	const sandbox = getConversationSandbox(ctx);
+	const sandbox = await getConversationSandbox(ctx);
 	await injectSshKey(sandbox, key);
 	rememberSshKeyInjected(cacheKey);
 }
@@ -158,11 +163,16 @@ async function ensureSshKey(ctx: ToolContext): Promise<void> {
 //   each `stat`/`open`/`read` paid a network round-trip. The container's
 //   native FS is fast — the FUSE-to-R2 indirection was the bottleneck.
 //
-// Dev fallback: when R2 S3-API credentials aren't configured (typical for
-// `wrangler dev`), we fall back to the SDK's `mountBucket('WORKSPACE_BUCKET',
-// { localBucket: true })`. localBucket runs setTimeout/SSE sync loops inside
-// the Sandbox DO; that's broken in production (DO eviction kills the loops
-// before they upload) but works under the long-lived `wrangler dev` DO.
+// Backend portability: every helper below uses only the `exec`,
+// `writeFile`, and `readFile` methods of `SandboxInstance`, so the
+// Cloudflare and fly backends drive the same rclone setup unchanged.
+//
+// Dev: configure R2 S3-API credentials (R2_ACCESS_KEY_ID,
+// R2_SECRET_ACCESS_KEY, R2_ACCOUNT_ID or R2_ENDPOINT) for both `wrangler
+// dev` and production. The previous `mountBucket('WORKSPACE_BUCKET', {
+// localBucket: true })` dev fallback is gone — it was Cloudflare-SDK-only
+// (no equivalent for fly) and the SDK's localBucket sync loops never run
+// reliably under Cloudflare DO eviction anyway.
 
 // Default matches `r2_buckets[0].bucket_name` in wrangler.jsonc. Override
 // via the `R2_WORKSPACE_BUCKET_NAME` secret if you renamed the bucket.
@@ -236,28 +246,11 @@ function r2Remote(cfg: R2Config): string {
 	return `${RCLONE_REMOTE}:${cfg.bucketName}/${cfg.prefix}`;
 }
 
-function isMountAlreadyError(e: unknown): boolean {
-	return e instanceof Error && /(already (mount|in use))|not empty/i.test(e.message);
-}
-
-async function callMountBucketTolerant(
-	sandbox: ReturnType<typeof getSandbox>,
-	bindingOrName: string,
-	target: string,
-	options: Parameters<ReturnType<typeof getSandbox>['mountBucket']>[2],
-): Promise<void> {
-	try {
-		await sandbox.mountBucket(bindingOrName, target, options);
-	} catch (e) {
-		if (!isMountAlreadyError(e)) throw e;
-	}
-}
-
 // Reads the current workspace mode marker from inside the container. The
 // marker lives on the container's local FS so it's automatically cleared on
 // container restart (forcing a fresh init) but persists across Worker isolate
 // cycles within one container.
-async function readWorkspaceMode(sandbox: ReturnType<typeof getSandbox>): Promise<WorkspaceIoMode | null> {
+async function readWorkspaceMode(sandbox: SandboxInstance): Promise<WorkspaceIoMode | null> {
 	try {
 		const file = await sandbox.readFile(MODE_MARKER_PATH);
 		const v = file.content.trim();
@@ -268,11 +261,11 @@ async function readWorkspaceMode(sandbox: ReturnType<typeof getSandbox>): Promis
 	}
 }
 
-async function writeWorkspaceMode(sandbox: ReturnType<typeof getSandbox>, mode: WorkspaceIoMode): Promise<void> {
+async function writeWorkspaceMode(sandbox: SandboxInstance, mode: WorkspaceIoMode): Promise<void> {
 	await sandbox.writeFile(MODE_MARKER_PATH, mode);
 }
 
-async function writeRcloneConfig(sandbox: ReturnType<typeof getSandbox>, cfg: R2Config): Promise<void> {
+async function writeRcloneConfig(sandbox: SandboxInstance, cfg: R2Config): Promise<void> {
 	await sandbox.writeFile(RCLONE_CONFIG_PATH, rcloneConfigFile(cfg));
 	await sandbox.exec(`chmod 600 ${RCLONE_CONFIG_PATH}`);
 }
@@ -290,7 +283,7 @@ function formatSandboxFailure(command: string, result: ExecResult, extra?: strin
 	return parts.join('\n');
 }
 
-async function execOrThrow(sandbox: ReturnType<typeof getSandbox>, command: string): Promise<void> {
+async function execOrThrow(sandbox: SandboxInstance, command: string): Promise<void> {
 	const result = await sandbox.exec(command);
 	if (!result.success) {
 		throw new Error(formatSandboxFailure(command, result));
@@ -302,7 +295,7 @@ async function execOrThrow(sandbox: ReturnType<typeof getSandbox>, command: stri
 // real diagnostic output goes to a `--log-file` rather than stderr (rclone
 // mount with `--daemon`, the snapshot sync daemon, etc).
 async function execOrThrowWithLog(
-	sandbox: ReturnType<typeof getSandbox>,
+	sandbox: SandboxInstance,
 	command: string,
 	logPath: string,
 ): Promise<void> {
@@ -318,7 +311,7 @@ async function execOrThrowWithLog(
 	throw new Error(formatSandboxFailure(command, result, logTail));
 }
 
-async function initSnapshotMode(sandbox: ReturnType<typeof getSandbox>, cfg: R2Config): Promise<void> {
+async function initSnapshotMode(sandbox: SandboxInstance, cfg: R2Config): Promise<void> {
 	const remote = r2Remote(cfg);
 	const remoteArg = JSON.stringify(remote);
 	// Hydrate /workspace from R2. Errors bubble up via execOrThrowWithLog,
@@ -343,7 +336,7 @@ async function initSnapshotMode(sandbox: ReturnType<typeof getSandbox>, cfg: R2C
 	);
 }
 
-async function teardownSnapshotMode(sandbox: ReturnType<typeof getSandbox>, cfg: R2Config): Promise<void> {
+async function teardownSnapshotMode(sandbox: SandboxInstance, cfg: R2Config): Promise<void> {
 	const remote = r2Remote(cfg);
 	// Final flush, kill the daemon, then empty /workspace so the next mode
 	// can repopulate cleanly. Final flush errors bubble up with their log
@@ -356,7 +349,7 @@ async function teardownSnapshotMode(sandbox: ReturnType<typeof getSandbox>, cfg:
 	);
 }
 
-async function initRcloneMountMode(sandbox: ReturnType<typeof getSandbox>, cfg: R2Config): Promise<void> {
+async function initRcloneMountMode(sandbox: SandboxInstance, cfg: R2Config): Promise<void> {
 	const remote = r2Remote(cfg);
 	// Best-effort cleanup of any leftover mount, then mount fresh. We
 	// deliberately don't pass `--daemon` here: --daemon forks rclone to the
@@ -398,7 +391,7 @@ exit 1`,
 	);
 }
 
-async function teardownRcloneMountMode(sandbox: ReturnType<typeof getSandbox>): Promise<void> {
+async function teardownRcloneMountMode(sandbox: SandboxInstance): Promise<void> {
 	await execOrThrow(
 		sandbox,
 		`set -e; fusermount -u ${WORKSPACE_PATH} 2>/dev/null || umount -l ${WORKSPACE_PATH} 2>/dev/null || true; find ${WORKSPACE_PATH} -mindepth 1 -delete 2>/dev/null || true`,
@@ -407,18 +400,18 @@ async function teardownRcloneMountMode(sandbox: ReturnType<typeof getSandbox>): 
 
 export async function ensureWorkspaceReady(ctx: ToolContext): Promise<void> {
 	if (!ctx.env.WORKSPACE_BUCKET) return;
-	const sandbox = getConversationSandbox(ctx);
+	const sandbox = await getConversationSandbox(ctx);
 	const cfg = r2ConfigFromEnv(ctx);
 
 	if (!cfg) {
-		// Dev fallback: SDK-managed localBucket. Cloudflare evicts the DO
-		// shortly after the originating RPC returns in production so the sync
-		// loops never run, but the wrangler dev DO is long-lived enough for
-		// it to work locally.
-		await callMountBucketTolerant(sandbox, 'WORKSPACE_BUCKET', WORKSPACE_PATH, {
-			localBucket: true,
-			prefix: `/conversations/${ctx.conversationId}`,
-		});
+		// Without R2 S3-API credentials we can't talk to R2 from inside the
+		// container at all — the previous dev fallback used a Cloudflare-SDK-
+		// only `mountBucket(..., { localBucket: true })` path that has no fly
+		// equivalent and didn't survive DO eviction in production. Log once
+		// so operators see why /workspace is non-persistent in this case.
+		console.warn(
+			'ensureWorkspaceReady: R2 S3-API credentials not configured; /workspace will not be synced to R2.',
+		);
 		return;
 	}
 
@@ -455,7 +448,7 @@ export async function flushWorkspaceToR2(ctx: ToolContext): Promise<FlushResult>
 	if (!ctx.env.WORKSPACE_BUCKET) return {};
 	const cfg = r2ConfigFromEnv(ctx);
 	if (!cfg) return {};
-	const sandbox = getConversationSandbox(ctx);
+	const sandbox = await getConversationSandbox(ctx);
 	const mode = await readWorkspaceMode(sandbox);
 	try {
 		if (mode === 'snapshot') {
@@ -547,7 +540,7 @@ export const sandboxExecTool: Tool = {
 		try {
 			await ensureWorkspaceReady(ctx);
 			await ensureSshKey(ctx);
-			const sandbox = getConversationSandbox(ctx);
+			const sandbox = await getConversationSandbox(ctx);
 			if (ctx.emitToolOutput) {
 				// NOTE: ctx.signal is intentionally not forwarded into the
 				// RPC options. AbortSignal serialization over Durable Object
@@ -576,10 +569,19 @@ export const sandboxExecTool: Tool = {
 				// `complete` (or an error / idle / outer-abort), without
 				// awaiting generator teardown. Also covers streams that
 				// never emit `complete` via the idle watchdog.
-				const callAc = new AbortController();
-				const onOuterAbort = () => callAc.abort();
+				let aborted = false;
+				const cancelStream = () => {
+					aborted = true;
+					// stream.cancel() never rejects (CF adapter aborts its
+					// inner AbortSignal; fly adapter sets a boolean). The
+					// returned Promise is not awaited — the floating
+					// consumer's finally would otherwise pay the same
+					// cross-RPC hang we're working around.
+					void stream.cancel();
+				};
+				const onOuterAbort = () => cancelStream();
 				if (ctx.signal) {
-					if (ctx.signal.aborted) callAc.abort();
+					if (ctx.signal.aborted) cancelStream();
 					else ctx.signal.addEventListener('abort', onOuterAbort, { once: true });
 				}
 
@@ -590,7 +592,7 @@ export const sandboxExecTool: Tool = {
 					if (idleTimer) clearTimeout(idleTimer);
 					idleTimer = setTimeout(() => {
 						idledOut = true;
-						callAc.abort();
+						cancelStream();
 					}, IDLE_MS);
 				};
 				armIdle();
@@ -611,13 +613,14 @@ export const sandboxExecTool: Tool = {
 					}
 				};
 
-				// Float the consumer. We never await it — parseSSEStream's
-				// finally does `await reader.cancel()` on the RPC-piped
-				// upstream stream and that can hang. The container's idle
-				// timeout will eventually clean up.
+				// Float the consumer. We never await it — the Cloudflare
+				// adapter wraps parseSSEStream, whose `finally` does
+				// `await reader.cancel()` on the RPC-piped upstream stream
+				// and can hang. The container's idle timeout will
+				// eventually clean up.
 				void (async () => {
 					try {
-						for await (const ev of parseSSEStream<ExecEvent>(stream, callAc.signal)) {
+						for await (const ev of stream) {
 							// `armIdle` must NOT run after `resolved` flips, or a
 							// slow/hanging upstream keeps scheduling 60s timers on a
 							// caller that's already returned. The outer block cleared
@@ -633,12 +636,12 @@ export const sandboxExecTool: Tool = {
 								}
 							} else if (ev.type === 'complete') {
 								exitCode = ev.exitCode;
-								callAc.abort(); // best-effort: nudge upstream cancel
+								cancelStream(); // best-effort: nudge upstream cancel
 								finish();
 								return;
 							} else if (ev.type === 'error') {
 								streamError = ev.data ?? ev.error ?? 'Exec stream error';
-								callAc.abort();
+								cancelStream();
 								finish();
 								return;
 							}
@@ -646,7 +649,7 @@ export const sandboxExecTool: Tool = {
 						// Stream closed without a `complete` event.
 						finish();
 					} catch (e) {
-						if (!callAc.signal.aborted && !resolved) {
+						if (!aborted && !resolved) {
 							streamError = e instanceof Error ? e.message : String(e);
 						}
 						finish();
@@ -741,7 +744,7 @@ export const sandboxRunCodeTool: Tool = {
 		try {
 			await ensureWorkspaceReady(ctx);
 			await ensureSshKey(ctx);
-			const sandbox = getConversationSandbox(ctx);
+			const sandbox = await getConversationSandbox(ctx);
 			const result = await sandbox.runCode(args.code, {
 				language,
 				...(args.timeout ? { timeout: args.timeout } : {}),
@@ -814,7 +817,7 @@ export const sandboxReadFileTool: Tool = {
 		const args = parsed.value;
 		try {
 			await ensureWorkspaceReady(ctx);
-			const sandbox = getConversationSandbox(ctx);
+			const sandbox = await getConversationSandbox(ctx);
 			const file = await sandbox.readFile(args.path);
 			return {
 				content: file.content,
@@ -859,7 +862,7 @@ export const sandboxWriteFileTool: Tool = {
 		const args = parsed.value;
 		try {
 			await ensureWorkspaceReady(ctx);
-			const sandbox = getConversationSandbox(ctx);
+			const sandbox = await getConversationSandbox(ctx);
 			await sandbox.writeFile(args.path, args.content);
 			const writeFlush = await flushWorkspaceToR2(ctx);
 			return { content: appendFlushWarning(`Wrote ${args.path}`, writeFlush) };
@@ -897,7 +900,7 @@ export const sandboxDeleteFileTool: Tool = {
 		const args = parsed.value;
 		try {
 			await ensureWorkspaceReady(ctx);
-			const sandbox = getConversationSandbox(ctx);
+			const sandbox = await getConversationSandbox(ctx);
 			await sandbox.deleteFile(args.path);
 			const deleteFlush = await flushWorkspaceToR2(ctx);
 			return { content: appendFlushWarning(`Deleted ${args.path}`, deleteFlush) };
@@ -940,7 +943,7 @@ export const sandboxMkdirTool: Tool = {
 		const args = parsed.value;
 		try {
 			await ensureWorkspaceReady(ctx);
-			const sandbox = getConversationSandbox(ctx);
+			const sandbox = await getConversationSandbox(ctx);
 			await sandbox.mkdir(args.path, { recursive: !!args.recursive });
 			const mkdirFlush = await flushWorkspaceToR2(ctx);
 			return { content: appendFlushWarning(`Created directory ${args.path}`, mkdirFlush) };
@@ -978,7 +981,7 @@ export const sandboxExistsTool: Tool = {
 		const args = parsed.value;
 		try {
 			await ensureWorkspaceReady(ctx);
-			const sandbox = getConversationSandbox(ctx);
+			const sandbox = await getConversationSandbox(ctx);
 			const result = await sandbox.exists(args.path);
 			return { content: result.exists ? 'true' : 'false' };
 		} catch (e) {
@@ -1092,7 +1095,7 @@ export const sandboxCreateArtifactTool: Tool = {
 		const args = parsed.value;
 		try {
 			await ensureWorkspaceReady(ctx);
-			const sandbox = getConversationSandbox(ctx);
+			const sandbox = await getConversationSandbox(ctx);
 			const file = await sandbox.readFile(args.path);
 			const type = args.type ?? inferArtifactType(args.path);
 			const name = args.name ?? args.path.split('/').pop() ?? args.path;

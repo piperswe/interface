@@ -12,6 +12,7 @@ import { createGetModelsTool } from '../../tools/get_models';
 import { createSwitchModelTool } from '../../tools/switch_model';
 import { createRememberTool } from '../../tools/remember';
 import { registerSandboxTools } from '../../tools/sandbox';
+import { getBackend } from '../../sandbox';
 import { runJsTool } from '../../tools/run_js';
 import { buildCustomTool } from '../../tools/custom_tool_runner';
 import { customToolMetaTools } from '../../tools/custom_tools_meta';
@@ -94,7 +95,8 @@ export async function buildBaseToolRegistry(
 			console.warn('MCP server registration rejected without a message');
 		}
 	}
-	if (env.SANDBOX) {
+	const sandboxBackend = await getBackend(env);
+	if (sandboxBackend) {
 		registerSandboxTools(registry, {
 			...(getModels ? { loadImage: { getModels } } : {}),
 		});
