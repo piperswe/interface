@@ -46,34 +46,27 @@ function fixtureResponse() {
 }
 
 describe('fetchOpenRouterCatalog', () => {
-	it('flattens the data array and splits id on the first slash', async () => {
+	it('flattens the data array and extracts vendor from the first path segment', async () => {
 		mockOnce(fixtureResponse());
 		const result = await fetchOpenRouterCatalog();
 		expect(result).toHaveLength(2);
 		const byId = new Map(result.map((e) => [e.fullId, e]));
-		expect(byId.get('anthropic/claude-opus-4-6')).toMatchObject({
-			vendor: 'anthropic',
-			bareId: 'claude-opus-4-6',
-		});
-		expect(byId.get('openai/gpt-5')).toMatchObject({
-			vendor: 'openai',
-			bareId: 'gpt-5',
-		});
+		expect(byId.get('anthropic/claude-opus-4-6')).toMatchObject({ vendor: 'anthropic' });
+		expect(byId.get('openai/gpt-5')).toMatchObject({ vendor: 'openai' });
 	});
 
-	it('preserves the full id as bareId when no slash is present', async () => {
+	it('uses the full id as vendor when no slash is present', async () => {
 		mockOnce({ data: [{ ...CLAUDE_MODEL, id: 'standalone-model' }] });
 		const [entry] = await fetchOpenRouterCatalog();
 		expect(entry.vendor).toBe('standalone-model');
-		expect(entry.bareId).toBe('standalone-model');
 		expect(entry.fullId).toBe('standalone-model');
 	});
 
-	it('handles bareIds containing additional slashes', async () => {
+	it('extracts only the first segment as vendor for multi-slash ids', async () => {
 		mockOnce({ data: [{ ...CLAUDE_MODEL, id: 'meta-llama/llama-3.1/405b' }] });
 		const [entry] = await fetchOpenRouterCatalog();
 		expect(entry.vendor).toBe('meta-llama');
-		expect(entry.bareId).toBe('llama-3.1/405b');
+		expect(entry.fullId).toBe('meta-llama/llama-3.1/405b');
 	});
 
 	it('passes Cloudflare cacheTtl on the fetch call', async () => {
@@ -202,7 +195,6 @@ describe('fetchOpenRouterCatalog', () => {
 function makeEntry(over: Partial<OpenRouterEntry> = {}): OpenRouterEntry {
 	return {
 		vendor: 'anthropic',
-		bareId: 'claude-opus-4-6',
 		fullId: 'anthropic/claude-opus-4-6',
 		name: 'Anthropic: Claude Opus 4',
 		description: 'Most capable Claude model.',
@@ -218,19 +210,9 @@ function makeEntry(over: Partial<OpenRouterEntry> = {}): OpenRouterEntry {
 }
 
 describe('mapOpenRouterToCreateModelInput', () => {
-	it('uses the bare id when no prefix is provided (Anthropic-direct use case)', () => {
+	it('uses the OpenRouter fullId as the model id', () => {
 		const input = mapOpenRouterToCreateModelInput(makeEntry());
-		expect(input.id).toBe('claude-opus-4-6');
-	});
-
-	it('prepends idPrefix to the bare id (OpenRouter-proxy use case)', () => {
-		const input = mapOpenRouterToCreateModelInput(makeEntry(), { idPrefix: 'anthropic/' });
 		expect(input.id).toBe('anthropic/claude-opus-4-6');
-	});
-
-	it('supports custom prefixes (proxy-of-proxy use case)', () => {
-		const input = mapOpenRouterToCreateModelInput(makeEntry(), { idPrefix: 'myproxy/anthropic/' });
-		expect(input.id).toBe('myproxy/anthropic/claude-opus-4-6');
 	});
 
 	it('passes through all the prefilled metadata', () => {

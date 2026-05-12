@@ -59,7 +59,6 @@ const openRouterResponseSchema = z
 
 export interface OpenRouterEntry {
 	vendor: string;
-	bareId: string;
 	fullId: string;
 	name: string;
 	description: string | null;
@@ -86,11 +85,10 @@ export async function fetchOpenRouterCatalog(): Promise<OpenRouterEntry[]> {
 
 	const entries: OpenRouterEntry[] = [];
 	for (const model of parsed.data ?? []) {
-		const { vendor, bareId } = splitId(model.id);
+		const { vendor } = splitId(model.id);
 		const reasoningType = resolveReasoningFromSupported(model.supported_parameters) ?? inferReasoningType(model.id) ?? null;
 		entries.push({
 			vendor,
-			bareId,
 			fullId: model.id,
 			name: model.name ?? model.id,
 			description: buildDescription(model.description, model.knowledge_cutoff),
@@ -108,11 +106,10 @@ export async function fetchOpenRouterCatalog(): Promise<OpenRouterEntry[]> {
 
 export function mapOpenRouterToCreateModelInput(
 	entry: OpenRouterEntry,
-	opts: { idPrefix?: string; sortOrder?: number } = {},
+	opts: { sortOrder?: number } = {},
 ): CreateModelInput {
-	const id = (opts.idPrefix ?? '') + entry.bareId;
 	return {
-		id,
+		id: entry.fullId,
 		name: entry.name,
 		description: entry.description,
 		maxContextLength: entry.contextLength,
@@ -124,10 +121,9 @@ export function mapOpenRouterToCreateModelInput(
 	};
 }
 
-function splitId(id: string): { vendor: string; bareId: string } {
+function splitId(id: string): { vendor: string } {
 	const i = id.indexOf('/');
-	if (i === -1) return { vendor: id, bareId: id };
-	return { vendor: id.slice(0, i), bareId: id.slice(i + 1) };
+	return { vendor: i === -1 ? id : id.slice(0, i) };
 }
 
 // OpenRouter's `pricing.prompt` / `pricing.completion` are strings of USD per

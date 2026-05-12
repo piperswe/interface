@@ -322,15 +322,15 @@ export const importModelsFromOpenRouter = form(
 	z.object({
 		provider_id: trimmedNonEmpty('Provider ID required'),
 		model_keys: trimmedNonEmpty('Select at least one model'),
-		id_prefix: z.string().optional().default(''),
 	}),
-	async ({ provider_id, model_keys, id_prefix }) => {
+	async ({ provider_id, model_keys }) => {
 		const env = getEnv();
 		const provider = await getProvider(env, provider_id);
 		if (!provider) error(400, `Provider not found: ${provider_id}`);
 
 		const catalog = await fetchOpenRouterCatalog();
-		// OpenRouter ids are globally unique, so the fullId is the selection key.
+		// OpenRouter ids are globally unique, so the fullId is the selection key
+		// and is used directly as the stored model id (no prefix needed).
 		const byKey = new Map(catalog.map((e) => [e.fullId, e]));
 
 		const keys = model_keys.split(',').filter(Boolean);
@@ -344,10 +344,7 @@ export const importModelsFromOpenRouter = form(
 				i++;
 				continue;
 			}
-			const input = mapOpenRouterToCreateModelInput(entry, {
-				idPrefix: id_prefix.trim(),
-				sortOrder: baseSort + i * 10,
-			});
+			const input = mapOpenRouterToCreateModelInput(entry, { sortOrder: baseSort + i * 10 });
 			if (await getModel(env, provider_id, input.id)) {
 				i++;
 				continue;

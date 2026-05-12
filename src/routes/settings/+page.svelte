@@ -364,19 +364,15 @@
 	// prices are per-token rather than per-million; reasoning style comes from
 	// supported_parameters rather than provider-key heuristics).
 	let openRouterPickerProviderId = $state<string | null>(null);
-	let openRouterPickerProviderType = $state<ProviderType>('openai_compatible');
 	let openRouterCatalog = $state<OpenRouterEntry[]>([]);
 	let openRouterLoading = $state(false);
 	let openRouterError = $state<string | null>(null);
 	let openRouterQuery = $state('');
 	let openRouterVendorFilter = $state('');
-	let openRouterIdPrefix = $state('');
-	let openRouterIdPrefixAutoFilter = $state(''); // tracks which vendor produced the current auto-fill
 	let openRouterSelected = $state<Set<string>>(new Set());
 
-	async function openOpenRouterPicker(providerId: string, providerType: ProviderType) {
+	async function openOpenRouterPicker(providerId: string) {
 		openRouterPickerProviderId = providerId;
-		openRouterPickerProviderType = providerType;
 		addModelProviderId = null;
 		editModelKey = null;
 		modelsDevPickerProviderId = null;
@@ -384,11 +380,6 @@
 		openRouterVendorFilter = '';
 		openRouterSelected = new Set();
 		openRouterError = null;
-		// Same prefix convention as the models.dev picker: bare for Anthropic
-		// providers, vendor-prefixed (auto-suggested via the $effect below) for
-		// openai_compatible providers.
-		openRouterIdPrefix = '';
-		openRouterIdPrefixAutoFilter = '';
 		if (openRouterCatalog.length === 0) {
 			openRouterLoading = true;
 			try {
@@ -424,26 +415,11 @@
 				if (!q) return true;
 				return (
 					e.fullId.toLowerCase().includes(q) ||
-					e.bareId.toLowerCase().includes(q) ||
 					e.name.toLowerCase().includes(q) ||
 					e.vendor.toLowerCase().includes(q)
 				);
 			})
 			.slice(0, 200);
-	});
-
-	$effect(() => {
-		// Mirrors the models.dev picker — delegates to the shared pure helper so
-		// a user-cleared prefix sticks across vendor switches (see
-		// modelsDevPickerState.test.ts for the regression cases).
-		const next = computeAutoPrefixUpdate({
-			providerType: openRouterPickerProviderType,
-			filter: openRouterVendorFilter,
-			previousAutoFilter: openRouterIdPrefixAutoFilter,
-			currentPrefix: openRouterIdPrefix,
-		});
-		openRouterIdPrefix = next.prefix;
-		openRouterIdPrefixAutoFilter = next.autoFilter;
 	});
 
 	function toggleModelsDevSelected(key: string) {
@@ -1634,7 +1610,7 @@
 									<div class="alert alert-warning small py-2 mb-2">{openRouterError}</div>
 								{:else}
 									<div class="row g-2 mb-2">
-										<div class="col-md-6">
+										<div class="col-md-8">
 											<label class="form-label small d-block">
 												<span class="d-block mb-1">Search</span>
 												<input
@@ -1645,7 +1621,7 @@
 												/>
 											</label>
 										</div>
-										<div class="col-md-3">
+										<div class="col-md-4">
 											<label class="form-label small d-block">
 												<span class="d-block mb-1">Vendor</span>
 												<select
@@ -1657,16 +1633,6 @@
 														<option value={v}>{v}</option>
 													{/each}
 												</select>
-											</label>
-										</div>
-										<div class="col-md-3">
-											<label class="form-label small d-block">
-												<span class="d-block mb-1">Model ID prefix</span>
-												<input
-													bind:value={openRouterIdPrefix}
-													placeholder={p.type === 'anthropic' ? '(none)' : 'anthropic/'}
-													class="form-control form-control-sm"
-												/>
 											</label>
 										</div>
 									</div>
@@ -1716,7 +1682,6 @@
 									class="d-flex gap-2 justify-content-end mt-3 align-items-center"
 								>
 									<input type="hidden" name="provider_id" value={p.id} />
-									<input type="hidden" name="id_prefix" value={openRouterIdPrefix} />
 									<input
 										type="hidden"
 										name="model_keys"
@@ -1775,7 +1740,7 @@
 								<button
 									type="button"
 									class="btn btn-sm btn-outline-secondary"
-									onclick={() => openOpenRouterPicker(p.id, p.type)}
+									onclick={() => openOpenRouterPicker(p.id)}
 								>
 									Browse OpenRouter
 								</button>
