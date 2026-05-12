@@ -12,6 +12,7 @@
 		importModelsFromDev,
 	} from '$lib/providers.remote';
 	import type { ModelsDevEntry } from '$lib/server/providers/modelsDev';
+	import { computeAutoPrefixUpdate } from '$lib/modelsDevPickerState';
 	import {
 		saveSetting,
 		addMcpServer,
@@ -317,6 +318,7 @@
 	let modelsDevQuery = $state('');
 	let modelsDevProviderKeyFilter = $state('');
 	let modelsDevIdPrefix = $state('');
+	let modelsDevIdPrefixAutoFilter = $state(''); // tracks which filter produced the current auto-fill
 	let modelsDevSelected = $state<Set<string>>(new Set());
 
 	async function openModelsDevPicker(providerId: string, providerType: ProviderType) {
@@ -333,6 +335,7 @@
 		// AI Gateway, etc.) generally namespace by vendor; the $effect below
 		// auto-suggests "<filter>/" once the user picks a key filter.
 		modelsDevIdPrefix = '';
+		modelsDevIdPrefixAutoFilter = '';
 		if (modelsDevCatalog.length === 0) {
 			modelsDevLoading = true;
 			try {
@@ -376,23 +379,16 @@
 	});
 
 	$effect(() => {
-		// When the user narrows to a single models.dev provider key, suggest a
-		// matching id prefix (e.g. `anthropic/`). Don't clobber a custom prefix:
-		// only overwrite when the current prefix is empty or is itself one of the
-		// known catalog provider keys (a previous auto-suggestion).
-		//
-		// Anthropic-typed providers talk to the Anthropic API directly and expect
-		// bare model ids (`claude-opus-4-6`), so skip auto-prefixing for them —
-		// otherwise filtering to "anthropic" would produce `anthropic/...` ids
-		// that the Anthropic API rejects.
-		if (modelsDevPickerProviderType === 'anthropic') return;
-		if (!modelsDevProviderKeyFilter) return;
-		const looksAutoSet =
-			modelsDevIdPrefix === '' ||
-			modelsDevProviderKeys.some((k) => modelsDevIdPrefix === `${k}/`);
-		if (looksAutoSet) {
-			modelsDevIdPrefix = `${modelsDevProviderKeyFilter}/`;
-		}
+		// Delegate the state transition to a pure helper so it's regression-
+		// testable without a Svelte runtime — see modelsDevPickerState.test.ts.
+		const next = computeAutoPrefixUpdate({
+			providerType: modelsDevPickerProviderType,
+			filter: modelsDevProviderKeyFilter,
+			previousAutoFilter: modelsDevIdPrefixAutoFilter,
+			currentPrefix: modelsDevIdPrefix,
+		});
+		modelsDevIdPrefix = next.prefix;
+		modelsDevIdPrefixAutoFilter = next.autoFilter;
 	});
 
 	// Provider edit state
