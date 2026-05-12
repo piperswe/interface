@@ -809,6 +809,55 @@
 					</form>
 				</section>
 
+				<section class="settings-card">
+					<div class="settings-card-head">
+						<h2 class="h6 mb-0">Sandbox backend</h2>
+						<p class="small text-muted mb-0">
+							Where conversation sandboxes run. <strong>Cloudflare Containers</strong> uses the bundled
+							Sandbox Durable Object; <strong>fly.io Machines</strong> provisions a per-conversation
+							machine via the Machines API. Workspace files persist to R2 either way.
+						</p>
+					</div>
+					<form
+						{...saveSetting.for('sandbox_backend').enhance(toastSubmit('Sandbox backend saved'))}
+						class="d-flex flex-column gap-2"
+					>
+						<input type="hidden" name="key" value="sandbox_backend" />
+						{#each data.sandboxBackends as b (b.id)}
+							<label class="form-check d-flex gap-2 align-items-start mb-0">
+								<input
+									type="radio"
+									name="value"
+									value={b.id}
+									class="form-check-input mt-1"
+									checked={data.sandboxBackend === b.id}
+									disabled={!b.available}
+									onchange={(e) => (e.currentTarget as HTMLInputElement).form?.requestSubmit()}
+								/>
+								<span>
+									<strong>
+										{b.id === 'cloudflare' ? 'Cloudflare Containers' : 'fly.io Machines'}
+									</strong>
+									{#if !b.available}
+										<span class="badge text-bg-warning">not configured</span>
+									{/if}
+									<span class="d-block small text-muted">
+										{#if b.id === 'cloudflare'}
+											Requires the <code>SANDBOX</code> Durable Object binding. Built-in real-time exec
+											streaming and a persistent code-interpreter kernel for <code>sandbox_run_code</code>.
+										{:else}
+											Requires <code>FLY_API_TOKEN</code> and <code>FLY_APP_NAME</code> Worker secrets.
+											Useful for longer-lived machines, fly volumes, or regions Cloudflare Containers
+											doesn't cover. Streaming exec output and the <code>sandbox_run_code</code> kernel
+											are degraded vs. Cloudflare.
+										{/if}
+									</span>
+								</span>
+							</label>
+						{/each}
+					</form>
+				</section>
+
 				<section class="settings-card span-2">
 					<div class="settings-card-head">
 						<h2 class="h6 mb-0">Worker secrets</h2>

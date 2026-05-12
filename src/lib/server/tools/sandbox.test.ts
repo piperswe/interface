@@ -18,9 +18,12 @@ import type { ToolContext, ToolExecutionResult } from './registry';
 //     Local cache absorbs reads after first fetch; writes are pushed back
 //     within ~1s of being closed.
 //
-// The dev fallback (no R2 S3-API credentials configured) still uses the
-// SDK's `mountBucket` with `localBucket: true` since the wrangler dev DO is
-// long-lived enough for the SDK's setTimeout sync loops to actually run.
+// When R2 S3-API credentials aren't configured, ensureWorkspaceReady now
+// skips silently (logging a warning). The previous `mountBucket(..., {
+// localBucket: true })` dev fallback was Cloudflare-SDK-specific and has
+// no equivalent in the fly backend, so making the abstraction the same
+// for both is the simpler outcome — operators set R2 creds in both dev
+// and prod, or accept that /workspace is non-persistent locally.
 
 type MockSandbox = {
 	mountBucket: ReturnType<typeof vi.fn>;
@@ -126,17 +129,20 @@ describe('ensureWorkspaceReady', () => {
 		expect(sandbox.writeFile).not.toHaveBeenCalled();
 	});
 
-	it('falls back to localBucket mode when R2 credentials are missing (dev only)', async () => {
-		// `localBucket` works under `wrangler dev` where the DO is long-lived;
-		// production needs the rclone path below.
+	it('skips workspace setup with a warning when R2 credentials are missing', async () => {
+		// Regression: the previous behaviour was to fall back to the SDK's
+		// `mountBucket(..., { localBucket: true })`, which is Cloudflare-only
+		// (no fly equivalent) and never reliably ran in production. The new
+		// behaviour is no-op + warn so the abstraction works the same for
+		// both backends.
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		const sandbox = makeMockSandbox();
 		await ensureWorkspaceReady(makeCtx(sandbox));
-		expect(sandbox.mountBucket).toHaveBeenCalledWith('WORKSPACE_BUCKET', '/workspace', {
-			localBucket: true,
-			prefix: `/conversations/${CONV_ID}`,
-		});
-		// rclone path should not be touched
+		expect(sandbox.mountBucket).not.toHaveBeenCalled();
 		expect(sandbox.exec).not.toHaveBeenCalled();
+		expect(sandbox.writeFile).not.toHaveBeenCalled();
+		expect(warn).toHaveBeenCalledWith(expect.stringContaining('R2 S3-API credentials not configured'));
+		warn.mockRestore();
 	});
 
 	it('snapshot mode: writes rclone config, hydrates from R2, starts daemon, marks mode', async () => {

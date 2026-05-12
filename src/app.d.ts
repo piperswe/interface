@@ -67,6 +67,15 @@ declare global {
 		// Optional SSH private key injected into every sandbox container
 		// so the agent can interact with GitHub (clone, push, etc.).
 		SANDBOX_SSH_KEY?: string;
+		// fly.io Machines backend credentials. When both are set, the
+		// fly backend is available as an alternative to Cloudflare
+		// Containers (selected via the `sandbox_backend` user setting).
+		// See `src/lib/server/sandbox/fly/` for the implementation.
+		FLY_API_TOKEN?: string;
+		FLY_APP_NAME?: string;
+		// Optional override for the fly app's public hostname. Defaults
+		// to `${FLY_APP_NAME}.fly.dev`.
+		FLY_APP_HOSTNAME?: string;
 		// Optional Worker Loader binding. When present, the `run_js` tool
 		// is registered so the model can evaluate JS in a fresh isolate.
 		RUN_JS_LOADER?: WorkerLoader;

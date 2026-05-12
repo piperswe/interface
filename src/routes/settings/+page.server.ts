@@ -11,7 +11,9 @@ import {
 	getUserBio,
 	getSetting,
 	getWorkspaceIoMode,
+	getSandboxBackendId,
 } from '$lib/server/settings';
+import { listBackends } from '$lib/server/sandbox';
 import { TTS_VOICES } from '$lib/server/tts';
 import { listSubAgents } from '$lib/server/sub_agents';
 import { listProviders } from '$lib/server/providers/store';
@@ -47,6 +49,7 @@ export const load: PageServerLoad = async ({ platform }) => {
 		kagiCostPer1000Searches,
 		ttsVoice,
 		workspaceIoMode,
+		sandboxBackend,
 		customTools,
 	] = await Promise.all([
 		listMcpServers(env),
@@ -67,8 +70,13 @@ export const load: PageServerLoad = async ({ platform }) => {
 		getKagiCostPer1000Searches(env),
 		getTtsVoice(env),
 		getWorkspaceIoMode(env),
+		getSandboxBackendId(env),
 		listCustomTools(env),
 	]);
+	const sandboxBackends = listBackends().map((b) => ({
+		id: b.id,
+		available: b.isAvailable(env),
+	}));
 	return {
 		secretKeys: describeSecretKeys(env),
 		mcpServers,
@@ -92,6 +100,8 @@ export const load: PageServerLoad = async ({ platform }) => {
 		ttsVoice,
 		ttsVoices: TTS_VOICES,
 		workspaceIoMode,
+		sandboxBackend,
+		sandboxBackends,
 		customTools,
 		hasWorkerLoader: !!env.RUN_JS_LOADER,
 	};

@@ -37,6 +37,7 @@ const SETTING_KEYS = [
 	'kagi_cost_per_1000_searches',
 	'tts_voice',
 	'workspace_io_mode',
+	'sandbox_backend',
 ] as const;
 
 const SUB_AGENT_NAME_RULE =
@@ -92,6 +93,11 @@ export const saveSetting = form(
 				case 'workspace_io_mode':
 					if (d.value !== 'snapshot' && d.value !== 'rclone-mount') {
 						issue(`Invalid workspace I/O mode: ${d.value}`);
+					}
+					break;
+				case 'sandbox_backend':
+					if (d.value !== 'cloudflare' && d.value !== 'fly') {
+						issue(`Invalid sandbox backend: ${d.value}`);
 					}
 					break;
 			}
