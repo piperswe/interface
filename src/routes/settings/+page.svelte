@@ -10,8 +10,11 @@
 		fetchPresetModels,
 		searchModelsDev,
 		importModelsFromDev,
+		searchOpenRouter,
+		importModelsFromOpenRouter,
 	} from '$lib/providers.remote';
 	import type { ModelsDevEntry } from '$lib/server/providers/modelsDev';
+	import type { OpenRouterEntry } from '$lib/server/providers/openRouter';
 	import {
 		saveSetting,
 		addMcpServer,
@@ -300,8 +303,11 @@
 		editModelOutputCost =
 			m.outputCostPerMillionTokens != null ? String(m.outputCostPerMillionTokens) : '';
 		editModelSupportsImageInput = !!m.supportsImageInput;
-		// Cancel the add-model panel when starting an edit so two forms don't collide.
+		// Cancel the add-model panel and any open catalog pickers when starting
+		// an edit so multiple forms don't collide.
 		addModelProviderId = null;
+		modelsDevPickerProviderId = null;
+		openRouterPickerProviderId = null;
 	}
 	function cancelEditModel() {
 		editModelKey = null;
@@ -324,6 +330,7 @@
 		modelsDevPickerProviderType = providerType;
 		addModelProviderId = null;
 		editModelKey = null;
+		openRouterPickerProviderId = null;
 		modelsDevQuery = '';
 		modelsDevProviderKeyFilter = '';
 		modelsDevSelected = new Set();
@@ -348,6 +355,92 @@
 	function closeModelsDevPicker() {
 		modelsDevPickerProviderId = null;
 	}
+
+	// OpenRouter picker state — parallel to the models.dev picker above. Kept
+	// distinct because the source schemas differ (model id is fully qualified;
+	// prices are per-token rather than per-million; reasoning style comes from
+	// supported_parameters rather than provider-key heuristics).
+	let openRouterPickerProviderId = $state<string | null>(null);
+	let openRouterPickerProviderType = $state<ProviderType>('openai_compatible');
+	let openRouterCatalog = $state<OpenRouterEntry[]>([]);
+	let openRouterLoading = $state(false);
+	let openRouterError = $state<string | null>(null);
+	let openRouterQuery = $state('');
+	let openRouterVendorFilter = $state('');
+	let openRouterIdPrefix = $state('');
+	let openRouterSelected = $state<Set<string>>(new Set());
+
+	async function openOpenRouterPicker(providerId: string, providerType: ProviderType) {
+		openRouterPickerProviderId = providerId;
+		openRouterPickerProviderType = providerType;
+		addModelProviderId = null;
+		editModelKey = null;
+		modelsDevPickerProviderId = null;
+		openRouterQuery = '';
+		openRouterVendorFilter = '';
+		openRouterSelected = new Set();
+		openRouterError = null;
+		// Same prefix convention as the models.dev picker: bare for Anthropic
+		// providers, vendor-prefixed (auto-suggested via the $effect below) for
+		// openai_compatible providers.
+		openRouterIdPrefix = '';
+		if (openRouterCatalog.length === 0) {
+			openRouterLoading = true;
+			try {
+				openRouterCatalog = await searchOpenRouter();
+			} catch (e) {
+				openRouterError = e instanceof Error ? e.message : 'Failed to load OpenRouter catalog';
+			} finally {
+				openRouterLoading = false;
+			}
+		}
+	}
+
+	function closeOpenRouterPicker() {
+		openRouterPickerProviderId = null;
+	}
+
+	function toggleOpenRouterSelected(key: string) {
+		const next = new Set(openRouterSelected);
+		if (next.has(key)) next.delete(key);
+		else next.add(key);
+		openRouterSelected = next;
+	}
+
+	const openRouterVendors = $derived(
+		[...new Set(openRouterCatalog.map((e) => e.vendor))].sort(),
+	);
+
+	const openRouterFiltered = $derived.by(() => {
+		const q = openRouterQuery.trim().toLowerCase();
+		return openRouterCatalog
+			.filter((e) => !openRouterVendorFilter || e.vendor === openRouterVendorFilter)
+			.filter((e) => {
+				if (!q) return true;
+				return (
+					e.fullId.toLowerCase().includes(q) ||
+					e.bareId.toLowerCase().includes(q) ||
+					e.name.toLowerCase().includes(q) ||
+					e.vendor.toLowerCase().includes(q)
+				);
+			})
+			.slice(0, 200);
+	});
+
+	$effect(() => {
+		// Auto-suggest "<vendor>/" prefix when the user narrows to a single
+		// OpenRouter vendor. Mirrors the models.dev effect: don't clobber a
+		// custom prefix the user has set, and skip auto-prefixing for
+		// Anthropic-typed providers (they want bare ids).
+		if (openRouterPickerProviderType === 'anthropic') return;
+		if (!openRouterVendorFilter) return;
+		const looksAutoSet =
+			openRouterIdPrefix === '' ||
+			openRouterVendors.some((v) => openRouterIdPrefix === `${v}/`);
+		if (looksAutoSet) {
+			openRouterIdPrefix = `${openRouterVendorFilter}/`;
+		}
+	});
 
 	function toggleModelsDevSelected(key: string) {
 		const next = new Set(modelsDevSelected);
@@ -1530,6 +1623,129 @@
 									</button>
 								</form>
 							</div>
+						{:else if openRouterPickerProviderId === p.id}
+							<div class="settings-card models-dev-picker">
+								<div class="settings-card-head">
+									<h3 class="h6 mb-0">Browse OpenRouter</h3>
+									<p class="small text-muted mb-0">
+										Search OpenRouter's live model list and import with pricing prefilled.
+									</p>
+								</div>
+								{#if openRouterLoading}
+									<div class="small text-muted">Loading catalog…</div>
+								{:else if openRouterError}
+									<div class="alert alert-warning small py-2 mb-2">{openRouterError}</div>
+								{:else}
+									<div class="row g-2 mb-2">
+										<div class="col-md-6">
+											<label class="form-label small d-block">
+												<span class="d-block mb-1">Search</span>
+												<input
+													bind:value={openRouterQuery}
+													placeholder="claude, gpt-5, llama, qwen…"
+													class="form-control form-control-sm"
+													type="search"
+												/>
+											</label>
+										</div>
+										<div class="col-md-3">
+											<label class="form-label small d-block">
+												<span class="d-block mb-1">Vendor</span>
+												<select
+													bind:value={openRouterVendorFilter}
+													class="form-select form-select-sm"
+												>
+													<option value="">All vendors</option>
+													{#each openRouterVendors as v (v)}
+														<option value={v}>{v}</option>
+													{/each}
+												</select>
+											</label>
+										</div>
+										<div class="col-md-3">
+											<label class="form-label small d-block">
+												<span class="d-block mb-1">Model ID prefix</span>
+												<input
+													bind:value={openRouterIdPrefix}
+													placeholder={p.type === 'anthropic' ? '(none)' : 'anthropic/'}
+													class="form-control form-control-sm"
+												/>
+											</label>
+										</div>
+									</div>
+									<div class="model-checklist models-dev-list">
+										{#each openRouterFiltered as entry (entry.fullId)}
+											<label class="model-check models-dev-row">
+												<input
+													type="checkbox"
+													checked={openRouterSelected.has(entry.fullId)}
+													onchange={() => toggleOpenRouterSelected(entry.fullId)}
+												/>
+												<div class="models-dev-meta">
+													<div>
+														<strong>{entry.name}</strong>
+														<span class="small text-muted ms-2">
+															{entry.fullId}
+														</span>
+													</div>
+													<div class="small text-muted">
+														{formatContext(entry.contextLength)} ctx
+														{#if entry.inputCostPerMillionTokens != null && entry.outputCostPerMillionTokens != null}
+															· {formatCost(entry.inputCostPerMillionTokens)}/{formatCost(
+																entry.outputCostPerMillionTokens,
+															)} per 1M
+														{/if}
+														{#if entry.supportsImageInput}· image{/if}
+														{#if entry.supportsReasoning}· reasoning{/if}
+														{#if entry.knowledgeCutoff}· knowledge {entry.knowledgeCutoff}{/if}
+													</div>
+												</div>
+											</label>
+										{/each}
+										{#if openRouterFiltered.length === 0}
+											<div class="small text-muted py-2">No models match your search.</div>
+										{/if}
+									</div>
+									{#if openRouterCatalog.length > openRouterFiltered.length && openRouterFiltered.length === 200}
+										<div class="small text-muted mt-1">
+											Showing first 200 results — refine your search to see more.
+										</div>
+									{/if}
+								{/if}
+								<form
+									{...importModelsFromOpenRouter
+										.for(`openrouter-${p.id}`)
+										.enhance(toastSubmit('Models imported'))}
+									class="d-flex gap-2 justify-content-end mt-3 align-items-center"
+								>
+									<input type="hidden" name="provider_id" value={p.id} />
+									<input type="hidden" name="id_prefix" value={openRouterIdPrefix} />
+									<input
+										type="hidden"
+										name="model_keys"
+										value={[...openRouterSelected].join(',')}
+									/>
+									<span class="small text-muted me-auto">
+										{openRouterSelected.size} selected
+									</span>
+									<button
+										type="button"
+										class="btn btn-sm btn-outline-secondary"
+										onclick={closeOpenRouterPicker}
+									>
+										Cancel
+									</button>
+									<button
+										type="submit"
+										class="btn btn-sm btn-primary"
+										disabled={openRouterSelected.size === 0}
+									>
+										Import {openRouterSelected.size} model{openRouterSelected.size === 1
+											? ''
+											: 's'}
+									</button>
+								</form>
+							</div>
 						{:else}
 							<div class="d-flex gap-2 flex-wrap">
 								<button
@@ -1538,6 +1754,8 @@
 									onclick={() => {
 										addModelProviderId = p.id;
 										editModelKey = null;
+										modelsDevPickerProviderId = null;
+										openRouterPickerProviderId = null;
 										newModelId = '';
 										newModelName = '';
 										newModelDescription = '';
@@ -1556,6 +1774,13 @@
 									onclick={() => openModelsDevPicker(p.id, p.type)}
 								>
 									Browse models.dev
+								</button>
+								<button
+									type="button"
+									class="btn btn-sm btn-outline-secondary"
+									onclick={() => openOpenRouterPicker(p.id, p.type)}
+								>
+									Browse OpenRouter
 								</button>
 							</div>
 						{/if}
