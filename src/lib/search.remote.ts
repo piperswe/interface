@@ -1,5 +1,6 @@
 import { query, getRequestEvent } from '$app/server';
 import { error } from '@sveltejs/kit';
+import { z } from 'zod';
 import { searchConversations as searchD1, type SearchHit } from '$lib/server/search';
 
 function getEnv(): Env {
@@ -10,8 +11,7 @@ function getEnv(): Env {
 
 // Cmd-K palette query. Empty input returns no rows; the caller debounces
 // keystrokes (see `SearchPalette.svelte`).
-export const searchConversations = query('unchecked', async (q: string): Promise<SearchHit[]> => {
-	if (typeof q !== 'string') return [];
+export const searchConversations = query(z.string(), async (q): Promise<SearchHit[]> => {
 	const trimmed = q.trim();
 	if (!trimmed) return [];
 	return await searchD1(getEnv(), trimmed, 30);

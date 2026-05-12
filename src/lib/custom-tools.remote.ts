@@ -1,11 +1,16 @@
 import { form, getRequestEvent } from '$app/server';
 import { error, redirect } from '@sveltejs/kit';
+import { z } from 'zod';
 import {
 	createCustomTool,
 	deleteCustomTool,
 	setCustomToolEnabled,
 	updateCustomTool,
 } from '$lib/server/custom_tools';
+import {
+	positiveIntFromString,
+	trimmedNonEmpty,
+} from '$lib/server/remote-schemas';
 
 function getEnv(): Env {
 	const event = getRequestEvent();
@@ -31,12 +36,11 @@ const DEFAULT_INPUT_SCHEMA = JSON.stringify(
 );
 
 export const addCustomTool = form(
-	'unchecked',
-	async (data: { name?: unknown; description?: unknown }) => {
-		const name = String(data.name ?? '').trim();
-		const description = String(data.description ?? '').trim();
-		if (!name) error(400, 'Name is required.');
-		if (!description) error(400, 'Description is required.');
+	z.object({
+		name: trimmedNonEmpty('Name is required.'),
+		description: trimmedNonEmpty('Description is required.'),
+	}),
+	async ({ name, description }) => {
 		let id: number;
 		try {
 			id = await createCustomTool(getEnv(), {
@@ -54,32 +58,22 @@ export const addCustomTool = form(
 );
 
 export const saveCustomTool = form(
-	'unchecked',
-	async (data: {
-		id?: unknown;
-		name?: unknown;
-		description?: unknown;
-		source?: unknown;
-		input_schema?: unknown;
-		secrets_json?: unknown;
-	}) => {
-		const id = Number.parseInt(String(data.id ?? ''), 10);
-		if (!Number.isFinite(id) || id <= 0) error(400, 'Invalid id.');
-		const name = String(data.name ?? '').trim();
-		const description = String(data.description ?? '').trim();
-		const source = String(data.source ?? '');
-		const inputSchema = String(data.input_schema ?? '').trim();
-		const secretsRaw = String(data.secrets_json ?? '').trim();
-		if (!name) error(400, 'Name is required.');
-		if (!description) error(400, 'Description is required.');
-		if (!source.trim()) error(400, 'Source is required.');
-		if (!inputSchema) error(400, 'Input schema is required.');
+	z.object({
+		id: positiveIntFromString,
+		name: trimmedNonEmpty('Name is required.'),
+		description: trimmedNonEmpty('Description is required.'),
+		source: z.string().refine((s) => s.trim().length > 0, 'Source is required.'),
+		input_schema: trimmedNonEmpty('Input schema is required.'),
+		secrets_json: z.string().optional().default(''),
+	}),
+	async ({ id, name, description, source, input_schema, secrets_json }) => {
+		const secretsRaw = secrets_json.trim();
 		try {
 			await updateCustomTool(getEnv(), id, {
 				name,
 				description,
 				source,
-				inputSchema,
+				inputSchema: input_schema,
 				secretsJson: secretsRaw || null,
 			});
 		} catch (e) {
@@ -89,20 +83,21 @@ export const saveCustomTool = form(
 	},
 );
 
-export const removeCustomTool = form('unchecked', async (data: { id?: unknown }) => {
-	const id = Number.parseInt(String(data.id ?? ''), 10);
-	if (!Number.isFinite(id) || id <= 0) error(400, 'Invalid id.');
-	await deleteCustomTool(getEnv(), id);
-	redirect(303, '/settings');
-});
+export const removeCustomTool = form(
+	z.object({ id: positiveIntFromString }),
+	async ({ id }) => {
+		await deleteCustomTool(getEnv(), id);
+		redirect(303, '/settings');
+	},
+);
 
 export const toggleCustomTool = form(
-	'unchecked',
-	async (data: { id?: unknown; enabled?: unknown }) => {
-		const id = Number.parseInt(String(data.id ?? ''), 10);
-		if (!Number.isFinite(id) || id <= 0) error(400, 'Invalid id.');
-		const enabled = String(data.enabled ?? '') === 'true';
-		await setCustomToolEnabled(getEnv(), id, enabled);
+	z.object({
+		id: positiveIntFromString,
+		enabled: z.string().optional(),
+	}),
+	async ({ id, enabled }) => {
+		await setCustomToolEnabled(getEnv(), id, enabled === 'true');
 		redirect(303, '/settings');
 	},
 );

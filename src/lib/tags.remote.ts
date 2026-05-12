@@ -1,5 +1,6 @@
 import { command, form, getRequestEvent } from '$app/server';
 import { error, redirect } from '@sveltejs/kit';
+import { z } from 'zod';
 import {
 	addTagToConversation,
 	createTag,
@@ -7,7 +8,14 @@ import {
 	removeTagFromConversation,
 	renameTag,
 } from '$lib/server/tags';
-import { CONVERSATION_ID_PATTERN } from '$lib/conversation-id';
+import {
+	conversationIdSchema,
+	positiveIntFlexible,
+	positiveIntFromString,
+	safeRedirectPath,
+	trimmedNonEmpty,
+	trimmedOptionalOrNull,
+} from '$lib/server/remote-schemas';
 
 function getEnv(): Env {
 	const event = getRequestEvent();
@@ -15,46 +23,31 @@ function getEnv(): Env {
 	return event.platform.env;
 }
 
-// Same-origin redirect filter so `redirectTo` form fields can't be turned
-// into an open redirect. Mirrors the guard used by `archive` in
-// conversations.remote.ts but tightened to reject protocol-relative URLs,
-// tab/CRLF bypasses, and percent-encoded slashes. Returns `/settings` if
-// the input doesn't look like a benign same-origin path.
-function _safeRedirectPath(raw: unknown, fallback = '/settings'): string {
-	if (typeof raw !== 'string') return fallback;
-	const trimmed = raw.trim();
-	if (!trimmed.startsWith('/')) return fallback;
-	// Reject protocol-relative (`//host`, `/\host`, `/\thost`) and CRLF
-	// smuggling. Only allow the safe path/query/hash character class.
-	if (!/^\/[A-Za-z0-9_\-./?&=#%]*$/.test(trimmed)) return fallback;
-	if (trimmed.startsWith('//')) return fallback;
-	return trimmed;
-}
-
 export const addTag = form(
-	'unchecked',
-	async (data: { name?: unknown; color?: unknown; redirectTo?: unknown }) => {
-		const name = String(data.name ?? '').trim();
-		if (!name) error(400, 'Tag name is required');
-		const colorRaw = String(data.color ?? '').trim();
+	z.object({
+		name: trimmedNonEmpty('Tag name is required'),
+		color: trimmedOptionalOrNull,
+		redirectTo: safeRedirectPath('/settings'),
+	}),
+	async ({ name, color, redirectTo }) => {
 		try {
-			await createTag(getEnv(), { name, color: colorRaw || null });
+			await createTag(getEnv(), { name, color });
 		} catch (e) {
 			error(400, e instanceof Error ? e.message : String(e));
 		}
-		redirect(303, _safeRedirectPath(data.redirectTo));
+		redirect(303, redirectTo);
 	},
 );
 
 export const renameTagForm = form(
-	'unchecked',
-	async (data: { id?: unknown; name?: unknown; color?: unknown }) => {
-		const id = Number.parseInt(String(data.id ?? ''), 10);
-		if (!Number.isFinite(id) || id <= 0) error(400, 'Invalid id');
-		const name = String(data.name ?? '').trim();
-		const color = String(data.color ?? '').trim();
+	z.object({
+		id: positiveIntFromString,
+		name: trimmedOptionalOrNull,
+		color: trimmedOptionalOrNull,
+	}),
+	async ({ id, name, color }) => {
 		try {
-			await renameTag(getEnv(), id, { name: name || undefined, color: color || null });
+			await renameTag(getEnv(), id, { name: name ?? undefined, color });
 		} catch (e) {
 			error(400, e instanceof Error ? e.message : String(e));
 		}
@@ -62,23 +55,25 @@ export const renameTagForm = form(
 	},
 );
 
-export const removeTag = form('unchecked', async (data: { id?: unknown }) => {
-	const id = Number.parseInt(String(data.id ?? ''), 10);
-	if (!Number.isFinite(id) || id <= 0) error(400, 'Invalid id');
-	await deleteTag(getEnv(), id);
-	redirect(303, '/settings');
-});
+export const removeTag = form(
+	z.object({ id: positiveIntFromString }),
+	async ({ id }) => {
+		await deleteTag(getEnv(), id);
+		redirect(303, '/settings');
+	},
+);
 
 // Quick-tag command from the conversation header. Idempotent.
 export const tagConversation = command(
-	'unchecked',
-	async (input: { conversationId: string; tagId: number; attached: boolean }) => {
-		if (!CONVERSATION_ID_PATTERN.test(input.conversationId)) error(400, 'invalid conversation id');
-		const tagId = Number(input.tagId);
-		if (!Number.isFinite(tagId) || tagId <= 0) error(400, 'invalid tag id');
+	z.object({
+		conversationId: conversationIdSchema,
+		tagId: positiveIntFlexible,
+		attached: z.boolean(),
+	}),
+	async ({ conversationId, tagId, attached }) => {
 		const env = getEnv();
-		if (input.attached) await addTagToConversation(env, input.conversationId, tagId);
-		else await removeTagFromConversation(env, input.conversationId, tagId);
+		if (attached) await addTagToConversation(env, conversationId, tagId);
+		else await removeTagFromConversation(env, conversationId, tagId);
 		return { ok: true as const };
 	},
 );
@@ -87,15 +82,16 @@ export const tagConversation = command(
 // it to the conversation in a single round-trip. Falls back to a lookup
 // when the unique-name constraint fires.
 export const createAndTagConversation = command(
-	'unchecked',
-	async (input: { conversationId: string; name: string; color?: string | null }) => {
-		if (!CONVERSATION_ID_PATTERN.test(input.conversationId)) error(400, 'invalid conversation id');
-		const name = String(input.name ?? '').trim();
-		if (!name) error(400, 'Tag name is required');
+	z.object({
+		conversationId: conversationIdSchema,
+		name: trimmedNonEmpty('Tag name is required'),
+		color: z.string().nullable().optional(),
+	}),
+	async ({ conversationId, name, color }) => {
 		const env = getEnv();
 		let tagId: number;
 		try {
-			tagId = await createTag(env, { name, color: input.color ?? null });
+			tagId = await createTag(env, { name, color: color ?? null });
 		} catch {
 			// Race or duplicate: look up the existing tag id.
 			const row = await env.DB.prepare('SELECT id FROM tags WHERE user_id = 1 AND name = ?')
@@ -104,7 +100,7 @@ export const createAndTagConversation = command(
 			if (!row) error(500, 'failed to create or look up tag');
 			tagId = row.id;
 		}
-		await addTagToConversation(env, input.conversationId, tagId);
+		await addTagToConversation(env, conversationId, tagId);
 		return { id: tagId };
 	},
 );
