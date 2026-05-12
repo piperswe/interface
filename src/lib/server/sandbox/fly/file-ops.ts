@@ -50,8 +50,8 @@ export async function readFileShell(
 	//    encoding === 'utf8'. base64 keeps the protocol byte-clean and
 	//    lets the server skip any guess-the-encoding logic.
 	const script = `set -e
-if ! test -e ${p}; then echo "no such file: ${path}" >&2; exit 2; fi
-if ! test -f ${p}; then echo "not a regular file: ${path}" >&2; exit 2; fi
+if ! test -e ${p}; then echo "no such file: "${p} >&2; exit 2; fi
+if ! test -f ${p}; then echo "not a regular file: "${p} >&2; exit 2; fi
 ENC=$(file --mime-encoding -b -- ${p} 2>/dev/null || echo unknown)
 echo "ENC:$ENC"
 base64 -w0 -- ${p}`;

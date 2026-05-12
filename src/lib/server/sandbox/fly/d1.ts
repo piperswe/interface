@@ -43,16 +43,15 @@ export async function recordExposedPort(
 	conversationId: string,
 	port: number,
 	token: string,
-	hostname: string,
 ): Promise<void> {
 	const now = nowMs();
 	await env.DB.prepare(
-		`INSERT INTO conversation_exposed_ports (conversation_id, port, token, hostname, created_at)
-		 VALUES (?, ?, ?, ?, ?)
+		`INSERT INTO conversation_exposed_ports (conversation_id, port, token, created_at)
+		 VALUES (?, ?, ?, ?)
 		 ON CONFLICT (conversation_id, port) DO UPDATE
-		 SET token = excluded.token, hostname = excluded.hostname`,
+		 SET token = excluded.token`,
 	)
-		.bind(conversationId, port, token, hostname, now)
+		.bind(conversationId, port, token, now)
 		.run();
 }
 

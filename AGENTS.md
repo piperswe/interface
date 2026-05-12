@@ -174,12 +174,47 @@ picks between two strategies:
   4 GB `--vfs-cache-mode=full` local cache. Reads always go through the
   live mount; writes are pushed back to R2 by rclone within ~1s.
 
-Without R2 credentials the helper falls back to the SDK's `localBucket`
-mode, which only works under `wrangler dev` — Cloudflare evicts the
-Sandbox DO before its background sync loops can run, and container→R2
-uploads silently never happen. Override `R2_WORKSPACE_BUCKET_NAME` only
-if you renamed the bucket from the `bucket_name` declared in
-`wrangler.jsonc`.
+Without the three R2 secrets the helper logs a warning and leaves
+`/workspace` un-synced — there is no SDK-managed fallback because the
+fly backend has no equivalent and the previous Cloudflare-only
+`localBucket` mode never reliably ran under production DO eviction
+anyway. Configure the R2 secrets in both dev and prod, or accept that
+files written under `wrangler dev` won't persist. Override
+`R2_WORKSPACE_BUCKET_NAME` only if you renamed the bucket from the
+`bucket_name` declared in `wrangler.jsonc`.
+
+## Sandbox backend selection
+
+The conversation sandbox can be backed by either Cloudflare Containers
+(the Sandbox DO bundled in this repo) or fly.io Machines. The active
+backend is selected per user via the `sandbox_backend` setting
+(`'cloudflare' | 'fly'`, default `'cloudflare'`) alongside
+`workspace_io_mode`. Code goes through the backend-agnostic
+`SandboxInstance` interface in `src/lib/server/sandbox/`; the
+Cloudflare implementation is a thin wrapper over `@cloudflare/sandbox`,
+the fly implementation drives the Machines REST API and shell-mediated
+file I/O.
+
+Operator prerequisites:
+
+| Backend | Required |
+|---|---|
+| `cloudflare` | the `SANDBOX` DO binding (declared in `wrangler.jsonc`) |
+| `fly` | Worker secrets `FLY_API_TOKEN` + `FLY_APP_NAME` (and optionally `FLY_APP_HOSTNAME`) |
+
+Backends whose prerequisites aren't configured are filtered out at
+`getBackend(env)` time; tools register iff at least one backend is
+available. The fly backend uses the same Dockerfile (`fly-final`
+target) and the same rclone-based R2 workspace sync as Cloudflare. Per-
+conversation machine ids are persisted in the `conversation_sandbox`
+table (migration 0013).
+
+Known v1 fly limitations (documented in code):
+
+- `sandbox_exec` streaming on fly emits a single trailing chunk
+  (synchronous REST exec). Cloudflare streams token-by-token.
+- `sandbox_run_code` on fly has no persistent kernel; Python/JS state
+  does not survive across calls.
 
 # Cloudflare Workers
 

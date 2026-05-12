@@ -114,6 +114,24 @@ describe('file-ops shell scripts', () => {
 		await expect(deleteFileShell(CFG, 'machine-1', '/root/file')).rejects.toThrow(/permission denied/);
 	});
 
+	it('readFileShell never lets the raw path into a double-quoted echo', async () => {
+		// Regression: the error-path echos used to interpolate
+		// `${path}` (JS template) inside `"no such file: ${path}"`,
+		// which bash evaluates — so a malicious-looking path like
+		// `/tmp/$(whoami)` would execute. The shell-quoted form
+		// (`${p}`, single-quoted) must be used instead, concatenated
+		// with the literal prefix.
+		let seenScript = '';
+		mockMachineExec((req) => {
+			seenScript = (req as { cmd: string[] }).cmd[2] ?? '';
+			return { exit_code: 0, stdout: `ENC:us-ascii\n${btoa('x')}`, stderr: '' };
+		});
+		await readFileShell(CFG, 'machine-1', '/tmp/$(whoami)');
+		expect(seenScript).not.toContain('$(whoami)"'); // not inside a "...$()..."
+		// The single-quoted form preserves the literal text.
+		expect(seenScript).toContain(`'/tmp/$(whoami)'`);
+	});
+
 	it('readFileShell uses `test -e`/`test -f` not `[ -e -- ... ]`', async () => {
 		// Regression — same bash-test malformedness as existsShell.
 		let seenScript = '';

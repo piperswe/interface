@@ -30,12 +30,28 @@ import type {
 	SandboxInstance,
 } from '../backend';
 
+// POSIX env var name. Anything outside [A-Za-z_][A-Za-z0-9_]* would
+// otherwise be interpolated raw into a shell `export` and run as code
+// (e.g. an LLM-supplied key like `FOO;rm -rf /`). Cloudflare's path
+// passes env vars to the SDK and never goes near a shell, so this is
+// fly-specific defense; rejecting invalid keys matches POSIX semantics
+// anyway since `export FOO;...=v` isn't a valid env binding.
+const POSIX_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+// Exported for unit testing. Internal call sites use this via `execOnce`.
+export function _buildShellCommand(cmd: string, opts: ExecOptions): string {
+	return buildShellCommand(cmd, opts);
+}
+
 function buildShellCommand(cmd: string, opts: ExecOptions): string {
 	// We always shell out via bash so the agent-supplied command string
 	// behaves the way it would in a terminal (pipes, redirects, &&, ||).
 	const parts: string[] = [];
 	if (opts.env) {
 		for (const [k, v] of Object.entries(opts.env)) {
+			if (!POSIX_ENV_NAME.test(k)) {
+				throw new Error(`Invalid env var name (must match ${POSIX_ENV_NAME}): ${k}`);
+			}
 			parts.push(`export ${k}=${JSON.stringify(v)}`);
 		}
 	}
@@ -168,9 +184,10 @@ class FlySandboxInstance implements SandboxInstance {
 	async exposePort(port: number, opts: { hostname: string; token: string }): Promise<void> {
 		// Fly's HTTP service is statically declared; the in-container
 		// reverse proxy peels the port off the Host header. Recording the
-		// (port, token, hostname) tuple here just lets getExposedPorts
-		// reconstruct the URL list later.
-		await recordExposedPort(this.#env, this.#conversationId, port, opts.token, opts.hostname);
+		// (port, token) tuple here just lets getExposedPorts reconstruct
+		// the URL list later. The hostname is taken from the live request
+		// at list-time, so we don't persist it.
+		await recordExposedPort(this.#env, this.#conversationId, port, opts.token);
 	}
 
 	async getExposedPorts(hostname: string): Promise<ExposedPort[]> {

@@ -23,11 +23,15 @@ CREATE TABLE IF NOT EXISTS conversation_sandbox (
 -- so `getExposedPorts` can return the list (fly has no native exposed-
 -- ports registry the way the Cloudflare Sandbox SDK does). Cloudflare's
 -- backend ignores this table.
+--
+-- We deliberately do not store `hostname` here: the URL template is
+-- reconstructed at read time from the caller-supplied hostname, so the
+-- stored value would never be read. A port-token tuple is the entire
+-- per-port state.
 CREATE TABLE IF NOT EXISTS conversation_exposed_ports (
   conversation_id TEXT NOT NULL,
   port            INTEGER NOT NULL,
   token           TEXT NOT NULL,
-  hostname        TEXT NOT NULL,
   created_at      INTEGER NOT NULL,
   PRIMARY KEY (conversation_id, port)
 );
