@@ -4,6 +4,7 @@ import { createProvider, deleteProvider, getProvider, updateProvider, isValidPro
 import { createModel, deleteModel, getModel, listModelsForProvider, updateModel, swapModelOrder } from '$lib/server/providers/models';
 import { fetchOpenRouterModels } from '$lib/server/providers/fetch';
 import { getPresetById } from '$lib/server/providers/presets';
+import { fetchModelsDevCatalog, mapToCreateModelInput } from '$lib/server/providers/modelsDev';
 import type { ProviderType, ReasoningType } from '$lib/server/providers/types';
 
 function getEnv(): Env {
@@ -242,3 +243,57 @@ export const fetchPresetModels = command('unchecked', async (data: { preset_id?:
 
 	return [];
 });
+
+// Models.dev catalog fetch. The full flattened list (~hundreds of entries) is
+// returned to the client; the picker UI filters in-memory. Cached at the
+// Cloudflare edge for 1h, so repeat opens within that window are free.
+export const searchModelsDev = command('unchecked', async (_input?: void) => {
+	void _input;
+	return await fetchModelsDevCatalog();
+});
+
+export const importModelsFromDev = form(
+	'unchecked',
+	async (data: { provider_id?: unknown; model_keys?: unknown; id_prefix?: unknown }) => {
+		const providerId = String(data.provider_id ?? '').trim();
+		const idPrefix = String(data.id_prefix ?? '');
+		const keysRaw = String(data.model_keys ?? '').trim();
+
+		if (!providerId) error(400, 'Provider ID required');
+		if (!keysRaw) error(400, 'Select at least one model');
+
+		const env = getEnv();
+		const provider = await getProvider(env, providerId);
+		if (!provider) error(400, `Provider not found: ${providerId}`);
+
+		const catalog = await fetchModelsDevCatalog();
+		const byKey = new Map(catalog.map((e) => [`${e.providerKey}:${e.modelId}`, e]));
+
+		const keys = keysRaw.split(',').filter(Boolean);
+		const existing = await listModelsForProvider(env, providerId);
+		const baseSort = existing.length * 10;
+
+		let i = 0;
+		for (const key of keys) {
+			const entry = byKey.get(key);
+			if (!entry) {
+				i++;
+				continue;
+			}
+			const input = mapToCreateModelInput(entry, {
+				idPrefix,
+				sortOrder: baseSort + i * 10,
+			});
+			// Skip silently if id already exists — re-imports shouldn't 500 on the
+			// (provider_id, id) UNIQUE constraint.
+			if (await getModel(env, providerId, input.id)) {
+				i++;
+				continue;
+			}
+			await createModel(env, providerId, input);
+			i++;
+		}
+
+		redirect(303, '/settings');
+	},
+);
