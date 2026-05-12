@@ -6,6 +6,7 @@ import { createModel, deleteModel, getModel, listModelsForProvider, updateModel,
 import { fetchOpenRouterModels } from '$lib/server/providers/fetch';
 import { getPresetById } from '$lib/server/providers/presets';
 import { fetchModelsDevCatalog, mapToCreateModelInput } from '$lib/server/providers/modelsDev';
+import { fetchOpenRouterCatalog, mapOpenRouterToCreateModelInput } from '$lib/server/providers/openRouter';
 import {
 	checkboxBoolean,
 	trimmedNonEmpty,
@@ -299,6 +300,54 @@ export const importModelsFromDev = form(
 			});
 			// Skip silently if id already exists — re-imports shouldn't 500 on the
 			// (provider_id, id) UNIQUE constraint.
+			if (await getModel(env, provider_id, input.id)) {
+				i++;
+				continue;
+			}
+			await createModel(env, provider_id, input);
+			i++;
+		}
+
+		redirect(303, '/settings');
+	},
+);
+
+// OpenRouter catalog fetch. Parallel to `searchModelsDev`: returns the full
+// flattened list to the client and the picker UI filters in-memory.
+export const searchOpenRouter = command(z.void(), async () => {
+	return await fetchOpenRouterCatalog();
+});
+
+export const importModelsFromOpenRouter = form(
+	z.object({
+		provider_id: trimmedNonEmpty('Provider ID required'),
+		model_keys: trimmedNonEmpty('Select at least one model'),
+		id_prefix: z.string().optional().default(''),
+	}),
+	async ({ provider_id, model_keys, id_prefix }) => {
+		const env = getEnv();
+		const provider = await getProvider(env, provider_id);
+		if (!provider) error(400, `Provider not found: ${provider_id}`);
+
+		const catalog = await fetchOpenRouterCatalog();
+		// OpenRouter ids are globally unique, so the fullId is the selection key.
+		const byKey = new Map(catalog.map((e) => [e.fullId, e]));
+
+		const keys = model_keys.split(',').filter(Boolean);
+		const existing = await listModelsForProvider(env, provider_id);
+		const baseSort = existing.length > 0 ? Math.max(...existing.map((m) => m.sortOrder)) + 10 : 0;
+
+		let i = 0;
+		for (const key of keys) {
+			const entry = byKey.get(key);
+			if (!entry) {
+				i++;
+				continue;
+			}
+			const input = mapOpenRouterToCreateModelInput(entry, {
+				idPrefix: id_prefix.trim(),
+				sortOrder: baseSort + i * 10,
+			});
 			if (await getModel(env, provider_id, input.id)) {
 				i++;
 				continue;
