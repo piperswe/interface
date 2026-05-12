@@ -177,7 +177,3 @@ build/
 # Audit findings scratch directory (not part of the repo's source).
 /tmp/audit-findings/
 
-# Local clone of the upstream models.dev catalog repo, used as a reference
-# when developing the models.dev integration. Not part of this project.
-/models.dev/
-
