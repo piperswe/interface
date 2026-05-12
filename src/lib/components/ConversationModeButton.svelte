@@ -11,7 +11,7 @@
 		MessageCircle,
 		Volume2,
 		CircleStop,
-		Mic,
+		Headset,
 	} from 'lucide-svelte';
 
 	let { mode, disabled = false }: { mode: ConversationMode; disabled?: boolean } = $props();
@@ -64,7 +64,7 @@
 	{#if active}
 		<CircleStop size={18} aria-hidden="true" />
 	{:else}
-		<Mic size={18} aria-hidden="true" />
+		<Headset size={18} aria-hidden="true" />
 	{/if}
 </button>
 
