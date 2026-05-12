@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
-	import { Play, Pause, Loader, TriangleAlert } from 'lucide-svelte';
+	import { Volume2, Pause, Loader, TriangleAlert } from 'lucide-svelte';
 
 	let { conversationId, messageId }: { conversationId: string; messageId: string } = $props();
 
@@ -90,7 +90,7 @@
 	{:else if phase === 'error'}
 		<TriangleAlert size={14} aria-hidden="true" />
 	{:else}
-		<Play size={14} aria-hidden="true" />
+		<Volume2 size={14} aria-hidden="true" />
 	{/if}
 </button>
 
