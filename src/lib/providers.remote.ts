@@ -1,11 +1,16 @@
 import { form, command, getRequestEvent } from '$app/server';
 import { error, redirect } from '@sveltejs/kit';
+import { z } from 'zod';
 import { createProvider, deleteProvider, getProvider, updateProvider, isValidProviderId } from '$lib/server/providers/store';
 import { createModel, deleteModel, getModel, listModelsForProvider, updateModel, swapModelOrder } from '$lib/server/providers/models';
 import { fetchOpenRouterModels } from '$lib/server/providers/fetch';
 import { getPresetById } from '$lib/server/providers/presets';
 import { fetchModelsDevCatalog, mapToCreateModelInput } from '$lib/server/providers/modelsDev';
-import type { ProviderType, ReasoningType } from '$lib/server/providers/types';
+import {
+	checkboxBoolean,
+	trimmedNonEmpty,
+	trimmedOptionalOrNull,
+} from '$lib/server/remote-schemas';
 
 function getEnv(): Env {
 	const event = getRequestEvent();
@@ -13,126 +18,135 @@ function getEnv(): Env {
 	return event.platform.env;
 }
 
-function validateProviderType(v: unknown): ProviderType {
-	if (v === 'anthropic' || v === 'openai_compatible') return v;
-	error(400, `Invalid provider type: ${v}`);
-}
+const PROVIDER_ID_RULE =
+	'Provider ID must start with a letter and contain only lowercase letters, digits, underscores, or hyphens (max 64 chars).';
 
-function validateReasoningType(v: unknown): ReasoningType | null {
-	if (v === 'effort' || v === 'max_tokens') return v;
-	if (v == null || v === '') return null;
-	error(400, `Invalid reasoning type: ${v}`);
-}
+const providerIdField = z
+	.string()
+	.trim()
+	.refine((v) => v.length > 0 && isValidProviderId(v), PROVIDER_ID_RULE);
 
 export const saveProvider = form(
-	'unchecked',
-	async (data: { id?: unknown; type?: unknown; api_key?: unknown; endpoint?: unknown; gateway_id?: unknown }) => {
-		const id = String(data.id ?? '').trim();
-		const type = validateProviderType(data.type);
-		const apiKey = String(data.api_key ?? '').trim() || null;
-		const endpoint = String(data.endpoint ?? '').trim() || null;
-		const gatewayId = String(data.gateway_id ?? '').trim() || null;
-
-		if (!id || !isValidProviderId(id)) {
-			error(
-				400,
-				'Provider ID must start with a letter and contain only lowercase letters, digits, underscores, or hyphens (max 64 chars).',
-			);
-		}
-
+	z.object({
+		id: providerIdField,
+		type: z.enum(['anthropic', 'openai_compatible'], {
+			errorMap: (_issue, ctx) => ({ message: `Invalid provider type: ${ctx.data}` }),
+		}),
+		api_key: trimmedOptionalOrNull,
+		endpoint: trimmedOptionalOrNull,
+		gateway_id: trimmedOptionalOrNull,
+	}),
+	async ({ id, type, api_key, endpoint, gateway_id }) => {
 		const env = getEnv();
 
 		// Check if this is an update or create by seeing if the provider exists
 		const existing = await getProvider(env, id);
 
 		if (existing) {
-			await updateProvider(env, id, { apiKey, endpoint, gatewayId });
+			await updateProvider(env, id, { apiKey: api_key, endpoint, gatewayId: gateway_id });
 		} else {
-			await createProvider(env, { id, type, apiKey, endpoint, gatewayId });
+			await createProvider(env, { id, type, apiKey: api_key, endpoint, gatewayId: gateway_id });
 		}
 
 		redirect(303, '/settings');
 	},
 );
 
-export const deleteProviderAction = form('unchecked', async (data: { id?: unknown }) => {
-	const id = String(data.id ?? '').trim();
-	if (!id) error(400, 'Provider ID required');
-	await deleteProvider(getEnv(), id);
-	redirect(303, '/settings');
-});
+export const deleteProviderAction = form(
+	z.object({ id: trimmedNonEmpty('Provider ID required') }),
+	async ({ id }) => {
+		await deleteProvider(getEnv(), id);
+		redirect(303, '/settings');
+	},
+);
 
-function parseOptionalCost(raw: unknown, label: string): number | null {
-	const trimmed = String(raw ?? '').trim();
-	if (!trimmed) return null;
-	const n = Number.parseFloat(trimmed);
-	if (!Number.isFinite(n) || n < 0) {
-		error(400, `${label} must be a non-negative number`);
-	}
-	return n;
-}
+const optionalNonNegativeFloat = (label: string) =>
+	z
+		.string()
+		.optional()
+		.transform((v, ctx) => {
+			const t = (v ?? '').trim();
+			if (t === '') return null;
+			const n = Number.parseFloat(t);
+			if (!Number.isFinite(n) || n < 0) {
+				ctx.addIssue({ code: 'custom', message: `${label} must be a non-negative number` });
+				return z.NEVER;
+			}
+			return n;
+		});
+
+const optionalPositiveIntWithDefault = (defaultValue: number, label: string) =>
+	z
+		.string()
+		.optional()
+		.transform((v, ctx) => {
+			const t = (v ?? '').trim();
+			if (t === '') return defaultValue;
+			const n = Number.parseInt(t, 10);
+			if (!Number.isFinite(n) || n < 1) {
+				ctx.addIssue({ code: 'custom', message: label });
+				return z.NEVER;
+			}
+			return n;
+		});
 
 export const saveProviderModel = form(
-	'unchecked',
-	async (data: {
-		provider_id?: unknown;
-		model_id?: unknown;
-		name?: unknown;
-		description?: unknown;
-		max_context_length?: unknown;
-		reasoning_type?: unknown;
-		input_cost_per_million_tokens?: unknown;
-		output_cost_per_million_tokens?: unknown;
-		supports_image_input?: unknown;
+	z.object({
+		provider_id: trimmedNonEmpty('Provider ID required'),
+		model_id: trimmedNonEmpty('Model ID required'),
+		name: trimmedNonEmpty('Model name required'),
+		description: trimmedOptionalOrNull,
+		max_context_length: optionalPositiveIntWithDefault(
+			128_000,
+			'Max context length must be a positive integer',
+		),
+		reasoning_type: z
+			.string()
+			.optional()
+			.transform((v, ctx) => {
+				if (v === undefined || v === '') return null;
+				if (v === 'effort' || v === 'max_tokens') return v;
+				ctx.addIssue({ code: 'custom', message: `Invalid reasoning type: ${v}` });
+				return z.NEVER;
+			}),
+		input_cost_per_million_tokens: optionalNonNegativeFloat('Input cost per million tokens'),
+		output_cost_per_million_tokens: optionalNonNegativeFloat('Output cost per million tokens'),
+		supports_image_input: checkboxBoolean,
+	}),
+	async ({
+		provider_id,
+		model_id,
+		name,
+		description,
+		max_context_length,
+		reasoning_type,
+		input_cost_per_million_tokens,
+		output_cost_per_million_tokens,
+		supports_image_input,
 	}) => {
-		const providerId = String(data.provider_id ?? '').trim();
-		const modelId = String(data.model_id ?? '').trim();
-		const name = String(data.name ?? '').trim();
-		const description = String(data.description ?? '').trim() || null;
-		const maxContextLengthRaw = String(data.max_context_length ?? '').trim();
-		const reasoningType = validateReasoningType(data.reasoning_type);
-		const inputCostPerMillionTokens = parseOptionalCost(data.input_cost_per_million_tokens, 'Input cost per million tokens');
-		const outputCostPerMillionTokens = parseOptionalCost(data.output_cost_per_million_tokens, 'Output cost per million tokens');
-		// HTML checkbox sends 'on' (or 'true' / '1') when checked, omits when unchecked.
-		const supportsImageInput = (() => {
-			const v = data.supports_image_input;
-			if (v == null || v === '') return false;
-			const s = String(v).toLowerCase();
-			return s === 'on' || s === 'true' || s === '1';
-		})();
-
-		if (!providerId) error(400, 'Provider ID required');
-		if (!modelId) error(400, 'Model ID required');
-		if (!name) error(400, 'Model name required');
-
-		const maxContextLength = maxContextLengthRaw ? Number.parseInt(maxContextLengthRaw, 10) : 128_000;
-		if (!Number.isFinite(maxContextLength) || maxContextLength < 1) {
-			error(400, 'Max context length must be a positive integer');
-		}
-
 		const env = getEnv();
-		const existing = await getModel(env, providerId, modelId);
+		const existing = await getModel(env, provider_id, model_id);
 
 		if (existing) {
-			await updateModel(env, providerId, modelId, {
+			await updateModel(env, provider_id, model_id, {
 				name,
 				description,
-				maxContextLength,
-				reasoningType,
-				inputCostPerMillionTokens,
-				outputCostPerMillionTokens,
-				supportsImageInput,
+				maxContextLength: max_context_length,
+				reasoningType: reasoning_type,
+				inputCostPerMillionTokens: input_cost_per_million_tokens,
+				outputCostPerMillionTokens: output_cost_per_million_tokens,
+				supportsImageInput: supports_image_input,
 			});
 		} else {
-			await createModel(env, providerId, {
-				id: modelId,
+			await createModel(env, provider_id, {
+				id: model_id,
 				name,
 				description,
-				maxContextLength,
-				reasoningType,
-				inputCostPerMillionTokens,
-				outputCostPerMillionTokens,
-				supportsImageInput,
+				maxContextLength: max_context_length,
+				reasoningType: reasoning_type,
+				inputCostPerMillionTokens: input_cost_per_million_tokens,
+				outputCostPerMillionTokens: output_cost_per_million_tokens,
+				supportsImageInput: supports_image_input,
 			});
 		}
 
@@ -140,54 +154,51 @@ export const saveProviderModel = form(
 	},
 );
 
-export const deleteProviderModel = form('unchecked', async (data: { provider_id?: unknown; model_id?: unknown }) => {
-	const providerId = String(data.provider_id ?? '').trim();
-	const modelId = String(data.model_id ?? '').trim();
-	if (!providerId || !modelId) error(400, 'Provider ID and Model ID required');
-	await deleteModel(getEnv(), providerId, modelId);
-	redirect(303, '/settings');
-});
-
-export const reorderProviderModel = form('unchecked', async (data: { provider_id?: unknown; model_id?: unknown; direction?: unknown }) => {
-	const providerId = String(data.provider_id ?? '').trim();
-	const modelId = String(data.model_id ?? '').trim();
-	const direction = String(data.direction ?? '').trim();
-
-	if (!providerId || !modelId) error(400, 'Provider ID and Model ID required');
-	if (direction !== 'up' && direction !== 'down') error(400, 'Direction must be up or down');
-
-	const env = getEnv();
-	const models = await listModelsForProvider(env, providerId);
-	const idx = models.findIndex((m) => m.id === modelId);
-	if (idx === -1) error(400, 'Model not found');
-
-	const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
-	if (swapIdx < 0 || swapIdx >= models.length) {
-		// Already at boundary; nothing to do
+export const deleteProviderModel = form(
+	z.object({
+		provider_id: trimmedNonEmpty('Provider ID and Model ID required'),
+		model_id: trimmedNonEmpty('Provider ID and Model ID required'),
+	}),
+	async ({ provider_id, model_id }) => {
+		await deleteModel(getEnv(), provider_id, model_id);
 		redirect(303, '/settings');
-	}
+	},
+);
 
-	await swapModelOrder(env, providerId, modelId, models[swapIdx].id);
-	redirect(303, '/settings');
-});
+export const reorderProviderModel = form(
+	z.object({
+		provider_id: trimmedNonEmpty('Provider ID and Model ID required'),
+		model_id: trimmedNonEmpty('Provider ID and Model ID required'),
+		direction: z.enum(['up', 'down'], {
+			errorMap: () => ({ message: 'Direction must be up or down' }),
+		}),
+	}),
+	async ({ provider_id, model_id, direction }) => {
+		const env = getEnv();
+		const models = await listModelsForProvider(env, provider_id);
+		const idx = models.findIndex((m) => m.id === model_id);
+		if (idx === -1) error(400, 'Model not found');
 
-export const addPresetProvider = form(
-	'unchecked',
-	async (data: { id?: unknown; provider_id?: unknown; api_key?: unknown; endpoint?: unknown; model_ids?: unknown }) => {
-		const presetId = String(data.id ?? '').trim();
-		const providerId = String(data.provider_id ?? '').trim();
-		const apiKey = String(data.api_key ?? '').trim() || null;
-		const endpoint = String(data.endpoint ?? '').trim() || null;
-		const modelIdsRaw = String(data.model_ids ?? '').trim();
-
-		if (!presetId) error(400, 'Preset ID required');
-		if (!providerId || !isValidProviderId(providerId)) {
-			error(
-				400,
-				'Provider ID must start with a letter and contain only lowercase letters, digits, underscores, or hyphens (max 64 chars).',
-			);
+		const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+		if (swapIdx < 0 || swapIdx >= models.length) {
+			// Already at boundary; nothing to do
+			redirect(303, '/settings');
 		}
 
+		await swapModelOrder(env, provider_id, model_id, models[swapIdx].id);
+		redirect(303, '/settings');
+	},
+);
+
+export const addPresetProvider = form(
+	z.object({
+		id: trimmedNonEmpty('Preset ID required'),
+		provider_id: providerIdField,
+		api_key: trimmedOptionalOrNull,
+		endpoint: trimmedOptionalOrNull,
+		model_ids: z.string().optional().default(''),
+	}),
+	async ({ id: presetId, provider_id, api_key, endpoint, model_ids }) => {
 		const preset = getPresetById(presetId);
 		if (!preset) error(400, `Unknown preset: ${presetId}`);
 
@@ -195,26 +206,27 @@ export const addPresetProvider = form(
 
 		// Pre-check uniqueness so the user gets a clean 400 instead of
 		// a unique-constraint 500 from D1.
-		const conflict = await getProvider(env, providerId);
+		const conflict = await getProvider(env, provider_id);
 		if (conflict) {
-			error(400, `Provider id "${providerId}" already exists. Edit it or pick a different id.`);
+			error(400, `Provider id "${provider_id}" already exists. Edit it or pick a different id.`);
 		}
 
 		// Create the provider
 		await createProvider(env, {
-			id: providerId,
+			id: provider_id,
 			type: preset.type,
-			apiKey,
+			apiKey: api_key,
 			endpoint: endpoint || preset.defaultEndpoint || null,
 		});
 
 		// Add selected models (or all default models if none selected)
-		const selectedIds = modelIdsRaw ? modelIdsRaw.split(',').filter(Boolean) : [];
-		const modelsToAdd = selectedIds.length > 0 ? preset.defaultModels.filter((m) => selectedIds.includes(m.id)) : preset.defaultModels;
+		const selectedIds = model_ids ? model_ids.split(',').filter(Boolean) : [];
+		const modelsToAdd =
+			selectedIds.length > 0 ? preset.defaultModels.filter((m) => selectedIds.includes(m.id)) : preset.defaultModels;
 
 		for (let i = 0; i < modelsToAdd.length; i++) {
 			const m = modelsToAdd[i];
-			await createModel(env, providerId, {
+			await createModel(env, provider_id, {
 				id: m.id,
 				name: m.name,
 				description: m.description ?? null,
@@ -228,49 +240,47 @@ export const addPresetProvider = form(
 	},
 );
 
-export const fetchPresetModels = command('unchecked', async (data: { preset_id?: unknown; api_key?: unknown }) => {
-	const presetId = String(data.preset_id ?? '').trim();
-	const apiKey = String(data.api_key ?? '').trim() || undefined;
+export const fetchPresetModels = command(
+	z.object({
+		preset_id: trimmedNonEmpty('Preset ID required'),
+		api_key: z.string().trim().optional(),
+	}),
+	async ({ preset_id, api_key }) => {
+		const preset = getPresetById(preset_id);
+		if (!preset) error(400, `Unknown preset: ${preset_id}`);
+		if (!preset.canFetchModels) error(400, `Preset ${preset_id} does not support model fetching`);
 
-	if (!presetId) error(400, 'Preset ID required');
-	const preset = getPresetById(presetId);
-	if (!preset) error(400, `Unknown preset: ${presetId}`);
-	if (!preset.canFetchModels) error(400, `Preset ${presetId} does not support model fetching`);
+		if (preset_id === 'openrouter') {
+			return await fetchOpenRouterModels(api_key || undefined);
+		}
 
-	if (presetId === 'openrouter') {
-		return await fetchOpenRouterModels(apiKey);
-	}
-
-	return [];
-});
+		return [];
+	},
+);
 
 // Models.dev catalog fetch. The full flattened list (~hundreds of entries) is
 // returned to the client; the picker UI filters in-memory. Cached at the
 // Cloudflare edge for 1h, so repeat opens within that window are free.
-export const searchModelsDev = command('unchecked', async (_input?: void) => {
-	void _input;
+export const searchModelsDev = command(z.void(), async () => {
 	return await fetchModelsDevCatalog();
 });
 
 export const importModelsFromDev = form(
-	'unchecked',
-	async (data: { provider_id?: unknown; model_keys?: unknown; id_prefix?: unknown }) => {
-		const providerId = String(data.provider_id ?? '').trim();
-		const idPrefix = String(data.id_prefix ?? '').trim();
-		const keysRaw = String(data.model_keys ?? '').trim();
-
-		if (!providerId) error(400, 'Provider ID required');
-		if (!keysRaw) error(400, 'Select at least one model');
-
+	z.object({
+		provider_id: trimmedNonEmpty('Provider ID required'),
+		model_keys: trimmedNonEmpty('Select at least one model'),
+		id_prefix: z.string().optional().default(''),
+	}),
+	async ({ provider_id, model_keys, id_prefix }) => {
 		const env = getEnv();
-		const provider = await getProvider(env, providerId);
-		if (!provider) error(400, `Provider not found: ${providerId}`);
+		const provider = await getProvider(env, provider_id);
+		if (!provider) error(400, `Provider not found: ${provider_id}`);
 
 		const catalog = await fetchModelsDevCatalog();
 		const byKey = new Map(catalog.map((e) => [`${e.providerKey}:${e.modelId}`, e]));
 
-		const keys = keysRaw.split(',').filter(Boolean);
-		const existing = await listModelsForProvider(env, providerId);
+		const keys = model_keys.split(',').filter(Boolean);
+		const existing = await listModelsForProvider(env, provider_id);
 		// Derive from the actual max sortOrder, not the count: deletions and
 		// manual reorders can leave gaps, so `count * 10` may overlap existing
 		// entries rather than appending after them.
@@ -284,16 +294,16 @@ export const importModelsFromDev = form(
 				continue;
 			}
 			const input = mapToCreateModelInput(entry, {
-				idPrefix,
+				idPrefix: id_prefix.trim(),
 				sortOrder: baseSort + i * 10,
 			});
 			// Skip silently if id already exists — re-imports shouldn't 500 on the
 			// (provider_id, id) UNIQUE constraint.
-			if (await getModel(env, providerId, input.id)) {
+			if (await getModel(env, provider_id, input.id)) {
 				i++;
 				continue;
 			}
-			await createModel(env, providerId, input);
+			await createModel(env, provider_id, input);
 			i++;
 		}
 

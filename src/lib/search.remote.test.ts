@@ -36,8 +36,13 @@ describe('search.remote — searchConversations', () => {
 		expect(await searchConversations('   \t  ')).toEqual([]);
 	});
 
-	it('returns an empty array for non-string input (defensive guard)', async () => {
-		expect(await searchConversations(42 as unknown as string)).toEqual([]);
+	it('rejects non-string input via the Zod schema', async () => {
+		// Regression: ensure the schema-level guard rejects non-strings now that
+		// `query(z.string(), ...)` does the type check (we no longer return `[]`
+		// silently for bad input).
+		await expect(searchConversations(42 as unknown as string)).rejects.toMatchObject({
+			status: 400,
+		});
 	});
 
 	it('finds a conversation by its title', async () => {
