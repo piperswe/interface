@@ -27,6 +27,7 @@ A self-hosted AI chat app running entirely on Cloudflare's developer platform â€
 | Markdown | marked + Shiki + KaTeX |
 | Type checking | TypeScript (strict) |
 | Tests | Vitest + `vitest-pool-workers` |
+| Built with | Claude Code, Devin, OpenCode & pi.dev |
 
 ## Project Structure
 
