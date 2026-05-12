@@ -43,7 +43,16 @@ const server = http.createServer((req, res) => {
 		return;
 	}
 
-	const port = parsePortFromHost(req.headers.host);
+	// Defense-in-depth: fly's HTTP service proxy is documented to
+	// preserve the Host header so subdomain-based routing works, but
+	// honor `x-forwarded-host` as a fallback in case fly rewrites Host
+	// in a future change. The backend's `fetch()` sets Host already; if
+	// fly preserves it we use it, otherwise the original host from CF
+	// gets stamped onto `x-forwarded-host` by fly's edge.
+	const xfh = req.headers['x-forwarded-host'];
+	const xfhFirst = Array.isArray(xfh) ? xfh[0] : xfh;
+	const port =
+		parsePortFromHost(req.headers.host) ?? parsePortFromHost(xfhFirst);
 	if (port === null) {
 		res.writeHead(404, { 'content-type': 'text/plain' });
 		res.end(`preview proxy: unrecognized host "${req.headers.host ?? ''}"`);

@@ -55,6 +55,16 @@ function defaultMachineConfig(cfg: FlyConfig): FlyMachineConfig {
 const MACHINE_CACHE_MAX = 256;
 const machineCache = new Map<string, string>();
 
+// In-flight `ensureMachine` promises keyed by conversation id. Without
+// this, two concurrent tool calls for the same conversation on the same
+// isolate (e.g. a sub-agent + parent agent both hitting sandbox tools)
+// would both see `machineId = null` and both POST /machines, leaking the
+// second machine. Coalescing collapses the duplicate work to a single
+// API call. Cross-isolate races (rare given ConversationDurableObject
+// pins a conversation to a single isolate) are mitigated by the
+// post-create reconciliation step inside `ensureMachineInner`.
+const inFlight = new Map<string, Promise<string>>();
+
 function rememberMachine(conversationId: string, machineId: string): void {
 	if (machineCache.size >= MACHINE_CACHE_MAX) {
 		const first = machineCache.keys().next().value;
@@ -79,6 +89,20 @@ export async function getCachedMachineId(
 }
 
 export async function ensureMachine(
+	env: Env,
+	cfg: FlyConfig,
+	conversationId: string,
+): Promise<string> {
+	const existing = inFlight.get(conversationId);
+	if (existing) return existing;
+	const promise = ensureMachineInner(env, cfg, conversationId).finally(() => {
+		inFlight.delete(conversationId);
+	});
+	inFlight.set(conversationId, promise);
+	return promise;
+}
+
+async function ensureMachineInner(
 	env: Env,
 	cfg: FlyConfig,
 	conversationId: string,
@@ -110,12 +134,26 @@ export async function ensureMachine(
 	}
 
 	if (!machineId) {
+		// Cross-isolate race mitigation: between this check and the
+		// createMachine call below, another isolate could create a machine
+		// and write its id to D1. After we create, re-read D1; if a
+		// different id is now present, prefer it and destroy our orphan.
 		const created = await createMachine(cfg, {
 			name: `sandbox-${conversationId.slice(0, 24)}`,
 			config: defaultMachineConfig(cfg),
 		});
 		machineId = created.id;
-		await setFlyMachineId(env, conversationId, machineId);
+		const existingInDb = await getFlyMachineId(env, conversationId);
+		if (existingInDb && existingInDb !== machineId) {
+			try {
+				await destroyMachine(cfg, machineId);
+			} catch {
+				/* best-effort */
+			}
+			machineId = existingInDb;
+		} else {
+			await setFlyMachineId(env, conversationId, machineId);
+		}
 		rememberMachine(conversationId, machineId);
 		// Newly created machines start automatically; wait for ready.
 		try {

@@ -4,7 +4,7 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 import { shellQuote } from './file-ops';
-import { existsShell, mkdirShell, deleteFileShell, writeFileShell } from './file-ops';
+import { existsShell, mkdirShell, deleteFileShell, readFileShell, runCodeShell, writeFileShell } from './file-ops';
 import type { FlyConfig } from './machines-api';
 
 // Shell quoting must survive every adversarial path we throw at it: a
@@ -93,9 +93,56 @@ describe('file-ops shell scripts', () => {
 		expect(result).toEqual({ exists: true });
 	});
 
+	it('existsShell uses `test -e` not `[ -e -- ... ]`', async () => {
+		// Regression: `[` / `test` does not recognise `--` as an option
+		// terminator, so `[ -e -- "$P" ]` is a malformed 3-arg test that
+		// always returns exit 2 (treated as false). The path comes from
+		// shellQuote and is already safe; we don't need (and must not use)
+		// `--` inside the test builtin.
+		let seenScript = '';
+		mockMachineExec((req) => {
+			seenScript = (req as { cmd: string[] }).cmd[2] ?? '';
+			return { exit_code: 0, stdout: '1\n', stderr: '' };
+		});
+		await existsShell(CFG, 'machine-1', '/some/path');
+		expect(seenScript).toContain('test -e');
+		expect(seenScript).not.toMatch(/\[\s*-e\s+--/);
+	});
+
 	it('deleteFileShell surfaces stderr on non-zero exit', async () => {
 		mockMachineExec(() => ({ exit_code: 1, stdout: '', stderr: 'permission denied' }));
 		await expect(deleteFileShell(CFG, 'machine-1', '/root/file')).rejects.toThrow(/permission denied/);
+	});
+
+	it('readFileShell uses `test -e`/`test -f` not `[ -e -- ... ]`', async () => {
+		// Regression — same bash-test malformedness as existsShell.
+		let seenScript = '';
+		mockMachineExec((req) => {
+			seenScript = (req as { cmd: string[] }).cmd[2] ?? '';
+			// Emit a fake ENC: line + base64 payload so the parser succeeds.
+			return { exit_code: 0, stdout: `ENC:us-ascii\n${btoa('hello')}`, stderr: '' };
+		});
+		const result = await readFileShell(CFG, 'machine-1', '/some/path');
+		expect(seenScript).toContain('test -e');
+		expect(seenScript).toContain('test -f');
+		expect(seenScript).not.toMatch(/\[\s*!?\s*-[ef]\s+--/);
+		expect(result.content).toBe('hello');
+	});
+
+	it('runCodeShell turns set -e off around the runner so cleanup runs on failure', async () => {
+		// Regression: with `set -e` covering the runner, a non-zero exit
+		// from python3/node/tsx skipped the `rm -f` and leaked the temp
+		// file. The script must disable -e around the runner so the
+		// cleanup always runs.
+		let seenScript = '';
+		mockMachineExec((req) => {
+			seenScript = (req as { cmd: string[] }).cmd[2] ?? '';
+			return { exit_code: 1, stdout: '', stderr: 'boom' };
+		});
+		await runCodeShell(CFG, 'machine-1', 'print(1/0)', 'python');
+		expect(seenScript).toContain('set +e');
+		// The rm + exit must come after the runner invocation.
+		expect(seenScript).toMatch(/python3 [^\n]+\nRC=\$\?\nrm -f/);
 	});
 
 	it('writeFileShell base64-encodes content as stdin', async () => {

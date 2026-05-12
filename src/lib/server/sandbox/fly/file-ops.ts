@@ -38,14 +38,20 @@ export async function readFileShell(
 	path: string,
 ): Promise<ReadFileResult> {
 	const p = shellQuote(path);
-	// 1) Verify the file exists & is a regular file.
+	// 1) Verify the file exists & is a regular file. We use `test`/`-e` /
+	//    `-f` rather than `[ -e -- ${p} ]` — bash's `[` (and `test`) does
+	//    not recognise `--` as an option terminator, so the previous
+	//    `[ -e -- "$P" ]` form was a malformed 3-arg test that always
+	//    returned exit 2 (treated as false by the `if`). The path is
+	//    already single-quoted via shellQuote so it cannot be parsed as a
+	//    flag regardless.
 	// 2) Detect encoding via `file --mime-encoding` (text vs binary).
 	// 3) Emit content as base64 unconditionally — the caller decodes when
 	//    encoding === 'utf8'. base64 keeps the protocol byte-clean and
 	//    lets the server skip any guess-the-encoding logic.
 	const script = `set -e
-if [ ! -e -- ${p} ]; then echo "no such file: ${path}" >&2; exit 2; fi
-if [ ! -f -- ${p} ]; then echo "not a regular file: ${path}" >&2; exit 2; fi
+if ! test -e ${p}; then echo "no such file: ${path}" >&2; exit 2; fi
+if ! test -f ${p}; then echo "not a regular file: ${path}" >&2; exit 2; fi
 ENC=$(file --mime-encoding -b -- ${p} 2>/dev/null || echo unknown)
 echo "ENC:$ENC"
 base64 -w0 -- ${p}`;
@@ -137,8 +143,10 @@ export async function existsShell(
 ): Promise<{ exists: boolean }> {
 	const p = shellQuote(path);
 	// Return 0 with stdout "1"/"0" so we don't confuse the test result with
-	// other errors (a missing path is not a failure).
-	const r = await execShell(cfg, machineId, `if [ -e -- ${p} ]; then echo 1; else echo 0; fi`);
+	// other errors (a missing path is not a failure). `test -e` rather
+	// than `[ -e -- ${p} ]` because `[` does not understand `--` (so the
+	// previous form was a malformed 3-arg test that always failed).
+	const r = await execShell(cfg, machineId, `if test -e ${p}; then echo 1; else echo 0; fi`);
 	if (r.exitCode !== 0) {
 		throw new Error(`exists failed for ${path}: ${r.stderr || `exit ${r.exitCode}`}`);
 	}
@@ -179,8 +187,14 @@ export async function runCodeShell(
 		);
 	}
 	const b64 = btoa(bin);
+	// `set -e` for the prelude so a base64-decode failure aborts before we
+	// invoke the runner, but `set +e` around the runner itself so a
+	// non-zero exit doesn't skip the `rm -f` cleanup (otherwise the temp
+	// file accumulates in /tmp on every failed run until the container is
+	// destroyed).
 	const script = `set -e
 echo ${shellQuote(b64)} | base64 -d > ${p}
+set +e
 ${runner} ${p}
 RC=$?
 rm -f ${p}
