@@ -23,9 +23,17 @@ function imageFor(cfg: FlyConfig): string {
 	return `registry.fly.io/${cfg.appName}:latest`;
 }
 
-function defaultMachineConfig(cfg: FlyConfig): FlyMachineConfig {
+function defaultMachineConfig(cfg: FlyConfig, conversationId: string): FlyMachineConfig {
 	return {
 		image: imageFor(cfg),
+		// Inject the conversation id so the in-container preview proxy
+		// can validate inbound Host headers against it. Without this,
+		// any request that reaches the machine (e.g. via a missing
+		// fly-prefer-instance-id header that fly load-balances to a
+		// stranger machine) would be forwarded to whatever localhost
+		// port the Host's leading digits resolve to, regardless of
+		// whether that conversation owns the machine.
+		env: { SANDBOX_CONVERSATION_ID: conversationId },
 		services: [
 			{
 				// Single public HTTP service. The in-container reverse
@@ -140,7 +148,7 @@ async function ensureMachineInner(
 		// different id is now present, prefer it and destroy our orphan.
 		const created = await createMachine(cfg, {
 			name: `sandbox-${conversationId.slice(0, 24)}`,
-			config: defaultMachineConfig(cfg),
+			config: defaultMachineConfig(cfg, conversationId),
 		});
 		machineId = created.id;
 		const existingInDb = await getFlyMachineId(env, conversationId);

@@ -16,14 +16,32 @@ import http from 'node:http';
 
 const PORT = Number(process.env.PREVIEW_PROXY_PORT || 8080);
 
+// Set by the fly machine config (`lifecycle.ts:defaultMachineConfig`). If
+// present, the proxy refuses requests whose Host segment doesn't match
+// — defense-in-depth against requests that bypass the Worker (which
+// constructs the Host server-side) and land here directly via fly's
+// edge without a `fly-prefer-instance-id` header pinning them to this
+// machine.
+const OWNER_CONVERSATION_ID = process.env.SANDBOX_CONVERSATION_ID || null;
+
+// Parse `{port}-{conversationId}-{token}.{appHostname}`. Returns the
+// port number when the host is well-formed AND (if `OWNER_CONVERSATION_ID`
+// is configured) the embedded conversation id matches this machine's
+// owner. Returns null otherwise.
 function parsePortFromHost(host) {
 	if (!host) return null;
-	const m = host.match(/^(\d+)-/);
+	// Strip any port suffix from the Host header (`example.com:8080`).
+	const bare = host.split(':')[0];
+	// Pull off the leading subdomain — that's where the
+	// port-convid-token tuple lives.
+	const subdomain = bare.split('.')[0];
+	const m = subdomain.match(/^(\d+)-([^-]+(?:-[^-]+)*)-([^-]+)$/);
 	if (!m) return null;
 	const p = Number(m[1]);
 	if (!Number.isInteger(p) || p <= 0 || p > 65535) return null;
 	// Refuse to forward back to ourselves.
 	if (p === PORT) return null;
+	if (OWNER_CONVERSATION_ID && m[2] !== OWNER_CONVERSATION_ID) return null;
 	return p;
 }
 

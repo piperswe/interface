@@ -1,4 +1,4 @@
-import { getSandboxInstance } from '$lib/server/sandbox';
+import { getSandboxInstance, listBackends } from '$lib/server/sandbox';
 import type { ExposedPort } from '$lib/server/sandbox/backend';
 
 // Exported for unit testing — lets tests inject a fake sandbox without
@@ -35,13 +35,23 @@ export async function getSandboxPreviewPorts(
 	}
 }
 
+// Destroy the sandbox for *every* available backend, not just the
+// currently-selected one. A user can switch backends mid-life of a
+// conversation (e.g. cloudflare → fly → cloudflare), and on
+// conversation deletion we must clean up resources on each backend
+// they ever used — otherwise fly machines (created with
+// `auto_destroy: false`) leak indefinitely and the `conversation_sandbox`
+// D1 rows pile up. `.destroy()` is idempotent on both backends, so
+// invoking it on a backend that never held state for this conversation
+// is a cheap no-op.
 export async function destroySandbox(env: Env, conversationId: string | null): Promise<void> {
 	if (!conversationId) return;
-	try {
-		const instance = await getSandboxInstance(env, conversationId);
-		if (!instance) return;
-		await instance.destroy();
-	} catch {
-		/* ignore */
+	for (const backend of listBackends()) {
+		if (!backend.isAvailable(env)) continue;
+		try {
+			await backend.get(env, conversationId).destroy();
+		} catch {
+			/* one backend's failure shouldn't block the others */
+		}
 	}
 }
