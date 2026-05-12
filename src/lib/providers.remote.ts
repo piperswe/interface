@@ -271,7 +271,10 @@ export const importModelsFromDev = form(
 
 		const keys = keysRaw.split(',').filter(Boolean);
 		const existing = await listModelsForProvider(env, providerId);
-		const baseSort = existing.length * 10;
+		// Derive from the actual max sortOrder, not the count: deletions and
+		// manual reorders can leave gaps, so `count * 10` may overlap existing
+		// entries rather than appending after them.
+		const baseSort = existing.length > 0 ? Math.max(...existing.map((m) => m.sortOrder)) + 10 : 0;
 
 		let i = 0;
 		for (const key of keys) {

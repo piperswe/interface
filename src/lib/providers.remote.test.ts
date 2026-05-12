@@ -14,6 +14,7 @@ const deleteProviderModel = remote.deleteProviderModel as unknown as AnyArgs;
 const reorderProviderModel = remote.reorderProviderModel as unknown as AnyArgs;
 const addPresetProvider = remote.addPresetProvider as unknown as AnyArgs;
 const fetchPresetModels = remote.fetchPresetModels as unknown as AnyArgs;
+const importModelsFromDev = remote.importModelsFromDev as unknown as AnyArgs;
 
 beforeEach(() => {
 	setMockRequestEvent({ platform: { env } });
@@ -371,5 +372,140 @@ describe('providers.remote — fetchPresetModels', () => {
 
 	it('rejects an empty preset id', async () => {
 		await expectError(fetchPresetModels({ preset_id: '' }) as Promise<unknown>, 400);
+	});
+});
+
+describe('providers.remote — importModelsFromDev', () => {
+	function mockModelsDevOnce(body: unknown) {
+		return vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(new Response(JSON.stringify(body), { status: 200 }));
+	}
+
+	const ANTHROPIC_CATALOG = {
+		anthropic: {
+			name: 'Anthropic',
+			models: {
+				'claude-opus-4-6': {
+					id: 'claude-opus-4-6',
+					name: 'Claude Opus 4',
+					attachment: true,
+					reasoning: true,
+					tool_call: true,
+					open_weights: false,
+					release_date: '2025-05-22',
+					cost: { input: 3, output: 15 },
+					limit: { context: 200_000, output: 64_000 },
+					modalities: { input: ['text', 'image'], output: ['text'] },
+				},
+				'claude-sonnet-4-6': {
+					id: 'claude-sonnet-4-6',
+					name: 'Claude Sonnet 4',
+					attachment: true,
+					reasoning: true,
+					tool_call: true,
+					open_weights: false,
+					release_date: '2025-05-22',
+					cost: { input: 3, output: 15 },
+					limit: { context: 200_000, output: 64_000 },
+					modalities: { input: ['text', 'image'], output: ['text'] },
+				},
+			},
+		},
+	};
+
+	it('imports a selected model into an existing provider with metadata prefilled', async () => {
+		await createProvider(env, { id: 'p1', type: 'anthropic' });
+		mockModelsDevOnce(ANTHROPIC_CATALOG);
+		await expectRedirect(
+			importModelsFromDev({
+				provider_id: 'p1',
+				model_keys: 'anthropic:claude-opus-4-6',
+				id_prefix: '',
+			}) as Promise<unknown>,
+			'/settings',
+		);
+		const m = await getModel(env, 'p1', 'claude-opus-4-6');
+		expect(m?.name).toBe('Claude Opus 4');
+		expect(m?.maxContextLength).toBe(200_000);
+		expect(m?.reasoningType).toBe('max_tokens');
+		expect(m?.supportsImageInput).toBe(true);
+		expect(m?.inputCostPerMillionTokens).toBe(3);
+		expect(m?.outputCostPerMillionTokens).toBe(15);
+	});
+
+	it('honors id_prefix when constructing the imported model id', async () => {
+		await createProvider(env, { id: 'or', type: 'openai_compatible', endpoint: 'https://x.example/v1' });
+		mockModelsDevOnce(ANTHROPIC_CATALOG);
+		await expectRedirect(
+			importModelsFromDev({
+				provider_id: 'or',
+				model_keys: 'anthropic:claude-opus-4-6',
+				id_prefix: 'anthropic/',
+			}) as Promise<unknown>,
+			'/settings',
+		);
+		expect(await getModel(env, 'or', 'anthropic/claude-opus-4-6')).not.toBeNull();
+	});
+
+	it('skips models that already exist instead of erroring on the unique constraint', async () => {
+		await createProvider(env, { id: 'p1', type: 'anthropic' });
+		await createModel(env, 'p1', { id: 'claude-opus-4-6', name: 'preexisting', sortOrder: 0 });
+		mockModelsDevOnce(ANTHROPIC_CATALOG);
+		await expectRedirect(
+			importModelsFromDev({
+				provider_id: 'p1',
+				model_keys: 'anthropic:claude-opus-4-6,anthropic:claude-sonnet-4-6',
+				id_prefix: '',
+			}) as Promise<unknown>,
+			'/settings',
+		);
+		// existing row left untouched
+		expect((await getModel(env, 'p1', 'claude-opus-4-6'))?.name).toBe('preexisting');
+		// new row appended
+		expect(await getModel(env, 'p1', 'claude-sonnet-4-6')).not.toBeNull();
+	});
+
+	// Regression: imported models used to inherit sortOrder = existing.length * 10,
+	// which interleaves with existing rows when sort orders have gaps (left behind
+	// by a delete or reorder). The baseSort must derive from the actual max.
+	it('appends imported models after the current max sortOrder even when gaps exist', async () => {
+		await createProvider(env, { id: 'p1', type: 'anthropic' });
+		// Three models with gappy sort orders, e.g. after deleting rows at 10 and 30.
+		await createModel(env, 'p1', { id: 'a', name: 'A', sortOrder: 0 });
+		await createModel(env, 'p1', { id: 'b', name: 'B', sortOrder: 20 });
+		await createModel(env, 'p1', { id: 'c', name: 'C', sortOrder: 40 });
+		mockModelsDevOnce(ANTHROPIC_CATALOG);
+		await expectRedirect(
+			importModelsFromDev({
+				provider_id: 'p1',
+				model_keys: 'anthropic:claude-opus-4-6',
+				id_prefix: '',
+			}) as Promise<unknown>,
+			'/settings',
+		);
+		const imported = await getModel(env, 'p1', 'claude-opus-4-6');
+		expect(imported?.sortOrder).toBeGreaterThan(40);
+	});
+
+	it('rejects when provider does not exist', async () => {
+		mockModelsDevOnce(ANTHROPIC_CATALOG);
+		await expectError(
+			importModelsFromDev({
+				provider_id: 'missing',
+				model_keys: 'anthropic:claude-opus-4-6',
+			}) as Promise<unknown>,
+			400,
+			/not found/,
+		);
+	});
+
+	it('rejects when no model_keys are provided', async () => {
+		await createProvider(env, { id: 'p1', type: 'anthropic' });
+		await expectError(
+			importModelsFromDev({ provider_id: 'p1', model_keys: '' }) as Promise<unknown>,
+			400,
+			/at least one/,
+		);
 	});
 });
