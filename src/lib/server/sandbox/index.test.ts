@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:test';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { getBackend } from './index';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { _resetBackendSelectionCache, getBackend } from './index';
+import * as settings from '$lib/server/settings';
 
 // Stable conversation id used across tests in this file. The backend
 // selection logic depends only on env + user setting; conversation id
@@ -26,9 +27,12 @@ async function setBackendSetting(value: 'cloudflare' | 'fly' | null): Promise<vo
 }
 
 beforeEach(async () => {
+	_resetBackendSelectionCache();
 	await setBackendSetting(null);
 });
 afterEach(async () => {
+	_resetBackendSelectionCache();
+	vi.restoreAllMocks();
 	await setBackendSetting(null);
 });
 
@@ -77,5 +81,36 @@ describe('getBackend', () => {
 		const both = withEnv({ SANDBOX: {}, FLY_API_TOKEN: 'tok', FLY_APP_NAME: 'app' });
 		const result = await getBackend(both);
 		expect(result?.id).toBe('cloudflare');
+	});
+
+	it('caches the selection so back-to-back calls do not re-read D1', async () => {
+		// Regression: a single sandbox tool call invokes
+		// `getConversationSandbox` up to four times (workspace setup,
+		// ssh injection, the tool body, R2 flush). Without an isolate
+		// cache that's four `getSetting` D1 reads on top of the work
+		// the tool already does — and the setting can't realistically
+		// change mid-tool-call. Verify the cache short-circuits the
+		// subsequent reads.
+		await setBackendSetting('fly');
+		const spy = vi.spyOn(settings, 'getSandboxBackendId');
+		const both = withEnv({ SANDBOX: {}, FLY_API_TOKEN: 'tok', FLY_APP_NAME: 'app' });
+		const a = await getBackend(both);
+		const b = await getBackend(both);
+		const c = await getBackend(both);
+		expect(a?.id).toBe('fly');
+		expect(b?.id).toBe('fly');
+		expect(c?.id).toBe('fly');
+		expect(spy).toHaveBeenCalledTimes(1);
+	});
+
+	it('does not consult the setting (or the cache) when only one backend is available', async () => {
+		// The available-count short-circuit must run before the cache so
+		// the common single-backend case never pays for the setting
+		// lookup and never pollutes the cache.
+		const spy = vi.spyOn(settings, 'getSandboxBackendId');
+		const cfOnly = { SANDBOX: {} } as unknown as Env;
+		await getBackend(cfOnly);
+		await getBackend(cfOnly);
+		expect(spy).not.toHaveBeenCalled();
 	});
 });
