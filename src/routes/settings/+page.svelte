@@ -310,6 +310,7 @@
 	// models.dev picker state. Only one provider's picker is open at a time, and
 	// the catalog is fetched once per page-mount and cached in-memory.
 	let modelsDevPickerProviderId = $state<string | null>(null);
+	let modelsDevPickerProviderType = $state<ProviderType>('openai_compatible');
 	let modelsDevCatalog = $state<ModelsDevEntry[]>([]);
 	let modelsDevLoading = $state(false);
 	let modelsDevError = $state<string | null>(null);
@@ -320,6 +321,7 @@
 
 	async function openModelsDevPicker(providerId: string, providerType: ProviderType) {
 		modelsDevPickerProviderId = providerId;
+		modelsDevPickerProviderType = providerType;
 		addModelProviderId = null;
 		editModelKey = null;
 		modelsDevQuery = '';
@@ -328,9 +330,9 @@
 		modelsDevError = null;
 		// Anthropic-typed providers talk to Anthropic's API directly, so model
 		// ids are bare ("claude-opus-4-6"). openai_compatible providers (OpenRouter,
-		// AI Gateway, etc.) generally namespace by vendor, so default the prefix
-		// to "<filter>/" once the user picks one.
-		modelsDevIdPrefix = providerType === 'anthropic' ? '' : '';
+		// AI Gateway, etc.) generally namespace by vendor; the $effect below
+		// auto-suggests "<filter>/" once the user picks a key filter.
+		modelsDevIdPrefix = '';
 		if (modelsDevCatalog.length === 0) {
 			modelsDevLoading = true;
 			try {
@@ -378,6 +380,12 @@
 		// matching id prefix (e.g. `anthropic/`). Don't clobber a custom prefix:
 		// only overwrite when the current prefix is empty or is itself one of the
 		// known catalog provider keys (a previous auto-suggestion).
+		//
+		// Anthropic-typed providers talk to the Anthropic API directly and expect
+		// bare model ids (`claude-opus-4-6`), so skip auto-prefixing for them —
+		// otherwise filtering to "anthropic" would produce `anthropic/...` ids
+		// that the Anthropic API rejects.
+		if (modelsDevPickerProviderType === 'anthropic') return;
 		if (!modelsDevProviderKeyFilter) return;
 		const looksAutoSet =
 			modelsDevIdPrefix === '' ||
