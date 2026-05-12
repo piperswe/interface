@@ -256,7 +256,7 @@ export const importModelsFromDev = form(
 	'unchecked',
 	async (data: { provider_id?: unknown; model_keys?: unknown; id_prefix?: unknown }) => {
 		const providerId = String(data.provider_id ?? '').trim();
-		const idPrefix = String(data.id_prefix ?? '');
+		const idPrefix = String(data.id_prefix ?? '').trim();
 		const keysRaw = String(data.model_keys ?? '').trim();
 
 		if (!providerId) error(400, 'Provider ID required');

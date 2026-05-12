@@ -448,6 +448,25 @@ describe('providers.remote — importModelsFromDev', () => {
 		expect(await getModel(env, 'or', 'anthropic/claude-opus-4-6')).not.toBeNull();
 	});
 
+	// Regression: id_prefix came in from a text input untrimmed, so a user
+	// accidentally typing " anthropic/" persisted a model id with a leading
+	// space and broke inference calls. providerId and model_keys already
+	// trim; id_prefix must too.
+	it('trims whitespace from id_prefix before constructing the model id', async () => {
+		await createProvider(env, { id: 'or', type: 'openai_compatible', endpoint: 'https://x.example/v1' });
+		mockModelsDevOnce(ANTHROPIC_CATALOG);
+		await expectRedirect(
+			importModelsFromDev({
+				provider_id: 'or',
+				model_keys: 'anthropic:claude-opus-4-6',
+				id_prefix: '  anthropic/  ',
+			}) as Promise<unknown>,
+			'/settings',
+		);
+		expect(await getModel(env, 'or', 'anthropic/claude-opus-4-6')).not.toBeNull();
+		expect(await getModel(env, 'or', '  anthropic/  claude-opus-4-6')).toBeNull();
+	});
+
 	it('skips models that already exist instead of erroring on the unique constraint', async () => {
 		await createProvider(env, { id: 'p1', type: 'anthropic' });
 		await createModel(env, 'p1', { id: 'claude-opus-4-6', name: 'preexisting', sortOrder: 0 });
