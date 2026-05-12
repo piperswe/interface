@@ -50,7 +50,7 @@ export async function fetchOpenRouterModels(apiKey?: string): Promise<CuratedMod
 	});
 }
 
-function inferReasoningType(modelId: string): 'effort' | 'max_tokens' | undefined {
+export function inferReasoningType(modelId: string): 'effort' | 'max_tokens' | undefined {
 	const lower = modelId.toLowerCase();
 	if (
 		lower.startsWith('openai/o') ||

@@ -8,7 +8,10 @@
 		reorderProviderModel,
 		addPresetProvider,
 		fetchPresetModels,
+		searchModelsDev,
+		importModelsFromDev,
 	} from '$lib/providers.remote';
+	import type { ModelsDevEntry } from '$lib/server/providers/modelsDev';
 	import {
 		saveSetting,
 		addMcpServer,
@@ -303,6 +306,94 @@
 	function cancelEditModel() {
 		editModelKey = null;
 	}
+
+	// models.dev picker state. Only one provider's picker is open at a time, and
+	// the catalog is fetched once per page-mount and cached in-memory.
+	let modelsDevPickerProviderId = $state<string | null>(null);
+	let modelsDevPickerProviderType = $state<ProviderType>('openai_compatible');
+	let modelsDevCatalog = $state<ModelsDevEntry[]>([]);
+	let modelsDevLoading = $state(false);
+	let modelsDevError = $state<string | null>(null);
+	let modelsDevQuery = $state('');
+	let modelsDevProviderKeyFilter = $state('');
+	let modelsDevIdPrefix = $state('');
+	let modelsDevSelected = $state<Set<string>>(new Set());
+
+	async function openModelsDevPicker(providerId: string, providerType: ProviderType) {
+		modelsDevPickerProviderId = providerId;
+		modelsDevPickerProviderType = providerType;
+		addModelProviderId = null;
+		editModelKey = null;
+		modelsDevQuery = '';
+		modelsDevProviderKeyFilter = '';
+		modelsDevSelected = new Set();
+		modelsDevError = null;
+		// Anthropic-typed providers talk to Anthropic's API directly, so model
+		// ids are bare ("claude-opus-4-6"). openai_compatible providers (OpenRouter,
+		// AI Gateway, etc.) generally namespace by vendor; the $effect below
+		// auto-suggests "<filter>/" once the user picks a key filter.
+		modelsDevIdPrefix = '';
+		if (modelsDevCatalog.length === 0) {
+			modelsDevLoading = true;
+			try {
+				modelsDevCatalog = await searchModelsDev();
+			} catch (e) {
+				modelsDevError = e instanceof Error ? e.message : 'Failed to load models.dev catalog';
+			} finally {
+				modelsDevLoading = false;
+			}
+		}
+	}
+
+	function closeModelsDevPicker() {
+		modelsDevPickerProviderId = null;
+	}
+
+	function toggleModelsDevSelected(key: string) {
+		const next = new Set(modelsDevSelected);
+		if (next.has(key)) next.delete(key);
+		else next.add(key);
+		modelsDevSelected = next;
+	}
+
+	const modelsDevProviderKeys = $derived(
+		[...new Set(modelsDevCatalog.map((e) => e.providerKey))].sort(),
+	);
+
+	const modelsDevFiltered = $derived.by(() => {
+		const q = modelsDevQuery.trim().toLowerCase();
+		return modelsDevCatalog
+			.filter((e) => !modelsDevProviderKeyFilter || e.providerKey === modelsDevProviderKeyFilter)
+			.filter((e) => {
+				if (!q) return true;
+				return (
+					e.modelId.toLowerCase().includes(q) ||
+					e.name.toLowerCase().includes(q) ||
+					e.providerKey.toLowerCase().includes(q)
+				);
+			})
+			.slice(0, 200);
+	});
+
+	$effect(() => {
+		// When the user narrows to a single models.dev provider key, suggest a
+		// matching id prefix (e.g. `anthropic/`). Don't clobber a custom prefix:
+		// only overwrite when the current prefix is empty or is itself one of the
+		// known catalog provider keys (a previous auto-suggestion).
+		//
+		// Anthropic-typed providers talk to the Anthropic API directly and expect
+		// bare model ids (`claude-opus-4-6`), so skip auto-prefixing for them —
+		// otherwise filtering to "anthropic" would produce `anthropic/...` ids
+		// that the Anthropic API rejects.
+		if (modelsDevPickerProviderType === 'anthropic') return;
+		if (!modelsDevProviderKeyFilter) return;
+		const looksAutoSet =
+			modelsDevIdPrefix === '' ||
+			modelsDevProviderKeys.some((k) => modelsDevIdPrefix === `${k}/`);
+		if (looksAutoSet) {
+			modelsDevIdPrefix = `${modelsDevProviderKeyFilter}/`;
+		}
+	});
 
 	// Provider edit state
 	let editProviderId = $state<string | null>(null);
@@ -1315,25 +1406,158 @@
 									<button type="submit" class="btn btn-sm btn-primary">Save model</button>
 								</div>
 							</form>
+						{:else if modelsDevPickerProviderId === p.id}
+							<div class="settings-card models-dev-picker">
+								<div class="settings-card-head">
+									<h3 class="h6 mb-0">Browse models.dev</h3>
+									<p class="small text-muted mb-0">
+										Search the public catalog and import models with metadata prefilled.
+									</p>
+								</div>
+								{#if modelsDevLoading}
+									<div class="small text-muted">Loading catalog…</div>
+								{:else if modelsDevError}
+									<div class="alert alert-warning small py-2 mb-2">{modelsDevError}</div>
+								{:else}
+									<div class="row g-2 mb-2">
+										<div class="col-md-6">
+											<label class="form-label small d-block">
+												<span class="d-block mb-1">Search</span>
+												<input
+													bind:value={modelsDevQuery}
+													placeholder="claude, gpt-5, gemini…"
+													class="form-control form-control-sm"
+													type="search"
+												/>
+											</label>
+										</div>
+										<div class="col-md-3">
+											<label class="form-label small d-block">
+												<span class="d-block mb-1">Provider</span>
+												<select
+													bind:value={modelsDevProviderKeyFilter}
+													class="form-select form-select-sm"
+												>
+													<option value="">All providers</option>
+													{#each modelsDevProviderKeys as k (k)}
+														<option value={k}>{k}</option>
+													{/each}
+												</select>
+											</label>
+										</div>
+										<div class="col-md-3">
+											<label class="form-label small d-block">
+												<span class="d-block mb-1">Model ID prefix</span>
+												<input
+													bind:value={modelsDevIdPrefix}
+													placeholder={p.type === 'anthropic' ? '(none)' : 'anthropic/'}
+													class="form-control form-control-sm"
+												/>
+											</label>
+										</div>
+									</div>
+									<div class="model-checklist models-dev-list">
+										{#each modelsDevFiltered as entry (`${entry.providerKey}:${entry.modelId}`)}
+											{@const key = `${entry.providerKey}:${entry.modelId}`}
+											<label class="model-check models-dev-row">
+												<input
+													type="checkbox"
+													checked={modelsDevSelected.has(key)}
+													onchange={() => toggleModelsDevSelected(key)}
+												/>
+												<div class="models-dev-meta">
+													<div>
+														<strong>{entry.name}</strong>
+														<span class="small text-muted ms-2">
+															{entry.providerKey}/{entry.modelId}
+														</span>
+													</div>
+													<div class="small text-muted">
+														{(entry.contextLength / 1000).toFixed(0)}k ctx
+														{#if entry.inputCost != null && entry.outputCost != null}
+															· ${entry.inputCost}/${entry.outputCost} per 1M
+														{/if}
+														{#if entry.supportsImageInput}· image{/if}
+														{#if entry.supportsReasoning}· reasoning{/if}
+														{#if entry.supportsToolCall}· tools{/if}
+														{#if entry.openWeights}· open-weights{/if}
+														{#if entry.releaseDate}· {entry.releaseDate}{/if}
+													</div>
+												</div>
+											</label>
+										{/each}
+										{#if modelsDevFiltered.length === 0}
+											<div class="small text-muted py-2">No models match your search.</div>
+										{/if}
+									</div>
+									{#if modelsDevCatalog.length > modelsDevFiltered.length && modelsDevFiltered.length === 200}
+										<div class="small text-muted mt-1">
+											Showing first 200 results — refine your search to see more.
+										</div>
+									{/if}
+								{/if}
+								<form
+									{...importModelsFromDev
+										.for(`models-dev-${p.id}`)
+										.enhance(toastSubmit('Models imported'))}
+									class="d-flex gap-2 justify-content-end mt-3 align-items-center"
+								>
+									<input type="hidden" name="provider_id" value={p.id} />
+									<input type="hidden" name="id_prefix" value={modelsDevIdPrefix} />
+									<input
+										type="hidden"
+										name="model_keys"
+										value={[...modelsDevSelected].join(',')}
+									/>
+									<span class="small text-muted me-auto">
+										{modelsDevSelected.size} selected
+									</span>
+									<button
+										type="button"
+										class="btn btn-sm btn-outline-secondary"
+										onclick={closeModelsDevPicker}
+									>
+										Cancel
+									</button>
+									<button
+										type="submit"
+										class="btn btn-sm btn-primary"
+										disabled={modelsDevSelected.size === 0}
+									>
+										Import {modelsDevSelected.size} model{modelsDevSelected.size === 1
+											? ''
+											: 's'}
+									</button>
+								</form>
+							</div>
 						{:else}
-							<button
-								type="button"
-								class="btn btn-sm btn-outline-primary add-model-btn"
-								onclick={() => {
-									addModelProviderId = p.id;
-									editModelKey = null;
-									newModelId = '';
-									newModelName = '';
-									newModelDescription = '';
-									newModelContextLength = 128_000;
-									newModelReasoning = '';
-									newModelInputCost = '';
-									newModelOutputCost = '';
-									newModelSupportsImageInput = false;
-								}}
-							>
-								+ Add model
-							</button>
+							<div class="d-flex gap-2 flex-wrap">
+								<button
+									type="button"
+									class="btn btn-sm btn-outline-primary add-model-btn"
+									onclick={() => {
+										addModelProviderId = p.id;
+										editModelKey = null;
+										newModelId = '';
+										newModelName = '';
+										newModelDescription = '';
+										newModelContextLength = 128_000;
+										newModelReasoning = '';
+										newModelInputCost = '';
+										newModelOutputCost = '';
+										newModelSupportsImageInput = false;
+									}}
+								>
+									+ Add model
+								</button>
+								<button
+									type="button"
+									class="btn btn-sm btn-outline-secondary"
+									onclick={() => openModelsDevPicker(p.id, p.type)}
+								>
+									Browse models.dev
+								</button>
+							</div>
 						{/if}
 					</div>
 				</section>
@@ -2491,6 +2715,26 @@
 
 	.model-check:hover {
 		background: var(--surface);
+	}
+
+	.models-dev-picker {
+		border: 1px dashed var(--border);
+	}
+
+	.models-dev-list {
+		grid-template-columns: 1fr;
+		max-height: 22rem;
+	}
+
+	.models-dev-row {
+		align-items: flex-start;
+	}
+
+	.models-dev-meta {
+		display: flex;
+		flex-direction: column;
+		gap: 0.1rem;
+		min-width: 0;
 	}
 
 	/* ----- Empty state ----- */
