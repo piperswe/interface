@@ -104,4 +104,45 @@ describe('machines-api REST', () => {
 		const r = await execMachine(CFG, 'm-1', { cmd: ['echo', 'hi'] });
 		expect(r).toEqual({ exit_code: 0, stdout: 'hi', stderr: '' });
 	});
+
+	it('execMachine normalises null stdout/stderr to empty strings', async () => {
+		// Regression: fly's API has been observed to return `null` rather
+		// than `""` for empty output streams. The Zod schema accepts
+		// either and downstream callers always see a string.
+		stubFetch(
+			() =>
+				new Response(JSON.stringify({ exit_code: 0, stdout: null, stderr: null }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				}),
+		);
+		const r = await execMachine(CFG, 'm-1', { cmd: ['true'] });
+		expect(r.stdout).toBe('');
+		expect(r.stderr).toBe('');
+	});
+
+	it('getMachine raises FlyApiError when the response shape drifts', async () => {
+		// If fly's API ever drops the `state` field (or changes its enum),
+		// we want a clear validation error rather than an `undefined`
+		// silently flowing into lifecycle logic.
+		stubFetch(
+			() =>
+				new Response(JSON.stringify({ id: 'm-1' /* no state */ }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				}),
+		);
+		await expect(getMachine(CFG, 'm-1')).rejects.toThrow(/failed validation/);
+	});
+
+	it('createMachine validates the outgoing body before sending', async () => {
+		// The outbound-body schema catches local mistakes (a missing
+		// required `image`, a typo'd field) before we pay the round trip.
+		const spy = stubFetch(() => new Response(JSON.stringify({ id: 'm-1', state: 'created' }), { status: 200 }));
+		await expect(
+			// @ts-expect-error — intentionally missing the required `image`
+			createMachine(CFG, { config: { env: { FOO: 'bar' } } }),
+		).rejects.toThrow();
+		expect(spy).not.toHaveBeenCalled();
+	});
 });
