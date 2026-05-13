@@ -208,6 +208,13 @@
 	const selectedReasoning = $derived(currentModel?.reasoningType);
 	const showVisionWarning = $derived(historyHasImages && currentModel != null && !currentModel.supportsImageInput);
 
+	let hoveredModelId = $state<string | null>(null);
+	const activeDetailModel = $derived(
+		(hoveredModelId
+			? models.find((m) => `${m.providerId}/${m.id}` === hoveredModelId)
+			: null) ?? currentModel ?? null,
+	);
+
 	// Group models by provider for the dropdown
 	const modelsByProvider = $derived(() => {
 		const map = new Map<string, ProviderModel[]>();
@@ -229,6 +236,7 @@
 
 	function pickModel(globalId: string) {
 		selectedModel = globalId;
+		hoveredModelId = null;
 		if (optionsEl) optionsEl.open = false;
 	}
 
@@ -273,6 +281,7 @@
 
 	function closeOptions() {
 		if (optionsEl?.open) optionsEl.open = false;
+		hoveredModelId = null;
 	}
 
 	type RecState = 'idle' | 'recording' | 'transcribing' | 'error';
@@ -474,38 +483,92 @@
 				<ChevronDown class="compose-options-chevron" size={14} aria-hidden="true" />
 			</summary>
 			<div class="compose-options-panel" role="menu">
-				<div class="compose-options-section">
+				<div class="compose-options-section compose-options-model-section">
 					<div class="compose-options-section-label">Model</div>
-					{#each [...modelsByProvider()] as [providerId, providerModels] (providerId)}
-						<div class="compose-options-provider-label">{providerId}</div>
-						<ul class="list-unstyled d-flex flex-column gap-0 m-0 p-0">
-							{#each providerModels as m (m.id)}
-								{@const globalId = `${m.providerId}/${m.id}`}
-								<li>
-									<label class="compose-options-model-option d-flex align-items-center gap-2 rounded p-2">
-										<input
-											type="radio"
-											name="model"
-											value={globalId}
-											checked={globalId === selectedModel}
-											onchange={() => pickModel(globalId)}
-										/>
-										<span class="flex-grow-1">{m.name}</span>
-										{#if m.supportsImageInput}
-											<span class="capability-badge" title="Accepts image input" aria-label="Accepts image input">
-												<Eye size={14} aria-hidden="true" />
-											</span>
-										{/if}
-										{#if m.reasoningType != null}
-											<span class="capability-badge" title="Supports extended thinking" aria-label="Supports extended thinking">
-												<Brain size={14} aria-hidden="true" />
-											</span>
-										{/if}
-									</label>
-								</li>
+					<div class="compose-options-model-grid">
+						<div class="compose-options-model-list">
+							{#each [...modelsByProvider()] as [providerId, providerModels] (providerId)}
+								<div class="compose-options-provider-label">{providerId}</div>
+								<ul class="list-unstyled d-flex flex-column gap-0 m-0 p-0">
+									{#each providerModels as m (m.id)}
+										{@const globalId = `${m.providerId}/${m.id}`}
+										<li>
+											<label
+												class="compose-options-model-option d-flex align-items-center gap-2 rounded p-2"
+												onpointerenter={() => (hoveredModelId = globalId)}
+												onpointerleave={() => {
+													if (hoveredModelId === globalId) hoveredModelId = null;
+												}}
+												onfocusin={() => (hoveredModelId = globalId)}
+												onfocusout={() => {
+													if (hoveredModelId === globalId) hoveredModelId = null;
+												}}
+											>
+												<input
+													type="radio"
+													name="model"
+													value={globalId}
+													checked={globalId === selectedModel}
+													onchange={() => pickModel(globalId)}
+												/>
+												<span class="flex-grow-1">{m.name}</span>
+												{#if m.supportsImageInput}
+													<span class="capability-badge" title="Accepts image input" aria-label="Accepts image input">
+														<Eye size={14} aria-hidden="true" />
+													</span>
+												{/if}
+												{#if m.reasoningType != null}
+													<span class="capability-badge" title="Supports extended thinking" aria-label="Supports extended thinking">
+														<Brain size={14} aria-hidden="true" />
+													</span>
+												{/if}
+											</label>
+										</li>
+									{/each}
+								</ul>
 							{/each}
-						</ul>
-					{/each}
+						</div>
+						<aside class="compose-options-details" aria-live="polite">
+							{#if activeDetailModel}
+								{@const dm = activeDetailModel}
+								<div class="compose-options-details-name">{dm.name}</div>
+								<div class="compose-options-details-provider">{dm.providerId}</div>
+								{#if dm.description}
+									<p class="compose-options-details-desc">{dm.description}</p>
+								{/if}
+								<dl class="compose-options-details-grid">
+									<dt>Model ID</dt>
+									<dd><code>{dm.id}</code></dd>
+									<dt>Context</dt>
+									<dd>{dm.maxContextLength.toLocaleString()} tokens</dd>
+									{#if dm.inputCostPerMillionTokens != null}
+										<dt>Input</dt>
+										<dd>${dm.inputCostPerMillionTokens.toFixed(2)} / M tokens</dd>
+									{/if}
+									{#if dm.outputCostPerMillionTokens != null}
+										<dt>Output</dt>
+										<dd>${dm.outputCostPerMillionTokens.toFixed(2)} / M tokens</dd>
+									{/if}
+									{#if dm.reasoningType != null}
+										<dt>Reasoning</dt>
+										<dd>{dm.reasoningType === 'effort' ? 'Effort level' : 'Token budget'}</dd>
+									{/if}
+									<dt>Added</dt>
+									<dd>{new Date(dm.createdAt).toLocaleDateString()}</dd>
+								</dl>
+								<ul class="compose-options-details-caps list-unstyled m-0">
+									<li>
+										<Eye size={14} aria-hidden="true" />
+										<span>{dm.supportsImageInput ? 'Accepts image input' : 'Text only'}</span>
+									</li>
+									<li>
+										<Brain size={14} aria-hidden="true" />
+										<span>{dm.reasoningType != null ? 'Supports extended thinking' : 'No extended thinking'}</span>
+									</li>
+								</ul>
+							{/if}
+						</aside>
+					</div>
 				</div>
 				<div class="compose-options-section">
 					<div class="compose-options-section-label">Thinking budget</div>
@@ -736,7 +799,7 @@
 		bottom: calc(100% + 0.5rem);
 		left: 0;
 		min-width: 240px;
-		max-width: min(320px, calc(100vw - 2 * var(--side-gap)));
+		max-width: min(560px, calc(100vw - 2 * var(--side-gap)));
 		padding: 0.5rem;
 		background: var(--bs-body-bg);
 		border: 1px solid var(--border);
@@ -748,6 +811,96 @@
 		gap: 0.75rem;
 		max-height: 60vh;
 		overflow-y: auto;
+	}
+
+	.compose-options-model-grid {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+		gap: 0.75rem;
+		align-items: start;
+	}
+
+	.compose-options-model-list {
+		min-width: 0;
+	}
+
+	@media (max-width: 480px) {
+		.compose-options-model-grid {
+			grid-template-columns: 1fr;
+		}
+	}
+
+	.compose-options-details {
+		font-size: 0.8125rem;
+		color: var(--fg);
+		padding: 0.5rem;
+		background: var(--bs-secondary-bg);
+		border-radius: var(--bs-border-radius);
+		display: flex;
+		flex-direction: column;
+		gap: 0.4rem;
+		position: sticky;
+		top: 0;
+		min-width: 0;
+	}
+
+	.compose-options-details-name {
+		font-weight: 600;
+		word-break: break-word;
+	}
+
+	.compose-options-details-provider {
+		font-size: 0.7rem;
+		color: var(--muted-2);
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+	}
+
+	.compose-options-details-desc {
+		margin: 0;
+		color: var(--muted);
+		font-size: 0.8125rem;
+		line-height: 1.4;
+	}
+
+	.compose-options-details-grid {
+		display: grid;
+		grid-template-columns: max-content minmax(0, 1fr);
+		column-gap: 0.5rem;
+		row-gap: 0.15rem;
+		margin: 0;
+		font-size: 0.78rem;
+	}
+
+	.compose-options-details-grid dt {
+		color: var(--muted-2);
+		font-weight: 400;
+	}
+
+	.compose-options-details-grid dd {
+		margin: 0;
+		word-break: break-word;
+	}
+
+	.compose-options-details-grid dd code {
+		font-size: inherit;
+		color: inherit;
+		background: transparent;
+		padding: 0;
+	}
+
+	.compose-options-details-caps {
+		display: flex;
+		flex-direction: column;
+		gap: 0.2rem;
+		color: var(--muted);
+		font-size: 0.78rem;
+	}
+
+	.compose-options-details-caps li {
+		display: flex;
+		align-items: center;
+		gap: 0.35rem;
 	}
 
 	.compose-options-section-label {
