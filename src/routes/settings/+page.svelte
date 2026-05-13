@@ -352,6 +352,8 @@
 		dragProviderId = null;
 		dropBeforeModelId = null;
 		dropProviderId = null;
+		// Skip when dropped on self (self-drag to own top half)
+		if (fromModelId === beforeId) return;
 		await moveProviderModel({
 			provider_id: providerId,
 			model_id: fromModelId,

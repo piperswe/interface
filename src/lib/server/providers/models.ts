@@ -199,11 +199,19 @@ export async function moveModelToPosition(
 	const models = await listModelsForProvider(env, providerId, userId);
 	const dragged = models.find((m) => m.id === modelId);
 	if (!dragged) throw new Error(`Model ${modelId} not found in provider ${providerId}`);
+	const originalIdx = models.findIndex((m) => m.id === modelId);
 	const withoutModel = models.filter((m) => m.id !== modelId);
-	const insertIdx =
-		beforeModelId === null
-			? withoutModel.length
-			: Math.max(0, withoutModel.findIndex((m) => m.id === beforeModelId));
+	let insertIdx: number;
+	if (beforeModelId === null) {
+		insertIdx = withoutModel.length;
+	} else if (beforeModelId === modelId) {
+		// Self-reference: keep at original position (no-op)
+		insertIdx = originalIdx;
+	} else {
+		const idx = withoutModel.findIndex((m) => m.id === beforeModelId);
+		// Stale/missing beforeModelId: fall back to end
+		insertIdx = idx === -1 ? withoutModel.length : idx;
+	}
 	withoutModel.splice(insertIdx, 0, dragged);
 	await Promise.all(
 		withoutModel.map((m, idx) => updateModel(env, providerId, m.id, { sortOrder: idx }, userId)),

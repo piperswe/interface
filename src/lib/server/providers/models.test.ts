@@ -302,19 +302,22 @@ describe('moveModelToPosition', () => {
 		expect(await getOrder()).toEqual(['a', 'c', 'b']);
 	});
 
-	it('is a no-op when the model is already in position', async () => {
+	it('is a no-op when the model is referenced before itself (first position)', async () => {
 		await setupThreeModels();
 		await moveModelToPosition(env, 'p1', 'a', 'a');
-		// 'a' before 'a' → inserts before itself, order unchanged
 		expect(await getOrder()).toEqual(['a', 'b', 'c']);
 	});
 
-	it('falls back to end when beforeModelId is not found', async () => {
+	it('is a no-op when a non-first model is referenced before itself', async () => {
 		await setupThreeModels();
-		// 'stale-id' does not exist; findIndex returns -1 → Math.max(0,-1)=0, so inserts at front
+		await moveModelToPosition(env, 'p1', 'b', 'b');
+		expect(await getOrder()).toEqual(['a', 'b', 'c']);
+	});
+
+	it('falls back to end when beforeModelId is not found (stale reference)', async () => {
+		await setupThreeModels();
 		await moveModelToPosition(env, 'p1', 'b', 'stale-id');
-		// insertIdx = Math.max(0, -1) = 0, so b goes to front
-		expect(await getOrder()).toEqual(['b', 'a', 'c']);
+		expect(await getOrder()).toEqual(['a', 'c', 'b']);
 	});
 
 	it('throws when the dragged model does not exist', async () => {
