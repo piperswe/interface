@@ -6,7 +6,7 @@
 // terminated with `--` before the user-supplied path.
 
 import type { ReadFileResult } from '../backend';
-import { execMachine, type FlyConfig } from './machines-api';
+import { execMachine, type FlyConfig } from './client';
 
 // Single-quote a string for safe use in a POSIX shell command. Embedded
 // single quotes are escaped by closing-quote, escaped quote, reopening
@@ -22,7 +22,7 @@ async function execShell(
 	stdin?: string,
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
 	const resp = await execMachine(cfg, machineId, {
-		cmd: ['bash', '-c', script],
+		command: ['bash', '-c', script],
 		...(stdin !== undefined ? { stdin } : {}),
 	});
 	return {
@@ -167,7 +167,7 @@ RC=$?
 rm -f ${p}
 exit $RC`;
 	const resp = await execMachine(cfg, machineId, {
-		cmd: ['bash', '-c', script],
+		command: ['bash', '-c', script],
 		...(timeoutMs ? { timeout: Math.ceil(timeoutMs / 1000) } : {}),
 	});
 	return {

@@ -4,8 +4,8 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
+import type { FlyConfig } from './client';
 import { deleteFileShell, existsShell, mkdirShell, readFileShell, runCodeShell, shellQuote, writeFileShell } from './file-ops';
-import type { FlyConfig } from './machines-api';
 
 // Shell quoting must survive every adversarial path we throw at it: a
 // stray $(...) substitution, a leading dash that could be confused for a
@@ -60,8 +60,8 @@ describe('file-ops shell scripts', () => {
 	it('mkdirShell passes `--` to terminate option parsing', async () => {
 		let seenScript = '';
 		mockMachineExec((req) => {
-			const r = req as { cmd: string[] };
-			seenScript = r.cmd.join(' ');
+			const r = req as { command: string[] };
+			seenScript = r.command.join(' ');
 			return { exit_code: 0, stderr: '', stdout: '' };
 		});
 		// A path beginning with `-` could otherwise be parsed as a flag by mkdir.
@@ -74,7 +74,7 @@ describe('file-ops shell scripts', () => {
 	it('mkdirShell uses -p when recursive is true', async () => {
 		let seenScript = '';
 		mockMachineExec((req) => {
-			seenScript = (req as { cmd: string[] }).cmd.join(' ');
+			seenScript = (req as { command: string[] }).command.join(' ');
 			return { exit_code: 0, stderr: '', stdout: '' };
 		});
 		await mkdirShell(CFG, 'machine-1', '/a/b/c', true);
@@ -101,7 +101,7 @@ describe('file-ops shell scripts', () => {
 		// `--` inside the test builtin.
 		let seenScript = '';
 		mockMachineExec((req) => {
-			seenScript = (req as { cmd: string[] }).cmd[2] ?? '';
+			seenScript = (req as { command: string[] }).command[2] ?? '';
 			return { exit_code: 0, stderr: '', stdout: '1\n' };
 		});
 		await existsShell(CFG, 'machine-1', '/some/path');
@@ -123,7 +123,7 @@ describe('file-ops shell scripts', () => {
 		// with the literal prefix.
 		let seenScript = '';
 		mockMachineExec((req) => {
-			seenScript = (req as { cmd: string[] }).cmd[2] ?? '';
+			seenScript = (req as { command: string[] }).command[2] ?? '';
 			return { exit_code: 0, stderr: '', stdout: `ENC:us-ascii\n${btoa('x')}` };
 		});
 		await readFileShell(CFG, 'machine-1', '/tmp/$(whoami)');
@@ -136,7 +136,7 @@ describe('file-ops shell scripts', () => {
 		// Regression — same bash-test malformedness as existsShell.
 		let seenScript = '';
 		mockMachineExec((req) => {
-			seenScript = (req as { cmd: string[] }).cmd[2] ?? '';
+			seenScript = (req as { command: string[] }).command[2] ?? '';
 			// Emit a fake ENC: line + base64 payload so the parser succeeds.
 			return { exit_code: 0, stderr: '', stdout: `ENC:us-ascii\n${btoa('hello')}` };
 		});
@@ -154,7 +154,7 @@ describe('file-ops shell scripts', () => {
 		// cleanup always runs.
 		let seenScript = '';
 		mockMachineExec((req) => {
-			seenScript = (req as { cmd: string[] }).cmd[2] ?? '';
+			seenScript = (req as { command: string[] }).command[2] ?? '';
 			return { exit_code: 1, stderr: 'boom', stdout: '' };
 		});
 		await runCodeShell(CFG, 'machine-1', 'print(1/0)', 'python');
@@ -170,10 +170,10 @@ describe('file-ops shell scripts', () => {
 			return { exit_code: 0, stderr: '', stdout: '' };
 		});
 		await writeFileShell(CFG, 'machine-1', '/tmp/x', 'hello world');
-		const body = seenBody as { cmd: string[]; stdin?: string };
-		expect(body.cmd[0]).toBe('bash');
-		expect(body.cmd[1]).toBe('-c');
-		expect(body.cmd[2]).toMatch(/base64 -d/);
+		const body = seenBody as { command: string[]; stdin?: string };
+		expect(body.command[0]).toBe('bash');
+		expect(body.command[1]).toBe('-c');
+		expect(body.command[2]).toMatch(/base64 -d/);
 		// stdin is the base64 encoding of "hello world".
 		expect(body.stdin).toBe(btoa('hello world'));
 	});

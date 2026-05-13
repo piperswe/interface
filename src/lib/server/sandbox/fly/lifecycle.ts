@@ -6,7 +6,6 @@
 // (which also needs the id, to set `fly-prefer-instance-id`) doesn't pay
 // the D1 round-trip on every request.
 
-import { clearFlyMachineId, getFlyMachineId, setFlyMachineId } from './d1';
 import {
 	createMachine,
 	destroyMachine,
@@ -15,7 +14,8 @@ import {
 	getMachine,
 	startMachine,
 	waitForMachineState,
-} from './machines-api';
+} from './client';
+import { clearFlyMachineId, getFlyMachineId, setFlyMachineId } from './d1';
 
 // Image: pushed to fly's per-app registry by CI. The convention here
 // matches `scripts/build-fly-image.sh` / `flyctl deploy`.

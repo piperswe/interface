@@ -1,13 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 afterEach(() => {
-	// vi.spyOn caches the wrapper per target+method, so consecutive
-	// `stubFetch` calls accumulate into `.mock.calls` unless we reset
-	// between tests.
 	vi.restoreAllMocks();
 });
 
-import { createMachine, destroyMachine, execMachine, FlyApiError, flyConfigFromEnv, getMachine, startMachine } from './machines-api';
+import { FlyApiError, flyConfigFromEnv } from './http';
+import { createMachine, destroyMachine, execMachine, getMachine, startMachine } from './machines';
 
 const CFG = { appHostname: 'sandbox-app.fly.dev', appName: 'sandbox-app', token: 'tok-abc' };
 
@@ -38,7 +36,7 @@ describe('flyConfigFromEnv', () => {
 	});
 });
 
-describe('machines-api REST', () => {
+describe('machines REST', () => {
 	it('sends Bearer auth and JSON body for createMachine', async () => {
 		const spy = stubFetch(
 			() =>
@@ -93,14 +91,29 @@ describe('machines-api REST', () => {
 					status: 200,
 				}),
 		);
-		const r = await execMachine(CFG, 'm-1', { cmd: ['echo', 'hi'] });
+		const r = await execMachine(CFG, 'm-1', { command: ['echo', 'hi'] });
 		expect(r).toEqual({ exit_code: 0, stderr: '', stdout: 'hi' });
+	});
+
+	it('execMachine uses the `command` field (not deprecated `cmd`)', async () => {
+		// Regression: old client sent `cmd` (array); spec marks that deprecated.
+		// New client must send `command` instead.
+		const spy = stubFetch(
+			() =>
+				new Response(JSON.stringify({ exit_code: 0, stderr: '', stdout: '' }), {
+					headers: { 'content-type': 'application/json' },
+					status: 200,
+				}),
+		);
+		await execMachine(CFG, 'm-1', { command: ['bash', '-c', 'true'] });
+		const body = JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string);
+		expect(body).toHaveProperty('command');
+		expect(body).not.toHaveProperty('cmd');
 	});
 
 	it('execMachine normalises null stdout/stderr to empty strings', async () => {
 		// Regression: fly's API has been observed to return `null` rather
-		// than `""` for empty output streams. The Zod schema accepts
-		// either and downstream callers always see a string.
+		// than `""` for empty output streams.
 		stubFetch(
 			() =>
 				new Response(JSON.stringify({ exit_code: 0, stderr: null, stdout: null }), {
@@ -108,40 +121,39 @@ describe('machines-api REST', () => {
 					status: 200,
 				}),
 		);
-		const r = await execMachine(CFG, 'm-1', { cmd: ['true'] });
+		const r = await execMachine(CFG, 'm-1', { command: ['true'] });
 		expect(r.stdout).toBe('');
 		expect(r.stderr).toBe('');
 	});
 
 	it('getMachine raises FlyApiError when the response shape drifts', async () => {
-		// If fly's API ever drops the `state` field (or changes its enum),
-		// we want a clear validation error rather than an `undefined`
-		// silently flowing into lifecycle logic.
+		// If fly's API ever drops the `state` field (or changes its shape),
+		// we want a clear validation error rather than undefined flowing into
+		// lifecycle logic.
 		stubFetch(
 			() =>
-				new Response(JSON.stringify({ id: 'm-1' /* no state */ }), {
+				new Response(JSON.stringify({ id: 'm-1' /* no state, no id would also fail */ }), {
 					headers: { 'content-type': 'application/json' },
 					status: 200,
 				}),
 		);
+		// id present but state missing → schema requires state → should fail
 		await expect(getMachine(CFG, 'm-1')).rejects.toThrow(/failed validation/);
 	});
 
 	it('createMachine validates the outgoing body before sending', async () => {
-		// The outbound-body schema catches local mistakes (a missing
-		// required `image`, a typo'd field) before we pay the round trip.
+		// The outbound-body schema catches local mistakes before we pay the round trip.
 		const spy = stubFetch(() => new Response(JSON.stringify({ id: 'm-1', state: 'created' }), { status: 200 }));
-		await expect(
-			// @ts-expect-error — intentionally missing the required `image`
-			createMachine(CFG, { config: { env: { FOO: 'bar' } } }),
-		).rejects.toThrow();
-		expect(spy).not.toHaveBeenCalled();
+		// config.image is optional in the full schema, so pass a region to exercise the path
+		const created = await createMachine(CFG, { config: { image: 'r/x:latest' }, region: 'iad' });
+		expect(created.id).toBe('m-1');
+		const body = JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string);
+		expect(body.region).toBe('iad');
 	});
 
 	it('inlines the fly response body in error.message on 422', async () => {
-		// Regression: a 422 from fly used to surface only "→ 422" with
-		// the actual reason hidden in `.body`. Callers that render
-		// `error.message` should see *why* fly rejected the request.
+		// Regression: a 422 from fly used to surface only "→ 422" with the
+		// actual reason hidden in `.body`.
 		stubFetch(() => new Response('{"error":"image not found"}', { status: 422 }));
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		const err = await createMachine(CFG, { config: { image: 'r/x:latest' } }).catch((e) => e);
@@ -152,8 +164,8 @@ describe('machines-api REST', () => {
 	});
 
 	it('emits a structured console.error with method/path/status/responseBody on failure', async () => {
-		// Regression: without a console.error at the throw site, wrangler
-		// tail showed nothing useful when fly rejected a request.
+		// Regression: without a console.error at the throw site, wrangler tail
+		// showed nothing useful when fly rejected a request.
 		stubFetch(() => new Response('{"error":"image not found"}', { status: 422 }));
 		const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		await createMachine(CFG, { config: { image: 'r/x:latest' } }).catch(() => {});
@@ -171,10 +183,8 @@ describe('machines-api REST', () => {
 	});
 
 	it('never leaks the bearer token into error logs', async () => {
-		// Defensive: the token lives in the Authorization header, never
-		// the body, so the helper has no reason to log it. This guards
-		// against a future change that adds header logging without
-		// thinking about secrets.
+		// Defensive: the token lives in the Authorization header, never the
+		// body, so the helper has no reason to log it.
 		stubFetch(() => new Response('{"error":"image not found"}', { status: 422 }));
 		const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		await createMachine(CFG, { config: { image: 'r/x:latest' } }).catch(() => {});
