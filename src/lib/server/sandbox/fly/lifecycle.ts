@@ -50,7 +50,7 @@ function defaultMachineConfig(cfg: FlyConfig, conversationId: string): FlyMachin
 				// forwarded to localhost:${port}.
 				ports: [
 					{ handlers: ['http'], port: 80 },
-					{ force_https: true, handlers: ['tls', 'http'], port: 443 },
+					{ handlers: ['tls', 'http'], port: 443 },
 				],
 				protocol: 'tcp',
 			},
