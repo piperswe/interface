@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { assertDefined } from '../../test/assert-defined';
 import { clearMockRequestEvent, setMockRequestEvent } from '../../test/shims/app-server';
 import * as remote from './search.remote';
 import { createConversation } from './server/conversations';
@@ -49,13 +50,12 @@ describe('search.remote — searchConversations', () => {
 		const id = await createConversation(env);
 		// Update both the FTS index and the row's title so the JOIN-ed
 		// `conversationTitle` matches what we indexed.
-		await env.DB.prepare('UPDATE conversations SET title = ? WHERE id = ?')
-			.bind('birthday cake recipe', id)
-			.run();
+		await env.DB.prepare('UPDATE conversations SET title = ? WHERE id = ?').bind('birthday cake recipe', id).run();
 		await indexTitle(env, id, 'birthday cake recipe', 1000);
 		const hits = (await searchConversations('birthday')) as SearchHit[];
 		expect(hits.map((h) => h.conversationId)).toContain(id);
-		const hit = hits.find((h) => h.conversationId === id)!;
+		const hit = hits.find((h) => h.conversationId === id);
+		assertDefined(hit);
 		expect(hit.conversationTitle).toBe('birthday cake recipe');
 		expect(hit.role).toBe('title');
 		expect(hit.messageId).toBeNull();
@@ -65,10 +65,10 @@ describe('search.remote — searchConversations', () => {
 		const id = await createConversation(env);
 		await indexMessage(env, {
 			conversationId: id,
+			createdAt: 5000,
 			messageId: 'm1',
 			role: 'user',
 			text: 'how do I deploy a Cloudflare Worker',
-			createdAt: 5000,
 		});
 		const hits = (await searchConversations('Cloudflare')) as SearchHit[];
 		const messageHit = hits.find((h) => h.messageId === 'm1');

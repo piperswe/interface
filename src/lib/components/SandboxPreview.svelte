@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
-	import { getSandboxPreviewPorts } from '$lib/sandbox.remote';
 	import { RotateCcw } from 'lucide-svelte';
+	import { onDestroy, onMount } from 'svelte';
+	import { getSandboxPreviewPorts } from '$lib/sandbox.remote';
 
 	let {
 		conversationId,

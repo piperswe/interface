@@ -33,57 +33,55 @@ declare global {
 			// `getConversationStub()` in `$lib/server/durable_objects` returns
 			// the typed view; reach for that instead of the binding directly.
 
-		// Worker secrets that remain as env bindings (not moved to D1).
-		// Keep in sync with `KNOWN_SECRET_KEYS` in $lib/server/settings.
-		KAGI_KEY?: string;
-		YNAB_TOKEN?: string;
-		OPENWEATHERMAP_KEY?: string;
-		// Optional Sandbox binding. When present, conversation-scoped
-		// sandbox tools are registered in the tool registry.
-		SANDBOX?: DurableObjectNamespace<Sandbox>;
-		// Optional R2 bucket backing the sandbox /workspace mount. When
-		// present, each conversation's /workspace is sync-mounted to the
-		// `conversations/{id}/` prefix so files survive sandbox cycles.
-		WORKSPACE_BUCKET?: R2Bucket;
-		// Optional R2 S3-API credentials for the workspace mount. When all
-		// three (endpoint + access key id + secret) are set, the sandbox
-		// mounts /workspace via s3fs-FUSE inside the container, which is
-		// the only mode that reliably syncs container→R2 in production
-		// (see tools/sandbox.ts for the rationale). Without these, the
-		// mount falls back to the SDK's `localBucket` mode, which only
-		// works under `wrangler dev` because Cloudflare evicts the
-		// Sandbox DO before its background sync loops can run. Generate
-		// the access key in the Cloudflare dashboard under R2 → Manage
-		// R2 API Tokens. R2_ENDPOINT can be omitted if R2_ACCOUNT_ID is
-		// set (the endpoint is derived).
-		R2_ENDPOINT?: string;
-		R2_ACCOUNT_ID?: string;
-		R2_ACCESS_KEY_ID?: string;
-		R2_SECRET_ACCESS_KEY?: string;
-		// Override the R2 bucket name passed to s3fs. Defaults to the
-		// `bucket_name` in wrangler.jsonc; only set this if you renamed
-		// the bucket.
-		R2_WORKSPACE_BUCKET_NAME?: string;
-		// Optional SSH private key injected into every sandbox container
-		// so the agent can interact with GitHub (clone, push, etc.).
-		SANDBOX_SSH_KEY?: string;
-		// fly.io Machines backend credentials. When both are set, the
-		// fly backend is available as an alternative to Cloudflare
-		// Containers (selected via the `sandbox_backend` user setting).
-		// See `src/lib/server/sandbox/fly/` for the implementation.
-		FLY_API_TOKEN?: string;
-		FLY_APP_NAME?: string;
-		// Optional override for the fly app's public hostname. Defaults
-		// to `${FLY_APP_NAME}.fly.dev`.
-		FLY_APP_HOSTNAME?: string;
-		// Optional Worker Loader binding. When present, the `run_js` tool
-		// is registered so the model can evaluate JS in a fresh isolate.
-		RUN_JS_LOADER?: WorkerLoader;
-		// Optional Images binding. When present, sandbox_load_image resizes
-		// images before storing to stay under the DO SQLite 2 MB per-value limit.
-		IMAGES?: ImagesBinding;
+			// Worker secrets that remain as env bindings (not moved to D1).
+			// Keep in sync with `KNOWN_SECRET_KEYS` in $lib/server/settings.
+			KAGI_KEY?: string;
+			YNAB_TOKEN?: string;
+			OPENWEATHERMAP_KEY?: string;
+			// Optional Sandbox binding. When present, conversation-scoped
+			// sandbox tools are registered in the tool registry.
+			SANDBOX?: DurableObjectNamespace<Sandbox>;
+			// Optional R2 bucket backing the sandbox /workspace mount. When
+			// present, each conversation's /workspace is sync-mounted to the
+			// `conversations/{id}/` prefix so files survive sandbox cycles.
+			WORKSPACE_BUCKET?: R2Bucket;
+			// Optional R2 S3-API credentials for the workspace mount. When all
+			// three (endpoint + access key id + secret) are set, the sandbox
+			// mounts /workspace via s3fs-FUSE inside the container, which is
+			// the only mode that reliably syncs container→R2 in production
+			// (see tools/sandbox.ts for the rationale). Without these, the
+			// mount falls back to the SDK's `localBucket` mode, which only
+			// works under `wrangler dev` because Cloudflare evicts the
+			// Sandbox DO before its background sync loops can run. Generate
+			// the access key in the Cloudflare dashboard under R2 → Manage
+			// R2 API Tokens. R2_ENDPOINT can be omitted if R2_ACCOUNT_ID is
+			// set (the endpoint is derived).
+			R2_ENDPOINT?: string;
+			R2_ACCOUNT_ID?: string;
+			R2_ACCESS_KEY_ID?: string;
+			R2_SECRET_ACCESS_KEY?: string;
+			// Override the R2 bucket name passed to s3fs. Defaults to the
+			// `bucket_name` in wrangler.jsonc; only set this if you renamed
+			// the bucket.
+			R2_WORKSPACE_BUCKET_NAME?: string;
+			// Optional SSH private key injected into every sandbox container
+			// so the agent can interact with GitHub (clone, push, etc.).
+			SANDBOX_SSH_KEY?: string;
+			// fly.io Machines backend credentials. When both are set, the
+			// fly backend is available as an alternative to Cloudflare
+			// Containers (selected via the `sandbox_backend` user setting).
+			// See `src/lib/server/sandbox/fly/` for the implementation.
+			FLY_API_TOKEN?: string;
+			FLY_APP_NAME?: string;
+			// Optional override for the fly app's public hostname. Defaults
+			// to `${FLY_APP_NAME}.fly.dev`.
+			FLY_APP_HOSTNAME?: string;
+			// Optional Worker Loader binding. When present, the `run_js` tool
+			// is registered so the model can evaluate JS in a fresh isolate.
+			RUN_JS_LOADER?: WorkerLoader;
+			// Optional Images binding. When present, sandbox_load_image resizes
+			// images before storing to stay under the DO SQLite 2 MB per-value limit.
+			IMAGES?: ImagesBinding;
 		}
 	}
 }
-
-export {};

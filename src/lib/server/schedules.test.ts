@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:test';
 import { afterEach, describe, expect, it } from 'vitest';
+import { assertDefined } from '../../../test/assert-defined';
 import {
 	bumpScheduleNow,
 	computeNextRunAt,
@@ -64,7 +65,7 @@ describe('computeNextRunAt', () => {
 		expect(new Date(next).toISOString()).toBe('2026-05-05T09:15:00.000Z');
 	});
 
-	it('daily: when from === today\'s scheduled time, advances by one day', () => {
+	it("daily: when from === today's scheduled time, advances by one day", () => {
 		const exactly = Date.UTC(2026, 4, 4, 9, 15, 0);
 		const next = computeNextRunAt(exactly, 'daily', 9 * 60 + 15, null);
 		// Same instant means today.getTime() === from, the > check is false,
@@ -72,7 +73,7 @@ describe('computeNextRunAt', () => {
 		expect(new Date(next).toISOString()).toBe('2026-05-05T09:15:00.000Z');
 	});
 
-	it('weekly: same day later if the matching weekday hasn\'t reached its time yet', () => {
+	it("weekly: same day later if the matching weekday hasn't reached its time yet", () => {
 		// Monday is dayOfWeek=1. 18:00 UTC is later than 12:34 UTC.
 		const next = computeNextRunAt(MONDAY_NOON, 'weekly', 18 * 60, 1);
 		expect(new Date(next).toISOString()).toBe('2026-05-04T18:00:00.000Z');
@@ -120,12 +121,12 @@ afterEach(async () => {
 
 describe('createSchedule + listSchedules', () => {
 	const baseInput = {
+		dayOfWeek: null,
 		name: 'Daily standup',
 		prompt: 'Summarise yesterday',
 		recurrence: 'daily' as const,
-		timeOfDay: 9 * 60,
-		dayOfWeek: null,
 		targetConversationId: null,
+		timeOfDay: 9 * 60,
 	};
 
 	it('createSchedule returns the inserted row with computed nextRunAt', async () => {
@@ -200,13 +201,28 @@ describe('createSchedule + listSchedules', () => {
 describe('listDueSchedules', () => {
 	it('returns only enabled schedules with next_run_at <= cutoff, ordered by next_run_at ASC', async () => {
 		const row1 = await createSchedule(env, {
-			name: 'A', prompt: 'a', recurrence: 'hourly', timeOfDay: null, dayOfWeek: null, targetConversationId: null,
+			dayOfWeek: null,
+			name: 'A',
+			prompt: 'a',
+			recurrence: 'hourly',
+			targetConversationId: null,
+			timeOfDay: null,
 		});
 		const row2 = await createSchedule(env, {
-			name: 'B', prompt: 'b', recurrence: 'hourly', timeOfDay: null, dayOfWeek: null, targetConversationId: null,
+			dayOfWeek: null,
+			name: 'B',
+			prompt: 'b',
+			recurrence: 'hourly',
+			targetConversationId: null,
+			timeOfDay: null,
 		});
 		const row3 = await createSchedule(env, {
-			name: 'C', prompt: 'c', recurrence: 'hourly', timeOfDay: null, dayOfWeek: null, targetConversationId: null,
+			dayOfWeek: null,
+			name: 'C',
+			prompt: 'c',
+			recurrence: 'hourly',
+			targetConversationId: null,
+			timeOfDay: null,
 		});
 		// Manually backdate row1 and row3 so they are due; tweak row1 < row3 for ordering.
 		await env.DB.prepare('UPDATE schedules SET next_run_at = ? WHERE id = ?').bind(1, row1.id).run();
@@ -236,7 +252,12 @@ describe('nextScheduledRun', () => {
 	it('returns null when there are no enabled schedules', async () => {
 		expect(await nextScheduledRun(env)).toBeNull();
 		const row = await createSchedule(env, {
-			name: 'A', prompt: 'a', recurrence: 'hourly', timeOfDay: null, dayOfWeek: null, targetConversationId: null,
+			dayOfWeek: null,
+			name: 'A',
+			prompt: 'a',
+			recurrence: 'hourly',
+			targetConversationId: null,
+			timeOfDay: null,
 		});
 		await setScheduleEnabled(env, row.id, false);
 		expect(await nextScheduledRun(env)).toBeNull();
@@ -244,10 +265,20 @@ describe('nextScheduledRun', () => {
 
 	it('returns the minimum next_run_at across enabled schedules', async () => {
 		const a = await createSchedule(env, {
-			name: 'A', prompt: 'a', recurrence: 'hourly', timeOfDay: null, dayOfWeek: null, targetConversationId: null,
+			dayOfWeek: null,
+			name: 'A',
+			prompt: 'a',
+			recurrence: 'hourly',
+			targetConversationId: null,
+			timeOfDay: null,
 		});
 		const b = await createSchedule(env, {
-			name: 'B', prompt: 'b', recurrence: 'hourly', timeOfDay: null, dayOfWeek: null, targetConversationId: null,
+			dayOfWeek: null,
+			name: 'B',
+			prompt: 'b',
+			recurrence: 'hourly',
+			targetConversationId: null,
+			timeOfDay: null,
 		});
 		await env.DB.prepare('UPDATE schedules SET next_run_at = ? WHERE id = ?').bind(100, a.id).run();
 		await env.DB.prepare('UPDATE schedules SET next_run_at = ? WHERE id = ?').bind(50, b.id).run();
@@ -261,11 +292,17 @@ describe('nextScheduledRun', () => {
 describe('markScheduleRun', () => {
 	it('records last_run_at and recomputes next_run_at off (runAt + 1)', async () => {
 		const row = await createSchedule(env, {
-			name: 'A', prompt: 'a', recurrence: 'daily', timeOfDay: 9 * 60, dayOfWeek: null, targetConversationId: null,
+			dayOfWeek: null,
+			name: 'A',
+			prompt: 'a',
+			recurrence: 'daily',
+			targetConversationId: null,
+			timeOfDay: 9 * 60,
 		});
 		const runAt = MONDAY_NOON;
 		await markScheduleRun(env, row.id, runAt);
-		const after = (await listSchedules(env)).find((r) => r.id === row.id)!;
+		const after = (await listSchedules(env)).find((r) => r.id === row.id);
+		assertDefined(after);
 		expect(after.lastRunAt).toBe(runAt);
 		// daily 09:00 with from=12:34:00.001 → tomorrow 09:00.
 		expect(new Date(after.nextRunAt).toISOString()).toBe('2026-05-05T09:00:00.000Z');
@@ -278,12 +315,18 @@ describe('markScheduleRun', () => {
 
 	it('handles weekly recurrence when re-computing nextRunAt', async () => {
 		const row = await createSchedule(env, {
-			name: 'W', prompt: 'a', recurrence: 'weekly', timeOfDay: 8 * 60, dayOfWeek: 1, targetConversationId: null,
+			dayOfWeek: 1,
+			name: 'W',
+			prompt: 'a',
+			recurrence: 'weekly',
+			targetConversationId: null,
+			timeOfDay: 8 * 60,
 		});
 		// Force a known runAt: Mon 2026-05-04 08:00 UTC.
 		const runAt = Date.UTC(2026, 4, 4, 8, 0, 0);
 		await markScheduleRun(env, row.id, runAt);
-		const after = (await listSchedules(env)).find((r) => r.id === row.id)!;
+		const after = (await listSchedules(env)).find((r) => r.id === row.id);
+		assertDefined(after);
 		// runAt+1ms, weekly Monday 08:00 → next Monday.
 		expect(new Date(after.nextRunAt).toISOString()).toBe('2026-05-11T08:00:00.000Z');
 	});
@@ -292,12 +335,18 @@ describe('markScheduleRun', () => {
 describe('bumpScheduleNow', () => {
 	it('sets next_run_at to "now" and re-enables the schedule', async () => {
 		const row = await createSchedule(env, {
-			name: 'A', prompt: 'a', recurrence: 'hourly', timeOfDay: null, dayOfWeek: null, targetConversationId: null,
+			dayOfWeek: null,
+			name: 'A',
+			prompt: 'a',
+			recurrence: 'hourly',
+			targetConversationId: null,
+			timeOfDay: null,
 		});
 		await setScheduleEnabled(env, row.id, false);
 		const before = Date.now();
 		await bumpScheduleNow(env, row.id);
-		const after = (await listSchedules(env)).find((r) => r.id === row.id)!;
+		const after = (await listSchedules(env)).find((r) => r.id === row.id);
+		assertDefined(after);
 		expect(after.enabled).toBe(true);
 		expect(after.nextRunAt).toBeGreaterThanOrEqual(before);
 		// Should be due immediately.
@@ -306,13 +355,18 @@ describe('bumpScheduleNow', () => {
 	});
 
 	it('is scoped by user_id', async () => {
-		const row = await createSchedule(env, {
-			name: 'A', prompt: 'a', recurrence: 'hourly', timeOfDay: null, dayOfWeek: null, targetConversationId: null,
-		}, 1);
-		const beforeNext = (await listSchedules(env, 1)).find((r) => r.id === row.id)!.nextRunAt;
+		const row = await createSchedule(
+			env,
+			{ dayOfWeek: null, name: 'A', prompt: 'a', recurrence: 'hourly', targetConversationId: null, timeOfDay: null },
+			1,
+		);
+		const beforeRow = (await listSchedules(env, 1)).find((r) => r.id === row.id);
+		assertDefined(beforeRow);
+		const beforeNext = beforeRow.nextRunAt;
 		// Wrong user — shouldn't change anything.
 		await bumpScheduleNow(env, row.id, 2);
-		const after = (await listSchedules(env, 1)).find((r) => r.id === row.id)!;
+		const after = (await listSchedules(env, 1)).find((r) => r.id === row.id);
+		assertDefined(after);
 		expect(after.nextRunAt).toBe(beforeNext);
 	});
 });
@@ -320,33 +374,44 @@ describe('bumpScheduleNow', () => {
 describe('setScheduleEnabled / deleteSchedule', () => {
 	it('setScheduleEnabled toggles enabled and bumps updated_at', async () => {
 		const row = await createSchedule(env, {
-			name: 'A', prompt: 'a', recurrence: 'daily', timeOfDay: null, dayOfWeek: null, targetConversationId: null,
+			dayOfWeek: null,
+			name: 'A',
+			prompt: 'a',
+			recurrence: 'daily',
+			targetConversationId: null,
+			timeOfDay: null,
 		});
 		expect(row.enabled).toBe(true);
 		await setScheduleEnabled(env, row.id, false);
-		const off = (await listSchedules(env)).find((r) => r.id === row.id)!;
+		const off = (await listSchedules(env)).find((r) => r.id === row.id);
+		assertDefined(off);
 		expect(off.enabled).toBe(false);
 		expect(off.updatedAt).toBeGreaterThanOrEqual(row.updatedAt);
 		await setScheduleEnabled(env, row.id, true);
-		const on = (await listSchedules(env)).find((r) => r.id === row.id)!;
+		const on = (await listSchedules(env)).find((r) => r.id === row.id);
+		assertDefined(on);
 		expect(on.enabled).toBe(true);
 	});
 
 	it('setScheduleEnabled is scoped by user_id', async () => {
-		const row = await createSchedule(env, {
-			name: 'A', prompt: 'a', recurrence: 'daily', timeOfDay: null, dayOfWeek: null, targetConversationId: null,
-		}, 1);
+		const row = await createSchedule(
+			env,
+			{ dayOfWeek: null, name: 'A', prompt: 'a', recurrence: 'daily', targetConversationId: null, timeOfDay: null },
+			1,
+		);
 		await setScheduleEnabled(env, row.id, false, 2); // wrong user
-		expect((await listSchedules(env, 1)).find((r) => r.id === row.id)!.enabled).toBe(true);
+		expect((await listSchedules(env, 1)).find((r) => r.id === row.id)?.enabled).toBe(true);
 	});
 
 	it('deleteSchedule removes the row and is scoped by user_id', async () => {
-		const row = await createSchedule(env, {
-			name: 'A', prompt: 'a', recurrence: 'daily', timeOfDay: null, dayOfWeek: null, targetConversationId: null,
-		}, 1);
+		const row = await createSchedule(
+			env,
+			{ dayOfWeek: null, name: 'A', prompt: 'a', recurrence: 'daily', targetConversationId: null, timeOfDay: null },
+			1,
+		);
 		// Wrong user — no effect.
 		await deleteSchedule(env, row.id, 2);
-		expect((await listSchedules(env, 1))).toHaveLength(1);
+		expect(await listSchedules(env, 1)).toHaveLength(1);
 		await deleteSchedule(env, row.id, 1);
 		expect(await listSchedules(env, 1)).toHaveLength(0);
 	});

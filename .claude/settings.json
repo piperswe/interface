@@ -1,16 +1,16 @@
 {
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "npm install",
-            "timeout": 120,
-            "statusMessage": "Installing dependencies..."
-          }
-        ]
-      }
-    ]
-  }
+	"hooks": {
+		"SessionStart": [
+			{
+				"hooks": [
+					{
+						"command": "npm install",
+						"statusMessage": "Installing dependencies...",
+						"timeout": 120,
+						"type": "command"
+					}
+				]
+			}
+		]
+	}
 }

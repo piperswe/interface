@@ -56,10 +56,7 @@ export type ExecStream = AsyncIterable<ExecEvent> & {
 export interface SandboxInstance {
 	exec(cmd: string, opts?: ExecOptions): Promise<ExecResult>;
 	execStream(cmd: string, opts?: ExecOptions): Promise<ExecStream>;
-	runCode(
-		code: string,
-		opts: { language: RunCodeLanguage; timeout?: number },
-	): Promise<RunCodeResult>;
+	runCode(code: string, opts: { language: RunCodeLanguage; timeout?: number }): Promise<RunCodeResult>;
 	readFile(path: string): Promise<ReadFileResult>;
 	writeFile(path: string, content: string): Promise<void>;
 	deleteFile(path: string): Promise<void>;

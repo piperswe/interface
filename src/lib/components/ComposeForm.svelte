@@ -1,22 +1,11 @@
 <script lang="ts" module>
-	import { THINKING_PRESETS, describeBudget, presetFor } from './thinking-presets';
-	export { THINKING_PRESETS, describeBudget, presetFor };
+	import { describeBudget, presetFor, THINKING_PRESETS } from './thinking-presets';
+
 	export type { Preset } from './thinking-presets';
+	export { describeBudget, presetFor, THINKING_PRESETS };
 </script>
 
 <script lang="ts">
-	import type { ProviderModel } from '$lib/server/providers/types';
-	import { sendMessage, setThinkingBudget, abortGeneration, compactContext } from '$lib/conversations.remote';
-	import { invalidateAll } from '$app/navigation';
-	import { onMount, untrack } from 'svelte';
-	import { clickOutside } from '$lib/click-outside';
-	import type { Preset } from './thinking-presets';
-	import type { Recorder } from '$lib/speech-recognition.client';
-	import type {
-		ConversationMode,
-		ConversationModeSnapshot,
-	} from '$lib/conversation-mode.client';
-	import ConversationModeButton from './ConversationModeButton.svelte';
 	import {
 		ArrowUp,
 		Brain,
@@ -29,6 +18,18 @@
 		Square,
 		TriangleAlert,
 	} from 'lucide-svelte';
+	import { onMount, untrack } from 'svelte';
+	import { invalidateAll } from '$app/navigation';
+	import { clickOutside } from '$lib/click-outside';
+	import type {
+		ConversationMode,
+		ConversationModeSnapshot,
+	} from '$lib/conversation-mode.client';
+	import { abortGeneration, compactContext, sendMessage, setThinkingBudget } from '$lib/conversations.remote';
+	import type { ProviderModel } from '$lib/server/providers/types';
+	import type { Recorder } from '$lib/speech-recognition.client';
+	import ConversationModeButton from './ConversationModeButton.svelte';
+	import type { Preset } from './thinking-presets';
 
 	let {
 		conversationId,
@@ -89,14 +90,14 @@
 
 	async function uploadFile(file: File): Promise<void> {
 		const key = `att-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-		const entry: Attachment = { key, filename: file.name, status: 'uploading' };
+		const entry: Attachment = { filename: file.name, key, status: 'uploading' };
 		attachments = [...attachments, entry];
 		try {
 			const url = `/c/${conversationId}/sandbox/upload?filename=${encodeURIComponent(file.name)}`;
 			const res = await fetch(url, {
-				method: 'POST',
-				headers: { 'Content-Type': file.type || 'application/octet-stream' },
 				body: file,
+				headers: { 'Content-Type': file.type || 'application/octet-stream' },
+				method: 'POST',
 			});
 			if (!res.ok) {
 				const text = await res.text().catch(() => `${res.status} ${res.statusText}`);
@@ -104,12 +105,12 @@
 			}
 			const data = (await res.json()) as { path: string; size: number };
 			attachments = attachments.map((a) =>
-				a.key === key ? { ...a, status: 'done', path: data.path, size: data.size } : a,
+				a.key === key ? { ...a, path: data.path, size: data.size, status: 'done' } : a,
 			);
 		} catch (err) {
 			attachments = attachments.map((a) =>
 				a.key === key
-					? { ...a, status: 'error', error: err instanceof Error ? err.message : String(err) }
+					? { ...a, error: err instanceof Error ? err.message : String(err), status: 'error' }
 					: a,
 			);
 		}
@@ -233,7 +234,7 @@
 	}
 
 	async function applyBudget(budget: number | null) {
-		await setThinkingBudget({ conversationId, budget });
+		await setThinkingBudget({ budget, conversationId });
 		await invalidateAll();
 	}
 

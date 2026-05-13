@@ -1,5 +1,5 @@
-import type { Artifact, ArtifactType, MessageRow, MessagePart, MetaSnapshot } from '$lib/types/conversation';
-import { partsFromJson, type BlobEnv } from './blob-store';
+import type { Artifact, ArtifactType, MessagePart, MessageRow, MetaSnapshot } from '$lib/types/conversation';
+import { type BlobEnv, partsFromJson } from './blob-store';
 import { parseJson } from './parts';
 import { execRows } from './sql';
 
@@ -30,17 +30,17 @@ export async function readMessages(sql: SqlStorage, env: BlobEnv): Promise<Messa
 		rows.map(async (r) => {
 			const parts = stripHtml((await partsFromJson(r.parts, env)) ?? []);
 			return {
-				id: r.id,
-				role: r.role as 'user' | 'assistant',
-				content: r.content,
-				thinking: r.thinking,
-				model: r.model,
-				status: r.status as 'complete' | 'streaming' | 'error',
-				error: r.error,
-				createdAt: r.created_at,
-				meta: deriveMeta(r.started_at, r.first_token_at, r.last_chunk_json, r.usage_json),
 				artifacts: artifactsByMessage.get(r.id) ?? [],
+				content: r.content,
+				createdAt: r.created_at,
+				error: r.error,
+				id: r.id,
+				meta: deriveMeta(r.started_at, r.first_token_at, r.last_chunk_json, r.usage_json),
+				model: r.model,
 				parts,
+				role: r.role as 'user' | 'assistant',
+				status: r.status as 'complete' | 'streaming' | 'error',
+				thinking: r.thinking,
 			};
 		}),
 	);
@@ -75,22 +75,19 @@ export function readArtifactsByMessage(sql: SqlStorage): Map<string, Artifact[]>
 		version: number;
 		content: string;
 		created_at: number;
-	}>(
-		sql,
-		`SELECT id, message_id, type, name, language, version, content, created_at FROM artifacts ORDER BY created_at ASC`,
-	);
+	}>(sql, `SELECT id, message_id, type, name, language, version, content, created_at FROM artifacts ORDER BY created_at ASC`);
 	const map = new Map<string, Artifact[]>();
 	for (const r of rows) {
 		const list = map.get(r.message_id) ?? [];
 		list.push({
-			id: r.id,
-			messageId: r.message_id,
-			type: r.type as ArtifactType,
-			name: r.name,
-			language: r.language,
-			version: r.version,
 			content: r.content,
 			createdAt: r.created_at,
+			id: r.id,
+			language: r.language,
+			messageId: r.message_id,
+			name: r.name,
+			type: r.type as ArtifactType,
+			version: r.version,
 		});
 		map.set(r.message_id, list);
 	}
@@ -105,9 +102,9 @@ export function deriveMeta(
 ): MetaSnapshot | null {
 	if (!startedAt && !lastChunkJson && !usageJson) return null;
 	return {
-		startedAt: startedAt ?? 0,
 		firstTokenAt: firstTokenAt ?? 0,
 		lastChunk: parseJson<unknown>(lastChunkJson),
+		startedAt: startedAt ?? 0,
 		usage: parseJson<NonNullable<MetaSnapshot['usage']>>(usageJson),
 	};
 }

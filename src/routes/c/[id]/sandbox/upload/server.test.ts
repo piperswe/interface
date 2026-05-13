@@ -1,13 +1,15 @@
 import { env } from 'cloudflare:test';
 import { isHttpError } from '@sveltejs/kit';
 import { afterEach, describe, expect, it } from 'vitest';
-import { POST, _sanitizeFilename } from './+server';
+import { assertDefined } from '../../../../../../test/assert-defined';
+import { _sanitizeFilename, POST } from './+server';
 
 const VALID_ID = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
 
 // `wrangler.test.jsonc` binds WORKSPACE_BUCKET so it's safe to assume it's
 // present in tests.
-const bucket = env.WORKSPACE_BUCKET!;
+assertDefined(env.WORKSPACE_BUCKET, 'WORKSPACE_BUCKET binding required');
+const bucket = env.WORKSPACE_BUCKET;
 
 afterEach(async () => {
 	const list = await bucket.list({ prefix: `conversations/${VALID_ID}/` });
@@ -43,15 +45,15 @@ async function callPost(
 		}
 	}
 	const request = new Request(url.toString(), {
-		method: 'POST',
-		headers,
 		body,
+		headers,
+		method: 'POST',
 	});
 	const event = {
 		params: { id: conversationId },
-		url,
 		platform: { env },
 		request,
+		url,
 	} as Parameters<typeof POST>[0];
 	return POST(event);
 }
@@ -90,8 +92,8 @@ describe('sandbox/upload +server.ts — POST', () => {
 	it('rejects oversized uploads via Content-Length', async () => {
 		await expectError(
 			callPost(VALID_ID, {
-				filename: 'big.bin',
 				contentLength: 501 * 1024 * 1024,
+				filename: 'big.bin',
 			}),
 			413,
 		);
@@ -101,17 +103,11 @@ describe('sandbox/upload +server.ts — POST', () => {
 	// size guard (`parseInt(null, 10) === NaN`, `Number.isFinite(NaN) === false`).
 	// We now require Content-Length and reject with 411.
 	it('rejects uploads with no Content-Length header (411)', async () => {
-		await expectError(
-			callPost(VALID_ID, { filename: 'x.bin', omitContentLength: true }),
-			411,
-		);
+		await expectError(callPost(VALID_ID, { filename: 'x.bin', omitContentLength: true }), 411);
 	});
 
 	it('rejects non-numeric Content-Length with 400', async () => {
-		await expectError(
-			callPost(VALID_ID, { filename: 'x.bin', contentLength: '12abc' as unknown as number }),
-			400,
-		);
+		await expectError(callPost(VALID_ID, { contentLength: '12abc' as unknown as number, filename: 'x.bin' }), 400);
 	});
 });
 
@@ -146,9 +142,9 @@ describe('_sanitizeFilename', () => {
 
 	it('writes the body to R2 at conversations/{id}/uploads/{ts}-{name}', async () => {
 		const res = await callPost(VALID_ID, {
-			filename: 'photo.png',
 			body: new Uint8Array([1, 2, 3, 4]),
 			contentType: 'image/png',
+			filename: 'photo.png',
 		});
 		expect(res.ok).toBe(true);
 		const body = (await res.json()) as { path: string; size: number; mimeType: string };
@@ -160,16 +156,17 @@ describe('_sanitizeFilename', () => {
 		const relative = body.path.slice('/workspace/'.length);
 		const obj = await bucket.get(`conversations/${VALID_ID}/${relative}`);
 		expect(obj).not.toBeNull();
-		const got = new Uint8Array(await obj!.arrayBuffer());
+		assertDefined(obj);
+		const got = new Uint8Array(await obj.arrayBuffer());
 		expect(Array.from(got)).toEqual([1, 2, 3, 4]);
-		expect(obj!.httpMetadata?.contentType).toBe('image/png');
+		expect(obj.httpMetadata?.contentType).toBe('image/png');
 	});
 
 	it('falls back to extension-based MIME when content-type is octet-stream', async () => {
 		const res = await callPost(VALID_ID, {
-			filename: 'note.txt',
 			body: 'hello',
 			contentType: 'application/octet-stream',
+			filename: 'note.txt',
 		});
 		const body = (await res.json()) as { mimeType: string };
 		expect(body.mimeType).toBe('text/plain');
@@ -177,9 +174,9 @@ describe('_sanitizeFilename', () => {
 
 	it('strips slashes from filenames so the basename is what lands in R2', async () => {
 		const res = await callPost(VALID_ID, {
-			filename: 'sub/deeper/photo.png',
 			body: 'x',
 			contentType: 'image/png',
+			filename: 'sub/deeper/photo.png',
 		});
 		const body = (await res.json()) as { path: string };
 		expect(body.path).toMatch(/^\/workspace\/uploads\/\d+-photo\.png$/);

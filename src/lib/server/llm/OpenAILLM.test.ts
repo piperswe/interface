@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
 import type OpenAI from 'openai';
 import type { ChatCompletionChunk } from 'openai/resources/chat/completions';
-import { OpenAILLM } from './OpenAILLM';
+import { describe, expect, it } from 'vitest';
+import { assertDefined } from '../../../../test/assert-defined';
 import type { StreamEvent } from './LLM';
+import { OpenAILLM } from './OpenAILLM';
 
 function fakeClient(chunks: ChatCompletionChunk[], capture?: { params?: unknown }): OpenAI {
 	return {
@@ -24,17 +25,17 @@ function chunk(
 	opts: { finish_reason?: string; usage?: ChatCompletionChunk['usage']; id?: string } = {},
 ): ChatCompletionChunk {
 	return {
-		id: opts.id ?? 'gen-1',
-		object: 'chat.completion.chunk',
-		created: 0,
-		model: 'test/model',
 		choices: [
 			{
-				index: 0,
 				delta: delta as ChatCompletionChunk.Choice.Delta,
 				finish_reason: (opts.finish_reason as ChatCompletionChunk.Choice['finish_reason']) ?? null,
+				index: 0,
 			},
 		],
+		created: 0,
+		id: opts.id ?? 'gen-1',
+		model: 'test/model',
+		object: 'chat.completion.chunk',
 		...(opts.usage ? { usage: opts.usage } : {}),
 	} as unknown as ChatCompletionChunk;
 }
@@ -60,7 +61,7 @@ describe('OpenAILLM', () => {
 			chunk({}, { finish_reason: 'stop' }),
 		]);
 		const llm = new OpenAILLM(c, 'gpt-5.5', 'openai-via-aig');
-		const events = await collect(llm.chat({ messages: [{ role: 'user', content: 'hi' }] }));
+		const events = await collect(llm.chat({ messages: [{ content: 'hi', role: 'user' }] }));
 		const deltas = events.filter((e) => e.type === 'text_delta').map((e) => (e as { delta: string }).delta);
 		expect(deltas).toEqual(['Hello', ', world', '!']);
 		const done = events.at(-1);
@@ -72,7 +73,7 @@ describe('OpenAILLM', () => {
 		const c = fakeClient([chunk({ reasoning_content: 'planning...' }), chunk({ content: 'answer' }), chunk({}, { finish_reason: 'stop' })]);
 		const llm = new OpenAILLM(c, 'gpt-5.5', 'openai-via-aig');
 		const events = await collect(llm.chat({ messages: [] }));
-		expect(events).toContainEqual({ type: 'thinking_delta', delta: 'planning...' });
+		expect(events).toContainEqual({ delta: 'planning...', type: 'thinking_delta' });
 	});
 
 	it('finalizes streaming tool calls', async () => {
@@ -80,25 +81,25 @@ describe('OpenAILLM', () => {
 			chunk({
 				tool_calls: [
 					{
-						index: 0,
+						function: { arguments: '{"q":"', name: 'web_search' },
 						id: 'call_1',
+						index: 0,
 						type: 'function',
-						function: { name: 'web_search', arguments: '{"q":"' },
 					},
 				],
 			}),
 			chunk({
-				tool_calls: [{ index: 0, function: { arguments: 'cats"}' } } as never],
+				tool_calls: [{ function: { arguments: 'cats"}' }, index: 0 } as never],
 			}),
 			chunk({}, { finish_reason: 'tool_calls' }),
 		]);
 		const llm = new OpenAILLM(c, 'gpt-5.5', 'openai-via-aig');
 		const events = await collect(llm.chat({ messages: [] }));
 		expect(events.find((e) => e.type === 'tool_call')).toEqual({
-			type: 'tool_call',
 			id: 'call_1',
-			name: 'web_search',
 			input: { q: 'cats' },
+			name: 'web_search',
+			type: 'tool_call',
 		});
 	});
 
@@ -110,11 +111,11 @@ describe('OpenAILLM', () => {
 				{
 					finish_reason: 'stop',
 					usage: {
-						prompt_tokens: 10,
 						completion_tokens: 5,
-						total_tokens: 15,
-						prompt_tokens_details: { cached_tokens: 8 },
 						completion_tokens_details: { reasoning_tokens: 3 },
+						prompt_tokens: 10,
+						prompt_tokens_details: { cached_tokens: 8 },
+						total_tokens: 15,
 					} as ChatCompletionChunk['usage'],
 				},
 			),
@@ -124,11 +125,11 @@ describe('OpenAILLM', () => {
 		expect(events).toContainEqual({
 			type: 'usage',
 			usage: {
+				cacheReadInputTokens: 8,
 				inputTokens: 10,
 				outputTokens: 5,
-				totalTokens: 15,
-				cacheReadInputTokens: 8,
 				thinkingTokens: 3,
+				totalTokens: 15,
 			},
 		});
 	});
@@ -145,7 +146,7 @@ describe('OpenAILLM', () => {
 		} as unknown as OpenAI;
 		const llm = new OpenAILLM(c, 'gpt-5.5', 'openai-via-aig');
 		const events = await collect(llm.chat({ messages: [] }));
-		expect(events).toEqual([{ type: 'error', message: 'boom' }]);
+		expect(events).toEqual([{ message: 'boom', type: 'error' }]);
 	});
 
 	it('prepends systemPrompt to the OpenAI message list', async () => {
@@ -154,40 +155,43 @@ describe('OpenAILLM', () => {
 		const llm = new OpenAILLM(c, 'gpt-5.5', 'openai-via-aig');
 		await collect(
 			llm.chat({
+				messages: [{ content: 'hi', role: 'user' }],
 				systemPrompt: 'be nice',
-				messages: [{ role: 'user', content: 'hi' }],
 			}),
 		);
-		expect(capture.params!.messages![0]).toEqual({ role: 'system', content: 'be nice' });
-		expect(capture.params!.messages![1]).toEqual({ role: 'user', content: 'hi' });
+		assertDefined(capture.params);
+		assertDefined(capture.params.messages);
+		expect(capture.params.messages[0]).toEqual({ content: 'be nice', role: 'system' });
+		expect(capture.params.messages[1]).toEqual({ content: 'hi', role: 'user' });
 	});
 
 	it('serializes assistant tool_use blocks into OpenAI tool_calls', async () => {
-		const capture: { params?: { messages?: Array<{ role: string; tool_calls?: unknown[]; tool_call_id?: string; content?: unknown }> } } =
-			{};
+		const capture: { params?: { messages?: Array<{ role: string; tool_calls?: unknown[]; tool_call_id?: string; content?: unknown }> } } = {};
 		const c = fakeClient([chunk({}, { finish_reason: 'stop' })], capture);
 		const llm = new OpenAILLM(c, 'gpt-5.5', 'openai-via-aig');
 		await collect(
 			llm.chat({
 				messages: [
-					{ role: 'user', content: 'search' },
+					{ content: 'search', role: 'user' },
 					{
+						content: [{ id: 't1', input: { q: 'cats' }, name: 'web_search', type: 'tool_use' }],
 						role: 'assistant',
-						content: [{ type: 'tool_use', id: 't1', name: 'web_search', input: { q: 'cats' } }],
 					},
 					{
+						content: [{ content: 'no cats', toolUseId: 't1', type: 'tool_result' }],
 						role: 'tool',
-						content: [{ type: 'tool_result', toolUseId: 't1', content: 'no cats' }],
 					},
 				],
 			}),
 		);
-		const msgs = capture.params!.messages!;
+		assertDefined(capture.params);
+		assertDefined(capture.params.messages);
+		const msgs = capture.params.messages;
 		expect(msgs[1]).toMatchObject({
 			role: 'assistant',
-			tool_calls: [{ id: 't1', type: 'function', function: { name: 'web_search' } }],
+			tool_calls: [{ function: { name: 'web_search' }, id: 't1', type: 'function' }],
 		});
-		expect(msgs[2]).toMatchObject({ role: 'tool', tool_call_id: 't1', content: 'no cats' });
+		expect(msgs[2]).toMatchObject({ content: 'no cats', role: 'tool', tool_call_id: 't1' });
 	});
 
 	it('passes tool definitions to chat.completions.create', async () => {
@@ -197,13 +201,14 @@ describe('OpenAILLM', () => {
 		await collect(
 			llm.chat({
 				messages: [],
-				tools: [{ name: 'web_search', description: 'search', inputSchema: { type: 'object' } }],
+				tools: [{ description: 'search', inputSchema: { type: 'object' }, name: 'web_search' }],
 			}),
 		);
-		expect(capture.params!.tools).toEqual([
+		assertDefined(capture.params);
+		expect(capture.params.tools).toEqual([
 			{
+				function: { description: 'search', name: 'web_search', parameters: { type: 'object' } },
 				type: 'function',
-				function: { name: 'web_search', description: 'search', parameters: { type: 'object' } },
 			},
 		]);
 	});
@@ -212,16 +217,18 @@ describe('OpenAILLM', () => {
 		const capture: { params?: { reasoning_effort?: string } } = {};
 		const c = fakeClient([chunk({}, { finish_reason: 'stop' })], capture);
 		const llm = new OpenAILLM(c, 'gpt-5.5', 'openai-via-aig');
-		await collect(llm.chat({ messages: [], reasoning: { type: 'effort', effort: 'high' } }));
-		expect(capture.params!.reasoning_effort).toBe('high');
+		await collect(llm.chat({ messages: [], reasoning: { effort: 'high', type: 'effort' } }));
+		assertDefined(capture.params);
+		expect(capture.params.reasoning_effort).toBe('high');
 	});
 
 	it('maps xhigh effort onto OpenAI high (top of the supported enum)', async () => {
 		const capture: { params?: { reasoning_effort?: string } } = {};
 		const c = fakeClient([chunk({}, { finish_reason: 'stop' })], capture);
 		const llm = new OpenAILLM(c, 'gpt-5.5', 'openai-via-aig');
-		await collect(llm.chat({ messages: [], reasoning: { type: 'effort', effort: 'xhigh' } }));
-		expect(capture.params!.reasoning_effort).toBe('high');
+		await collect(llm.chat({ messages: [], reasoning: { effort: 'xhigh', type: 'effort' } }));
+		assertDefined(capture.params);
+		expect(capture.params.reasoning_effort).toBe('high');
 	});
 
 	it('sends reasoning_effort:none when effort is none', async () => {
@@ -232,8 +239,9 @@ describe('OpenAILLM', () => {
 		const capture: { params?: { reasoning_effort?: string } } = {};
 		const c = fakeClient([chunk({}, { finish_reason: 'stop' })], capture);
 		const llm = new OpenAILLM(c, 'gpt-5.5', 'openai-via-aig');
-		await collect(llm.chat({ messages: [], reasoning: { type: 'effort', effort: 'none' } }));
-		expect(capture.params!.reasoning_effort).toBe('none');
+		await collect(llm.chat({ messages: [], reasoning: { effort: 'none', type: 'effort' } }));
+		assertDefined(capture.params);
+		expect(capture.params.reasoning_effort).toBe('none');
 	});
 
 	it('emits stub tool message + synthetic user with image_url for array tool_result content', async () => {
@@ -248,26 +256,28 @@ describe('OpenAILLM', () => {
 			llm.chat({
 				messages: [
 					{
+						content: [{ id: 't1', input: {}, name: 'sandbox_load_image', type: 'tool_use' }],
 						role: 'assistant',
-						content: [{ type: 'tool_use', id: 't1', name: 'sandbox_load_image', input: {} }],
 					},
 					{
-						role: 'tool',
 						content: [
 							{
-								type: 'tool_result',
-								toolUseId: 't1',
 								content: [
-									{ type: 'text', text: 'Loaded photo.png.' },
-									{ type: 'image', mimeType: 'image/png', data: 'AAAA' },
+									{ text: 'Loaded photo.png.', type: 'text' },
+									{ data: 'AAAA', mimeType: 'image/png', type: 'image' },
 								],
+								toolUseId: 't1',
+								type: 'tool_result',
 							},
 						],
+						role: 'tool',
 					},
 				],
 			}),
 		);
-		const msgs = capture.params!.messages!;
+		assertDefined(capture.params);
+		assertDefined(capture.params.messages);
+		const msgs = capture.params.messages;
 		// Tool message is a stub string referencing the follow-up.
 		expect(msgs[1]).toMatchObject({ role: 'tool', tool_call_id: 't1' });
 		expect(typeof msgs[1].content).toBe('string');
@@ -275,10 +285,10 @@ describe('OpenAILLM', () => {
 		// Synthetic user message carries the image as a data URL.
 		expect(msgs[2]).toMatchObject({ role: 'user' });
 		const userContent = msgs[2].content as Array<Record<string, unknown>>;
-		expect(userContent).toContainEqual({ type: 'text', text: 'Loaded photo.png.' });
+		expect(userContent).toContainEqual({ text: 'Loaded photo.png.', type: 'text' });
 		expect(userContent).toContainEqual({
-			type: 'image_url',
 			image_url: { url: 'data:image/png;base64,AAAA' },
+			type: 'image_url',
 		});
 	});
 
@@ -290,24 +300,26 @@ describe('OpenAILLM', () => {
 			llm.chat({
 				messages: [
 					{
+						content: [{ id: 't1', input: {}, name: 'web_search', type: 'tool_use' }],
 						role: 'assistant',
-						content: [{ type: 'tool_use', id: 't1', name: 'web_search', input: {} }],
 					},
 					{
+						content: [{ content: 'no cats', toolUseId: 't1', type: 'tool_result' }],
 						role: 'tool',
-						content: [{ type: 'tool_result', toolUseId: 't1', content: 'no cats' }],
 					},
 				],
 			}),
 		);
-		const msgs = capture.params!.messages!;
+		assertDefined(capture.params);
+		assertDefined(capture.params.messages);
+		const msgs = capture.params.messages;
 		expect(msgs).toHaveLength(2);
-		expect(msgs[1]).toMatchObject({ role: 'tool', content: 'no cats' });
+		expect(msgs[1]).toMatchObject({ content: 'no cats', role: 'tool' });
 	});
 
 	it('throws on tool message with no tool_result block', async () => {
 		const llm = new OpenAILLM(fakeClient([]), 'gpt-5.5', 'openai-via-aig');
-		const events = await collect(llm.chat({ messages: [{ role: 'tool', content: 'oops' }] }));
+		const events = await collect(llm.chat({ messages: [{ content: 'oops', role: 'tool' }] }));
 		expect(events[0].type).toBe('error');
 		expect((events[0] as { message: string }).message).toMatch(/tool_result/);
 	});
@@ -317,10 +329,10 @@ describe('OpenAILLM', () => {
 			chunk({
 				tool_calls: [
 					{
-						index: 0,
+						function: { arguments: '{not json', name: 'web_search' },
 						id: 'call_1',
+						index: 0,
 						type: 'function',
-						function: { name: 'web_search', arguments: '{not json' },
 					},
 				],
 			}),

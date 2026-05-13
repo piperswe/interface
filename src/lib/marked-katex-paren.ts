@@ -9,7 +9,7 @@ function readInlineMath(src: string): { text: string; raw: string } | null {
 	let i = 2;
 	while (i < src.length) {
 		if (isUnescapedBackslash(src, i) && src[i + 1] === ')') {
-			return { text: src.slice(2, i), raw: src.slice(0, i + 2) };
+			return { raw: src.slice(0, i + 2), text: src.slice(2, i) };
 		}
 		i++;
 	}
@@ -21,7 +21,7 @@ function readBlockMath(src: string): { text: string; raw: string } | null {
 	let i = 2;
 	while (i < src.length) {
 		if (isUnescapedBackslash(src, i) && src[i + 1] === ']') {
-			return { text: src.slice(2, i), raw: src.slice(0, i + 2) };
+			return { raw: src.slice(0, i + 2), text: src.slice(2, i) };
 		}
 		i++;
 	}
@@ -43,8 +43,9 @@ export function markedKatexParen(options: { throwOnError?: boolean } = {}) {
 	return {
 		extensions: [
 			{
-				name: 'inlineParenKatex',
 				level: 'inline' as const,
+				name: 'inlineParenKatex',
+				renderer,
 				start(src: string) {
 					return src.indexOf('\\(');
 				},
@@ -52,19 +53,19 @@ export function markedKatexParen(options: { throwOnError?: boolean } = {}) {
 					const match = readInlineMath(src);
 					if (match) {
 						return {
-							type: 'inlineParenKatex',
+							displayMode: false,
 							raw: match.raw,
 							text: match.text.trim(),
-							displayMode: false,
+							type: 'inlineParenKatex',
 						};
 					}
 					return undefined;
 				},
-				renderer,
 			},
 			{
-				name: 'blockParenKatex',
 				level: 'block' as const,
+				name: 'blockParenKatex',
+				renderer,
 				start(src: string) {
 					return src.indexOf('\\[');
 				},
@@ -72,15 +73,14 @@ export function markedKatexParen(options: { throwOnError?: boolean } = {}) {
 					const match = readBlockMath(src);
 					if (match) {
 						return {
-							type: 'blockParenKatex',
+							displayMode: true,
 							raw: match.raw,
 							text: match.text.trim(),
-							displayMode: true,
+							type: 'blockParenKatex',
 						};
 					}
 					return undefined;
 				},
-				renderer,
 			},
 		],
 	};

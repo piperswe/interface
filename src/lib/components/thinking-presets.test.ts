@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { THINKING_PRESETS, describeBudget, presetFor } from './thinking-presets';
+import { describeBudget, presetFor, THINKING_PRESETS } from './thinking-presets';
 
 describe('THINKING_PRESETS', () => {
 	it('starts with Off and ascends through Extra high', () => {
-		expect(THINKING_PRESETS[0]).toEqual({ id: 'off', label: 'Off', budget: null });
+		expect(THINKING_PRESETS[0]).toEqual({ budget: null, id: 'off', label: 'Off' });
 		expect(THINKING_PRESETS.at(-1)?.id).toBe('xhigh');
 		// Budgets (excluding Off) are strictly increasing.
-		const budgets = THINKING_PRESETS.slice(1).map((p) => p.budget!);
+		const budgets = THINKING_PRESETS.slice(1)
+			.map((p) => p.budget)
+			.filter((b): b is number => b !== null);
 		const sorted = [...budgets].sort((a, b) => a - b);
 		expect(budgets).toEqual(sorted);
 	});

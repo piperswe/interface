@@ -20,7 +20,6 @@ function alterIgnoreExists(sql: SqlStorage, stmt: string): void {
 
 const MIGRATIONS: { version: number; up: (sql: SqlStorage) => void }[] = [
 	{
-		version: 1,
 		up: (sql) => {
 			sql.exec(`
 				CREATE TABLE IF NOT EXISTS messages (
@@ -78,9 +77,9 @@ const MIGRATIONS: { version: number; up: (sql: SqlStorage) => void }[] = [
 				alterIgnoreExists(sql, stmt);
 			}
 		},
+		version: 1,
 	},
 	{
-		version: 2,
 		up: (sql) => {
 			// Server-rendered HTML cached alongside the raw content, so page
 			// loads don't have to re-run marked + Shiki + KaTeX. Populated at
@@ -91,17 +90,15 @@ const MIGRATIONS: { version: number; up: (sql: SqlStorage) => void }[] = [
 			alterIgnoreExists(sql, 'ALTER TABLE messages ADD COLUMN parts_html TEXT');
 			alterIgnoreExists(sql, 'ALTER TABLE artifacts ADD COLUMN content_html TEXT');
 		},
+		version: 2,
 	},
 	{
-		version: 3,
 		up: (sql) => {
 			// Guard every step against already-dropped columns so this migration
 			// is safe to re-run if it previously completed the DROPs but crashed
 			// before the schema_version write (which would leave the DO stuck
 			// retrying the migration forever on each cold start).
-			const existingCols = new Set(
-				execRows<{ name: string }>(sql, 'PRAGMA table_info(messages)').map((c) => c.name),
-			);
+			const existingCols = new Set(execRows<{ name: string }>(sql, 'PRAGMA table_info(messages)').map((c) => c.name));
 
 			// Backfill `parts` from any row that still has only the legacy
 			// tool_calls/tool_results/thinking columns set, using the same
@@ -116,9 +113,7 @@ const MIGRATIONS: { version: number; up: (sql: SqlStorage) => void }[] = [
 			// Then drop the redundant columns. SQLite (3.35+) supports
 			// `DROP COLUMN`; Cloudflare's DO SQLite is recent enough.
 			if (existingCols.has('parts_html')) {
-				sql.exec(
-					`UPDATE messages SET parts = parts_html WHERE parts IS NULL AND parts_html IS NOT NULL`,
-				);
+				sql.exec(`UPDATE messages SET parts = parts_html WHERE parts IS NULL AND parts_html IS NOT NULL`);
 			}
 			// Backfill from legacy tool_calls/tool_results columns for rows
 			// missing `parts` entirely. The JSON shape mirrors `buildLegacyParts`:
@@ -136,16 +131,13 @@ const MIGRATIONS: { version: number; up: (sql: SqlStorage) => void }[] = [
 					 WHERE parts IS NULL AND (thinking IS NOT NULL OR tool_calls IS NOT NULL OR tool_results IS NOT NULL)`,
 				);
 				for (const r of rows) {
-					const tcs =
-						parseJson<Array<{ id: string; name: string; input: unknown; thoughtSignature?: string }>>(r.tool_calls) ?? [];
-					const trs =
-						parseJson<Array<{ toolUseId: string; content: string; isError: boolean }>>(r.tool_results) ?? [];
+					const tcs = parseJson<Array<{ id: string; name: string; input: unknown; thoughtSignature?: string }>>(r.tool_calls) ?? [];
+					const trs = parseJson<Array<{ toolUseId: string; content: string; isError: boolean }>>(r.tool_results) ?? [];
 					const built: Array<Record<string, unknown>> = [];
-					if (r.thinking) built.push({ type: 'thinking', text: r.thinking });
-					if (r.content) built.push({ type: 'text', text: r.content });
+					if (r.thinking) built.push({ text: r.thinking, type: 'thinking' });
+					if (r.content) built.push({ text: r.content, type: 'text' });
 					for (const tc of tcs) built.push({ type: 'tool_use', ...tc });
-					for (const tr of trs)
-						built.push({ type: 'tool_result', toolUseId: tr.toolUseId, content: tr.content, isError: tr.isError });
+					for (const tr of trs) built.push({ content: tr.content, isError: tr.isError, toolUseId: tr.toolUseId, type: 'tool_result' });
 					if (built.length > 0) {
 						sql.exec('UPDATE messages SET parts = ? WHERE id = ?', JSON.stringify(built), r.id);
 					}
@@ -153,11 +145,28 @@ const MIGRATIONS: { version: number; up: (sql: SqlStorage) => void }[] = [
 			}
 			// Drop the redundant columns. `generation_json` was always-null
 			// after the OpenRouter generation-stats removal.
-			try { sql.exec('ALTER TABLE messages DROP COLUMN tool_calls'); } catch { /* not present */ }
-			try { sql.exec('ALTER TABLE messages DROP COLUMN tool_results'); } catch { /* not present */ }
-			try { sql.exec('ALTER TABLE messages DROP COLUMN parts_html'); } catch { /* not present */ }
-			try { sql.exec('ALTER TABLE messages DROP COLUMN generation_json'); } catch { /* not present */ }
+			try {
+				sql.exec('ALTER TABLE messages DROP COLUMN tool_calls');
+			} catch {
+				/* not present */
+			}
+			try {
+				sql.exec('ALTER TABLE messages DROP COLUMN tool_results');
+			} catch {
+				/* not present */
+			}
+			try {
+				sql.exec('ALTER TABLE messages DROP COLUMN parts_html');
+			} catch {
+				/* not present */
+			}
+			try {
+				sql.exec('ALTER TABLE messages DROP COLUMN generation_json');
+			} catch {
+				/* not present */
+			}
 		},
+		version: 3,
 	},
 ];
 

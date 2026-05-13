@@ -25,8 +25,8 @@
 // immediate fix that's acceptable; a sweeper can come later.
 
 import { z } from 'zod';
-import { parseJsonWith } from '$lib/zod-utils';
 import type { MessagePart, ToolResultBlock } from '$lib/types/conversation';
+import { parseJsonWith } from '$lib/zod-utils';
 
 // `parts` is a structurally complex discriminated union; rather than mirror
 // the full type tree, we only verify the on-disk JSON parses to an array of
@@ -83,11 +83,7 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
 // serializations of the same parts array — e.g. the debounced flush firing
 // every 500 ms during a long stream — don't re-upload blobs the DO has
 // already pushed in this activation.
-export async function offloadLargeBlobs(
-	parts: MessagePart[],
-	env: BlobEnv,
-	uploadedHashes?: Set<string>,
-): Promise<MessagePart[]> {
+export async function offloadLargeBlobs(parts: MessagePart[], env: BlobEnv, uploadedHashes?: Set<string>): Promise<MessagePart[]> {
 	const bucket = env.WORKSPACE_BUCKET;
 	// Without a bucket binding we can't offload; fall back to the legacy
 	// inline behavior. Caller is responsible for catching the resulting
@@ -120,11 +116,7 @@ async function maybeOffloadBlocks(
 	let mutated = false;
 	const next: ToolResultBlock[] = [];
 	for (const block of blocks) {
-		if (
-			block.type !== 'image' ||
-			isBlobSentinel(block.data) ||
-			block.data.length < OFFLOAD_THRESHOLD_BYTES
-		) {
+		if (block.type !== 'image' || isBlobSentinel(block.data) || block.data.length < OFFLOAD_THRESHOLD_BYTES) {
 			next.push(block);
 			continue;
 		}
@@ -156,10 +148,7 @@ async function maybeOffloadBlocks(
 // A missing blob (e.g. R2 lifecycle deleted it, or a dev environment without
 // the bucket bound) becomes an empty-data image block — the renderer shows a
 // broken image rather than crashing the page or refusing to load history.
-export async function resolveBlobRefs(
-	parts: MessagePart[],
-	env: BlobEnv,
-): Promise<MessagePart[]> {
+export async function resolveBlobRefs(parts: MessagePart[], env: BlobEnv): Promise<MessagePart[]> {
 	const bucket = env.WORKSPACE_BUCKET;
 	let out: MessagePart[] | null = null;
 	for (let i = 0; i < parts.length; i++) {
@@ -173,9 +162,7 @@ export async function resolveBlobRefs(
 			if (out) out.push(p);
 			continue;
 		}
-		const newContent = await Promise.all(
-			p.content.map((b) => resolveBlock(b, bucket)),
-		);
+		const newContent = await Promise.all(p.content.map((b) => resolveBlock(b, bucket)));
 		if (!out) out = parts.slice(0, i);
 		out.push({ ...p, content: newContent });
 	}
@@ -194,10 +181,7 @@ async function resolveBlock(block: ToolResultBlock, bucket: R2Bucket | undefined
 
 // Convenience wrapper used by every read site: parse the `parts` JSON column
 // and resolve any blob references in one call.
-export async function partsFromJson(
-	json: string | null,
-	env: BlobEnv,
-): Promise<MessagePart[] | null> {
+export async function partsFromJson(json: string | null, env: BlobEnv): Promise<MessagePart[] | null> {
 	if (!json) return null;
 	const parsed = parseJsonWith(partsArrayShapeSchema, json);
 	if (!parsed) return null;
@@ -207,11 +191,7 @@ export async function partsFromJson(
 // Convenience wrapper used by every write site: offload large blobs and
 // stringify in one call. Returns `null` for an empty array so callers can
 // pass the result straight to a SQL parameter.
-export async function partsToJson(
-	parts: MessagePart[],
-	env: BlobEnv,
-	uploadedHashes?: Set<string>,
-): Promise<string | null> {
+export async function partsToJson(parts: MessagePart[], env: BlobEnv, uploadedHashes?: Set<string>): Promise<string | null> {
 	if (parts.length === 0) return null;
 	const offloaded = await offloadLargeBlobs(parts, env, uploadedHashes);
 	return JSON.stringify(offloaded);

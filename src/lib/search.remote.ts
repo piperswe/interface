@@ -1,7 +1,7 @@
-import { query, getRequestEvent } from '$app/server';
 import { error } from '@sveltejs/kit';
 import { z } from 'zod';
-import { searchConversations as searchD1, type SearchHit } from '$lib/server/search';
+import { getRequestEvent, query } from '$app/server';
+import { type SearchHit, searchConversations as searchD1 } from '$lib/server/search';
 
 function getEnv(): Env {
 	const event = getRequestEvent();

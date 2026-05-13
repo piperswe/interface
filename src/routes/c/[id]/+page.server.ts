@@ -1,4 +1,5 @@
 import { error } from '@sveltejs/kit';
+import { CONVERSATION_ID_PATTERN } from '$lib/conversation-id';
 import { createConversation, getConversation } from '$lib/server/conversations';
 import { getConversationStub } from '$lib/server/durable_objects';
 import { listAllModels } from '$lib/server/providers/models';
@@ -6,7 +7,6 @@ import { getKagiCostPer1000Searches, getSetting } from '$lib/server/settings';
 import { listStyles } from '$lib/server/styles';
 import { tagsForConversation } from '$lib/server/tags';
 import type { ConversationState } from '$lib/types/conversation';
-import { CONVERSATION_ID_PATTERN } from '$lib/conversation-id';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ params, platform }) => {
@@ -15,15 +15,7 @@ export const load: PageServerLoad = async ({ params, platform }) => {
 	if (!CONVERSATION_ID_PATTERN.test(conversationId)) error(404, 'not found');
 
 	const stub = getConversationStub(platform.env, conversationId);
-	const [
-		state,
-		models,
-		initialConversation,
-		defaultModel,
-		styles,
-		conversationTags,
-		kagiCostPer1000Searches,
-	] = await Promise.all([
+	const [state, models, initialConversation, defaultModel, styles, conversationTags, kagiCostPer1000Searches] = await Promise.all([
 		stub.getState(),
 		listAllModels(platform.env),
 		getConversation(platform.env, conversationId),
@@ -46,14 +38,14 @@ export const load: PageServerLoad = async ({ params, platform }) => {
 
 	return {
 		conversation,
-		models,
-		styles,
-		thinkingBudget: conversation.thinking_budget ?? null,
-		styleId: conversation.style_id ?? null,
-		systemPromptOverride: conversation.system_prompt ?? '',
-		initialState: state as ConversationState,
-		defaultModel: defaultModel ?? '',
 		conversationTags,
+		defaultModel: defaultModel ?? '',
+		initialState: state as ConversationState,
 		kagiCostPer1000Searches,
+		models,
+		styleId: conversation.style_id ?? null,
+		styles,
+		systemPromptOverride: conversation.system_prompt ?? '',
+		thinkingBudget: conversation.thinking_budget ?? null,
 	};
 };

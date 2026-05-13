@@ -29,7 +29,7 @@ export function _sanitizeFilename(raw: string): string | null {
 	const trimmed = raw.trim();
 	if (!trimmed) return null;
 	// Take only the basename - slashes/backslashes from the client are dropped.
-	const last = trimmed.split(/[\/\\]/).pop() ?? '';
+	const last = trimmed.split(/[/\\]/).pop() ?? '';
 	const cleaned = stripControlChars(last).replace(/\s+/g, '_');
 	if (!cleaned || cleaned === '.' || cleaned === '..') return null;
 	// Hidden files (`.gitignore`, `.htaccess`, `.env`) are unsafe defaults for
@@ -78,10 +78,7 @@ export const POST: RequestHandler = async ({ params, url, request, platform }) =
 	// Browsers default unknown POST bodies to `application/octet-stream` for
 	// raw uploads. Prefer the request header when it's not the generic
 	// fallback, otherwise fall back to extension lookup.
-	const mimeType =
-		headerContentType && headerContentType !== DEFAULT_BINARY_MIME
-			? headerContentType
-			: mimeTypeForPath(filename);
+	const mimeType = headerContentType && headerContentType !== DEFAULT_BINARY_MIME ? headerContentType : mimeTypeForPath(filename);
 
 	const timestamp = Date.now();
 	const relativePath = `uploads/${timestamp}-${filename}`;
@@ -93,8 +90,8 @@ export const POST: RequestHandler = async ({ params, url, request, platform }) =
 	if (!put) error(500, 'upload failed');
 
 	return json({
+		mimeType,
 		path: `/workspace/${relativePath}`,
 		size: put.size,
-		mimeType,
 	});
 };

@@ -27,11 +27,11 @@ type Row = {
 
 function rowToMemory(r: Row): MemoryRow {
 	return {
-		id: r.id,
-		type: (r.type === 'auto' ? 'auto' : 'manual'),
 		content: r.content,
-		source: r.source,
 		createdAt: r.created_at,
+		id: r.id,
+		source: r.source,
+		type: r.type === 'auto' ? 'auto' : 'manual',
 	};
 }
 
@@ -55,11 +55,7 @@ export type CreateMemoryInput = {
 // cap so a single oversized entry can't multiply token cost per turn.
 const MAX_MEMORY_CONTENT_LEN = 4_000;
 
-export async function createMemory(
-	env: Env,
-	input: CreateMemoryInput,
-	userId: number = SINGLE_USER_ID,
-): Promise<number> {
+export async function createMemory(env: Env, input: CreateMemoryInput, userId: number = SINGLE_USER_ID): Promise<number> {
 	const content = input.content.trim();
 	if (!content) throw new Error('Memory content is required');
 	if (content.length > MAX_MEMORY_CONTENT_LEN) {

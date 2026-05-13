@@ -12,27 +12,18 @@
 // loop kicks in — same defaults the user gets when they hit "send" by hand.
 
 import { DurableObject } from 'cloudflare:workers';
-import {
-	listDueSchedules,
-	markScheduleRun,
-	nextScheduledRun,
-	type Schedule,
-} from '../schedules';
+import { now as nowMs } from '../clock';
 import { createConversation } from '../conversations';
-import { getSetting } from '../settings';
 import { listAllModels } from '../providers/models';
 import { buildGlobalModelId } from '../providers/types';
+import { listDueSchedules, markScheduleRun, nextScheduledRun, type Schedule } from '../schedules';
+import { getSetting } from '../settings';
 import { getConversationStub } from './index';
-import { now as nowMs } from '../clock';
 
 const MAX_ALARM_HORIZON_MS = 24 * 60 * 60 * 1000; // never sit longer than a day before re-checking
 const MIN_ALARM_DELAY_MS = 1000;
 
 export default class SchedulerDurableObject extends DurableObject<Env> {
-	constructor(ctx: DurableObjectState, env: Env) {
-		super(ctx, env);
-	}
-
 	// Called from `addSchedule` / `toggleSchedule` / `runScheduleNow` remote
 	// functions. Recomputes the next alarm time from D1 and either sets a
 	// fresh alarm or clears the existing one if no schedules are enabled.
@@ -95,18 +86,13 @@ export default class SchedulerDurableObject extends DurableObject<Env> {
 		// Pick a model: the user's default_model setting if set, else the first
 		// configured model. If nothing is configured we silently skip — the
 		// schedule sits and waits until the operator wires up a provider.
-		const [defaultModelSetting, models] = await Promise.all([
-			getSetting(env, 'default_model'),
-			listAllModels(env),
-		]);
+		const [defaultModelSetting, models] = await Promise.all([getSetting(env, 'default_model'), listAllModels(env)]);
 		if (models.length === 0) {
 			console.warn('schedule fired with no models configured', s.id);
 			return;
 		}
 		const allIds = models.map((m) => buildGlobalModelId(m.providerId, m.id));
-		const model = defaultModelSetting && allIds.includes(defaultModelSetting)
-			? defaultModelSetting
-			: allIds[0];
+		const model = defaultModelSetting && allIds.includes(defaultModelSetting) ? defaultModelSetting : allIds[0];
 
 		const stub = getConversationStub(env, conversationId);
 		const result = await stub.addUserMessage(conversationId, s.prompt, model);

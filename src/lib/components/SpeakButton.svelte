@@ -1,6 +1,6 @@
 <script lang="ts">
+	import { Loader, Pause, TriangleAlert, Volume2 } from 'lucide-svelte';
 	import { onDestroy } from 'svelte';
-	import { Volume2, Pause, Loader, TriangleAlert } from 'lucide-svelte';
 
 	let { conversationId, messageId }: { conversationId: string; messageId: string } = $props();
 

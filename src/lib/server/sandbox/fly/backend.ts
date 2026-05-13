@@ -2,21 +2,6 @@
 // `./lifecycle.ts` for the per-conversation machine bookkeeping, and
 // `./file-ops.ts` for the shell-mediated file I/O.
 
-import {
-	execMachine,
-	flyConfigFromEnv,
-	type FlyConfig,
-} from './machines-api';
-import { destroyManagedMachine, ensureMachine, getCachedMachineId } from './lifecycle';
-import {
-	deleteFileShell,
-	existsShell,
-	mkdirShell,
-	readFileShell,
-	runCodeShell,
-	writeFileShell,
-} from './file-ops';
-import { clearExposedPorts, listExposedPorts, recordExposedPort } from './d1';
 import type {
 	ExecEvent,
 	ExecOptions,
@@ -29,6 +14,10 @@ import type {
 	SandboxBackend,
 	SandboxInstance,
 } from '../backend';
+import { clearExposedPorts, listExposedPorts, recordExposedPort } from './d1';
+import { deleteFileShell, existsShell, mkdirShell, readFileShell, runCodeShell, writeFileShell } from './file-ops';
+import { destroyManagedMachine, ensureMachine, getCachedMachineId } from './lifecycle';
+import { execMachine, type FlyConfig, flyConfigFromEnv } from './machines-api';
 
 // POSIX env var name. Anything outside [A-Za-z_][A-Za-z0-9_]* would
 // otherwise be interpolated raw into a shell `export` and run as code
@@ -62,12 +51,7 @@ function buildShellCommand(cmd: string, opts: ExecOptions): string {
 	return parts.join('\n');
 }
 
-async function execOnce(
-	cfg: FlyConfig,
-	machineId: string,
-	cmd: string,
-	opts: ExecOptions,
-): Promise<ExecResult> {
+async function execOnce(cfg: FlyConfig, machineId: string, cmd: string, opts: ExecOptions): Promise<ExecResult> {
 	const script = buildShellCommand(cmd, opts);
 	const resp = await execMachine(cfg, machineId, {
 		cmd: ['bash', '-lc', script],
@@ -76,9 +60,9 @@ async function execOnce(
 	});
 	return {
 		exitCode: resp.exit_code,
-		success: resp.exit_code === 0,
-		stdout: resp.stdout ?? '',
 		stderr: resp.stderr ?? '',
+		stdout: resp.stdout ?? '',
+		success: resp.exit_code === 0,
 	};
 }
 
@@ -92,12 +76,12 @@ function streamFromResult(result: ExecResult): ExecStream {
 	const iter: AsyncIterable<ExecEvent> = {
 		async *[Symbol.asyncIterator]() {
 			if (cancelled) {
-				yield { type: 'error', error: 'cancelled' };
+				yield { error: 'cancelled', type: 'error' };
 				return;
 			}
-			if (result.stdout) yield { type: 'stdout', data: result.stdout };
-			if (result.stderr) yield { type: 'stderr', data: result.stderr };
-			yield { type: 'complete', exitCode: result.exitCode };
+			if (result.stdout) yield { data: result.stdout, type: 'stdout' };
+			if (result.stderr) yield { data: result.stderr, type: 'stderr' };
+			yield { exitCode: result.exitCode, type: 'complete' };
 		},
 	};
 	return Object.assign(iter, {
@@ -132,28 +116,25 @@ class FlySandboxInstance implements SandboxInstance {
 		return streamFromResult(result);
 	}
 
-	async runCode(
-		code: string,
-		opts: { language: RunCodeLanguage; timeout?: number },
-	): Promise<RunCodeResult> {
+	async runCode(code: string, opts: { language: RunCodeLanguage; timeout?: number }): Promise<RunCodeResult> {
 		const id = await this.#machineId();
 		const r = await runCodeShell(this.#cfg, id, code, opts.language, opts.timeout);
 		const logs = {
-			stdout: r.stdout ? r.stdout.split('\n').filter((l, i, arr) => i < arr.length - 1 || l) : [],
 			stderr: r.stderr ? r.stderr.split('\n').filter((l, i, arr) => i < arr.length - 1 || l) : [],
+			stdout: r.stdout ? r.stdout.split('\n').filter((l, i, arr) => i < arr.length - 1 || l) : [],
 		};
 		if (r.exitCode !== 0) {
 			return {
-				results: [],
-				logs,
 				error: {
-					name: 'RuntimeError',
 					message: r.stderr.split('\n').slice(-1)[0] || `Exited with code ${r.exitCode}`,
+					name: 'RuntimeError',
 					traceback: r.stderr ? r.stderr.split('\n') : undefined,
 				},
+				logs,
+				results: [],
 			};
 		}
-		return { results: [], logs };
+		return { logs, results: [] };
 	}
 
 	async readFile(path: string): Promise<ReadFileResult> {
@@ -220,8 +201,8 @@ class FlySandboxInstance implements SandboxInstance {
 		headers.set('Host', inboundUrl.host);
 
 		const init: RequestInit = {
-			method: request.method,
 			headers,
+			method: request.method,
 			redirect: 'manual',
 		};
 		if (request.method !== 'GET' && request.method !== 'HEAD') {
@@ -233,15 +214,15 @@ class FlySandboxInstance implements SandboxInstance {
 }
 
 export const flyBackend: SandboxBackend = {
-	id: 'fly',
-	isAvailable(env: Env): boolean {
-		return flyConfigFromEnv(env) !== null;
-	},
 	get(env: Env, conversationId: string): SandboxInstance {
 		const cfg = flyConfigFromEnv(env);
 		if (!cfg) {
 			throw new Error('Fly backend not configured (set FLY_API_TOKEN and FLY_APP_NAME).');
 		}
 		return new FlySandboxInstance(env, cfg, conversationId);
+	},
+	id: 'fly',
+	isAvailable(env: Env): boolean {
+		return flyConfigFromEnv(env) !== null;
 	},
 };

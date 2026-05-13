@@ -1,24 +1,24 @@
 import { env } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
-import { buildCustomTool, customToolNamespacedName } from './custom_tool_runner';
 import type { CustomToolRow } from '../custom_tools';
+import { buildCustomTool, customToolNamespacedName } from './custom_tool_runner';
 
 function row(overrides: Partial<CustomToolRow> = {}): CustomToolRow {
 	return {
-		id: 1,
-		name: 'echo',
-		description: 'echoes input',
-		source: '',
-		inputSchema: '{"type":"object"}',
-		secretsJson: null,
-		enabled: true,
 		createdAt: 0,
+		description: 'echoes input',
+		enabled: true,
+		id: 1,
+		inputSchema: '{"type":"object"}',
+		name: 'echo',
+		secretsJson: null,
+		source: '',
 		updatedAt: 0,
 		...overrides,
 	};
 }
 
-const ctx = { env, conversationId: 'c', assistantMessageId: 'a', modelId: 'p/m' };
+const ctx = { assistantMessageId: 'a', conversationId: 'c', env, modelId: 'p/m' };
 
 describe('customToolNamespacedName', () => {
 	it('namespaces tool names by id and source name', () => {
@@ -30,8 +30,8 @@ describe('buildCustomTool definition', () => {
 	it('parses input_schema JSON into the tool definition', () => {
 		const tool = buildCustomTool(row({ inputSchema: '{"type":"object","properties":{"q":{"type":"string"}}}' }));
 		expect(tool.definition.inputSchema).toEqual({
-			type: 'object',
 			properties: { q: { type: 'string' } },
+			type: 'object',
 		});
 	});
 
@@ -56,10 +56,7 @@ export default class extends WorkerEntrypoint {
 
 	it('reports a clear error when RUN_JS_LOADER is not bound', async () => {
 		const tool = buildCustomTool(row({ source: SOURCE }));
-		const result = await tool.execute(
-			{ ...ctx, env: { ...ctx.env, RUN_JS_LOADER: undefined } as unknown as typeof ctx.env },
-			{},
-		);
+		const result = await tool.execute({ ...ctx, env: { ...ctx.env, RUN_JS_LOADER: undefined } as unknown as typeof ctx.env }, {});
 		expect(result.isError).toBe(true);
 		expect(result.content).toMatch(/RUN_JS_LOADER/);
 	});
@@ -74,7 +71,7 @@ export default class extends WorkerEntrypoint {
 	});
 
 	it('passes secrets_json as the worker env', async () => {
-		const tool = buildCustomTool(row({ source: SOURCE, secretsJson: '{"SECRET":"shh"}' }));
+		const tool = buildCustomTool(row({ secretsJson: '{"SECRET":"shh"}', source: SOURCE }));
 		const result = await tool.execute(ctx, { x: 1 });
 		expect(result.isError).toBeFalsy();
 		expect(result.content).toContain('"key": "shh"');

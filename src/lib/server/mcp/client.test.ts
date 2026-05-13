@@ -7,21 +7,21 @@ afterEach(() => {
 
 function jsonResponse(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), {
-		status,
 		headers: { 'content-type': 'application/json' },
+		status,
 	});
 }
 
 function sseResponse(body: unknown): Response {
 	const text = `event: message\ndata: ${JSON.stringify(body)}\n\n`;
-	return new Response(text, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+	return new Response(text, { headers: { 'content-type': 'text/event-stream' }, status: 200 });
 }
 
 describe('McpHttpClient', () => {
 	it('listTools returns the tools array from a JSON response', async () => {
-		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-			jsonResponse({ jsonrpc: '2.0', id: 1, result: { tools: [{ name: 'echo' }] } }),
-		);
+		const fetchSpy = vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(jsonResponse({ id: 1, jsonrpc: '2.0', result: { tools: [{ name: 'echo' }] } }));
 		const client = new McpHttpClient({ url: 'https://mcp.test/jsonrpc' });
 		const tools = await client.listTools();
 		expect(tools).toEqual([{ name: 'echo' }]);
@@ -32,9 +32,7 @@ describe('McpHttpClient', () => {
 	});
 
 	it('parses an SSE single-frame response', async () => {
-		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-			sseResponse({ jsonrpc: '2.0', id: 1, result: { tools: [{ name: 'sse_tool' }] } }),
-		);
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(sseResponse({ id: 1, jsonrpc: '2.0', result: { tools: [{ name: 'sse_tool' }] } }));
 		const client = new McpHttpClient({ url: 'https://mcp.test/jsonrpc' });
 		const tools = await client.listTools();
 		expect(tools).toEqual([{ name: 'sse_tool' }]);
@@ -43,37 +41,33 @@ describe('McpHttpClient', () => {
 	it('callTool returns the tool result body', async () => {
 		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
 			jsonResponse({
-				jsonrpc: '2.0',
 				id: 1,
-				result: { content: [{ type: 'text', text: 'pong' }] },
+				jsonrpc: '2.0',
+				result: { content: [{ text: 'pong', type: 'text' }] },
 			}),
 		);
 		const client = new McpHttpClient({ url: 'https://mcp.test/jsonrpc' });
 		const result = await client.callTool('ping', {});
-		expect(result.content).toEqual([{ type: 'text', text: 'pong' }]);
+		expect(result.content).toEqual([{ text: 'pong', type: 'text' }]);
 	});
 
 	it('throws when the JSON-RPC response is an error', async () => {
-		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-			jsonResponse({ jsonrpc: '2.0', id: 1, error: { code: -32601, message: 'not found' } }),
-		);
+		vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(jsonResponse({ error: { code: -32601, message: 'not found' }, id: 1, jsonrpc: '2.0' }));
 		const client = new McpHttpClient({ url: 'https://mcp.test/jsonrpc' });
 		await expect(client.listTools()).rejects.toThrow(/not found/);
 	});
 
 	it('attaches custom auth headers from authJson', async () => {
-		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-			jsonResponse({ jsonrpc: '2.0', id: 1, result: { tools: [] } }),
-		);
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(jsonResponse({ id: 1, jsonrpc: '2.0', result: { tools: [] } }));
 		const client = new McpHttpClient({
-			url: 'https://mcp.test/jsonrpc',
 			authJson: '{"X-Api-Key":"secret"}',
+			url: 'https://mcp.test/jsonrpc',
 		});
 		await client.listTools();
 		const init = fetchSpy.mock.calls[0][1] as RequestInit;
-		const headers = init.headers instanceof Headers
-			? init.headers
-			: new Headers(init.headers as Record<string, string>);
+		const headers = init.headers instanceof Headers ? init.headers : new Headers(init.headers as Record<string, string>);
 		expect(headers.get('X-Api-Key')).toBe('secret');
 	});
 
@@ -84,42 +78,36 @@ describe('McpHttpClient', () => {
 	});
 
 	it('listTools returns [] when the response result has no tools field', async () => {
-		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-			jsonResponse({ jsonrpc: '2.0', id: 1, result: {} }),
-		);
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(jsonResponse({ id: 1, jsonrpc: '2.0', result: {} }));
 		const client = new McpHttpClient({ url: 'https://mcp.test/jsonrpc' });
 		expect(await client.listTools()).toEqual([]);
 	});
 
 	it('callTool returns an error sentinel when the result is missing', async () => {
-		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-			jsonResponse({ jsonrpc: '2.0', id: 1, result: undefined }),
-		);
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(jsonResponse({ id: 1, jsonrpc: '2.0', result: undefined }));
 		const client = new McpHttpClient({ url: 'https://mcp.test/jsonrpc' });
 		const result = await client.callTool('ping', {});
 		expect(result.isError).toBe(true);
 	});
 
 	it('ignores invalid auth_json gracefully', async () => {
-		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-			jsonResponse({ jsonrpc: '2.0', id: 1, result: { tools: [] } }),
-		);
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(jsonResponse({ id: 1, jsonrpc: '2.0', result: { tools: [] } }));
 		const client = new McpHttpClient({
-			url: 'https://mcp.test/jsonrpc',
 			authJson: 'not-json',
+			url: 'https://mcp.test/jsonrpc',
 		});
 		await client.listTools();
 		const init = fetchSpy.mock.calls[0][1] as RequestInit;
 		const headers = init.headers as Record<string, string>;
 		// No custom header should be attached.
 		expect(headers['X-Api-Key']).toBeUndefined();
-		expect(headers['Authorization']).toBeUndefined();
+		expect(headers.Authorization).toBeUndefined();
 	});
 
 	it('rejects an SSE stream that ends without a JSON-RPC frame', async () => {
-		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-			new Response(': comment\n\n', { status: 200, headers: { 'content-type': 'text/event-stream' } }),
-		);
+		vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(new Response(': comment\n\n', { headers: { 'content-type': 'text/event-stream' }, status: 200 }));
 		const client = new McpHttpClient({ url: 'https://mcp.test/jsonrpc' });
 		await expect(client.listTools()).rejects.toThrow(/SSE stream ended/);
 	});
@@ -132,16 +120,14 @@ describe('McpHttpClient', () => {
 			if (!init) return null;
 			if (init.headers instanceof Headers) return init.headers.get('Authorization');
 			const rec = init.headers as Record<string, string> | undefined;
-			return rec?.['Authorization'] ?? null;
+			return rec?.Authorization ?? null;
 		}
 
 		it('attaches the Bearer header when getAccessToken returns a string', async () => {
-			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-				jsonResponse({ jsonrpc: '2.0', id: 1, result: { tools: [] } }),
-			);
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(jsonResponse({ id: 1, jsonrpc: '2.0', result: { tools: [] } }));
 			const client = new McpHttpClient({
-				url: 'https://mcp.test/jsonrpc',
 				getAccessToken: async () => 'AT',
+				url: 'https://mcp.test/jsonrpc',
 			});
 			await client.listTools();
 			const init = fetchSpy.mock.calls[0][1] as RequestInit;
@@ -149,12 +135,10 @@ describe('McpHttpClient', () => {
 		});
 
 		it('skips the Bearer header when getAccessToken returns null', async () => {
-			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-				jsonResponse({ jsonrpc: '2.0', id: 1, result: { tools: [] } }),
-			);
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(jsonResponse({ id: 1, jsonrpc: '2.0', result: { tools: [] } }));
 			const client = new McpHttpClient({
-				url: 'https://mcp.test/jsonrpc',
 				getAccessToken: async () => null,
+				url: 'https://mcp.test/jsonrpc',
 			});
 			await client.listTools();
 			const init = fetchSpy.mock.calls[0][1] as RequestInit;
@@ -168,15 +152,15 @@ describe('McpHttpClient', () => {
 				const auth = authOf(init);
 				calls.push(auth ?? '');
 				if (auth === 'Bearer stale') return new Response('unauth', { status: 401 });
-				return jsonResponse({ jsonrpc: '2.0', id: 1, result: { tools: [{ name: 'ok' }] } });
+				return jsonResponse({ id: 1, jsonrpc: '2.0', result: { tools: [{ name: 'ok' }] } });
 			});
 			const tokenCalls: Array<{ force?: boolean }> = [];
 			const client = new McpHttpClient({
-				url: 'https://mcp.test/jsonrpc',
 				getAccessToken: async (opts = {}) => {
 					tokenCalls.push(opts);
 					return opts.force ? tokens[1] : tokens[0];
 				},
+				url: 'https://mcp.test/jsonrpc',
 			});
 			const tools = await client.listTools();
 			expect(tools).toEqual([{ name: 'ok' }]);
@@ -188,16 +172,14 @@ describe('McpHttpClient', () => {
 		it('throws McpAuthError if the second 401 retry also fails', async () => {
 			vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('unauth', { status: 401 }));
 			const client = new McpHttpClient({
-				url: 'https://mcp.test/jsonrpc',
 				getAccessToken: async () => 'AT',
+				url: 'https://mcp.test/jsonrpc',
 			});
 			await expect(client.listTools()).rejects.toBeInstanceOf(McpAuthError);
 		});
 
 		it('does not attempt a 401 retry without a token getter', async () => {
-			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-				new Response('unauth', { status: 401 }),
-			);
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('unauth', { status: 401 }));
 			const client = new McpHttpClient({ url: 'https://mcp.test/jsonrpc' });
 			await expect(client.listTools()).rejects.toBeInstanceOf(McpAuthError);
 			expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -209,13 +191,11 @@ describe('McpHttpClient', () => {
 		// silently sending the wrong bearer (or none at all). With the Headers
 		// API the OAuth token wins regardless of casing.
 		it('OAuth token overrides a lowercase `authorization` from auth_json', async () => {
-			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-				jsonResponse({ jsonrpc: '2.0', id: 1, result: { tools: [] } }),
-			);
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(jsonResponse({ id: 1, jsonrpc: '2.0', result: { tools: [] } }));
 			const client = new McpHttpClient({
-				url: 'https://mcp.test/jsonrpc',
 				authJson: '{"authorization": "Token static"}',
 				getAccessToken: async () => 'AT-oauth',
+				url: 'https://mcp.test/jsonrpc',
 			});
 			await client.listTools();
 			const init = fetchSpy.mock.calls[0][1] as RequestInit;

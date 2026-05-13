@@ -20,14 +20,14 @@ describe('_listExposedPorts', () => {
 	it('returns mapped port entries from an array response', async () => {
 		const fakeSandbox = {
 			getExposedPorts: async (_hostname: string) => [
-				{ port: 8000, url: 'https://8000-id-preview.example.com', status: 'active' as const },
-				{ port: 3000, url: 'https://3000-id-preview.example.com', name: 'dev', status: 'active' as const },
+				{ port: 8000, status: 'active' as const, url: 'https://8000-id-preview.example.com' },
+				{ name: 'dev', port: 3000, status: 'active' as const, url: 'https://3000-id-preview.example.com' },
 			],
 		};
 		const result = await _listExposedPorts(fakeSandbox, 'example.com');
 		expect(result).toEqual([
-			{ port: 8000, url: 'https://8000-id-preview.example.com', name: undefined },
-			{ port: 3000, url: 'https://3000-id-preview.example.com', name: 'dev' },
+			{ name: undefined, port: 8000, url: 'https://8000-id-preview.example.com' },
+			{ name: 'dev', port: 3000, url: 'https://3000-id-preview.example.com' },
 		]);
 	});
 

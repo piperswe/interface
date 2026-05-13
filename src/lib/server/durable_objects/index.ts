@@ -16,8 +16,7 @@ export type SchedulerStub = DurableObjectStub<SchedulerDurableObject>;
 
 // Singleton scheduler. One DO id is enough — all schedule state lives in D1.
 export function getSchedulerStub(env: Env): SchedulerStub {
-	const ns = (env as unknown as { SCHEDULER_DURABLE_OBJECT?: DurableObjectNamespace<SchedulerDurableObject> })
-		.SCHEDULER_DURABLE_OBJECT;
+	const ns = (env as unknown as { SCHEDULER_DURABLE_OBJECT?: DurableObjectNamespace<SchedulerDurableObject> }).SCHEDULER_DURABLE_OBJECT;
 	if (!ns) {
 		throw new Error('SCHEDULER_DURABLE_OBJECT binding is not configured');
 	}

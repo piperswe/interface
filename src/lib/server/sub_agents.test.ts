@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:test';
 import { afterEach, describe, expect, it } from 'vitest';
+import { assertDefined } from '../../../test/assert-defined';
 import {
 	createSubAgent,
 	deleteSubAgent,
@@ -17,8 +18,8 @@ afterEach(async () => {
 
 describe('sub_agents', () => {
 	const baseInput = {
-		name: 'researcher',
 		description: 'Research a topic',
+		name: 'researcher',
 		systemPrompt: 'You are a research specialist.',
 	};
 
@@ -28,28 +29,28 @@ describe('sub_agents', () => {
 		const rows = await listSubAgents(env);
 		expect(rows).toHaveLength(1);
 		expect(rows[0]).toMatchObject({
-			name: 'researcher',
-			description: 'Research a topic',
-			systemPrompt: 'You are a research specialist.',
-			enabled: true,
-			model: null,
-			maxIterations: null,
 			allowedTools: null,
+			description: 'Research a topic',
+			enabled: true,
+			maxIterations: null,
+			model: null,
+			name: 'researcher',
+			systemPrompt: 'You are a research specialist.',
 		});
 	});
 
 	it('persists optional fields (model, maxIterations, allowedTools)', async () => {
 		const id = await createSubAgent(env, {
 			...baseInput,
-			model: 'anthropic/claude-haiku-4.5',
-			maxIterations: 8,
 			allowedTools: ['web_search', 'fetch_url'],
+			maxIterations: 8,
+			model: 'anthropic/claude-haiku-4.5',
 		});
 		const row = await getSubAgent(env, id);
 		expect(row).toMatchObject({
-			model: 'anthropic/claude-haiku-4.5',
-			maxIterations: 8,
 			allowedTools: ['web_search', 'fetch_url'],
+			maxIterations: 8,
+			model: 'anthropic/claude-haiku-4.5',
 		});
 	});
 
@@ -109,9 +110,9 @@ describe('sub_agents', () => {
 	it('deleteSubAgent removes the row, scoped by user_id', async () => {
 		const id = await createSubAgent(env, baseInput, 1);
 		await deleteSubAgent(env, id, 2); // wrong user — should not delete
-		expect((await listSubAgents(env, 1))).toHaveLength(1);
+		expect(await listSubAgents(env, 1)).toHaveLength(1);
 		await deleteSubAgent(env, id, 1);
-		expect((await listSubAgents(env, 1))).toHaveLength(0);
+		expect(await listSubAgents(env, 1)).toHaveLength(0);
 	});
 
 	it('isolates rows per user_id', async () => {
@@ -148,18 +149,14 @@ describe('sub_agents', () => {
 
 	it('rowToSubAgent treats non-array tools_json as null', async () => {
 		const id = await createSubAgent(env, baseInput);
-		await env.DB.prepare('UPDATE sub_agents SET tools_json = ? WHERE id = ?')
-			.bind('"not-an-array"', id)
-			.run();
+		await env.DB.prepare('UPDATE sub_agents SET tools_json = ? WHERE id = ?').bind('"not-an-array"', id).run();
 		const row = await getSubAgent(env, id);
 		expect(row?.allowedTools).toBeNull();
 	});
 
 	it('rowToSubAgent treats malformed JSON as null (does not throw)', async () => {
 		const id = await createSubAgent(env, baseInput);
-		await env.DB.prepare('UPDATE sub_agents SET tools_json = ? WHERE id = ?')
-			.bind('this-is-not-json', id)
-			.run();
+		await env.DB.prepare('UPDATE sub_agents SET tools_json = ? WHERE id = ?').bind('this-is-not-json', id).run();
 		const row = await getSubAgent(env, id);
 		expect(row?.allowedTools).toBeNull();
 	});
@@ -175,9 +172,7 @@ describe('sub_agents', () => {
 
 	it('updateSubAgent ignores names that fail validation, even mid-patch', async () => {
 		const id = await createSubAgent(env, baseInput);
-		await expect(
-			updateSubAgent(env, id, { name: 'BAD NAME', description: 'changed' }),
-		).rejects.toThrow();
+		await expect(updateSubAgent(env, id, { description: 'changed', name: 'BAD NAME' })).rejects.toThrow();
 		// Description should NOT have been applied because the call threw before issuing the UPDATE.
 		const row = await getSubAgent(env, id);
 		expect(row?.description).toBe('Research a topic');
@@ -197,7 +192,9 @@ describe('sub_agents', () => {
 		await new Promise((r) => setTimeout(r, 5));
 		await updateSubAgent(env, id, { description: 'newer' });
 		const after = await getSubAgent(env, id);
-		expect(after!.updatedAt).toBeGreaterThan(before!.updatedAt);
+		assertDefined(after);
+		assertDefined(before);
+		expect(after.updatedAt).toBeGreaterThan(before.updatedAt);
 	});
 
 	it('updateSubAgent with empty patch does not bump updated_at', async () => {
@@ -206,7 +203,9 @@ describe('sub_agents', () => {
 		await new Promise((r) => setTimeout(r, 5));
 		await updateSubAgent(env, id, {});
 		const after = await getSubAgent(env, id);
-		expect(after!.updatedAt).toBe(before!.updatedAt);
+		assertDefined(after);
+		assertDefined(before);
+		expect(after.updatedAt).toBe(before.updatedAt);
 	});
 
 	it('persists empty-array allowedTools update as null', async () => {
@@ -218,8 +217,8 @@ describe('sub_agents', () => {
 
 	it('isValidSubAgentName has a 64-character upper limit', async () => {
 		// 1 + 63 = 64 chars (start letter + 63 of [a-z0-9_-]).
-		expect(isValidSubAgentName('a' + 'b'.repeat(63))).toBe(true);
-		expect(isValidSubAgentName('a' + 'b'.repeat(64))).toBe(false);
+		expect(isValidSubAgentName(`a${'b'.repeat(63)}`)).toBe(true);
+		expect(isValidSubAgentName(`a${'b'.repeat(64)}`)).toBe(false);
 	});
 
 	it('isValidSubAgentName rejects names containing only the start char repeated past the cap', () => {

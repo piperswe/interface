@@ -33,7 +33,7 @@ function buildFtsQuery(input: string): string {
 		.split(/\s+/)
 		.map((t) => t.trim())
 		.filter(Boolean)
-		.map((t) => '"' + t.replace(/"/g, '""') + '"');
+		.map((t) => `"${t.replace(/"/g, '""')}"`);
 	return tokens.join(' ');
 }
 
@@ -54,17 +54,8 @@ export function _renderSnippetSafe(snippet: string): string {
 	// Order matters: escape the user content first so any literal `<mark>`
 	// in the indexed text becomes `&lt;mark&gt;`, then swap our sentinels
 	// for the real tags.
-	const escaped = snippet
-		.replace(/&/g, '&amp;')
-		.replace(/</g, '&lt;')
-		.replace(/>/g, '&gt;')
-		.replace(/"/g, '&quot;')
-		.replace(/'/g, '&#39;');
-	return escaped
-		.split(SNIPPET_OPEN_SENTINEL)
-		.join('<mark>')
-		.split(SNIPPET_CLOSE_SENTINEL)
-		.join('</mark>');
+	const escaped = snippet.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+	return escaped.split(SNIPPET_OPEN_SENTINEL).join('<mark>').split(SNIPPET_CLOSE_SENTINEL).join('</mark>');
 }
 
 export async function searchConversations(env: Env, query: string, limit = 30): Promise<SearchHit[]> {
@@ -103,19 +94,17 @@ export async function searchConversations(env: Env, query: string, limit = 30): 
 	return (result.results ?? []).map((r) => ({
 		conversationId: r.conversation_id,
 		conversationTitle: r.conversation_title ?? '(untitled)',
-		messageId: r.message_id === TITLE_SENTINEL ? null : r.message_id,
-		role: (r.role === 'title' || r.role === 'user' || r.role === 'assistant') ? r.role : 'assistant',
-		snippet: _renderSnippetSafe(r.snippet),
 		createdAt: r.created_at,
+		messageId: r.message_id === TITLE_SENTINEL ? null : r.message_id,
+		role: r.role === 'title' || r.role === 'user' || r.role === 'assistant' ? r.role : 'assistant',
+		snippet: _renderSnippetSafe(r.snippet),
 	}));
 }
 
 // Replace the title row for a conversation. Called from createConversation
 // (initial 'New conversation') and from the DO's #writeTitle.
 export async function indexTitle(env: Env, conversationId: string, title: string, ts: number = nowMs()): Promise<void> {
-	await env.DB.prepare(
-		`DELETE FROM conversation_search WHERE conversation_id = ? AND message_id = ?`,
-	)
+	await env.DB.prepare(`DELETE FROM conversation_search WHERE conversation_id = ? AND message_id = ?`)
 		.bind(conversationId, TITLE_SENTINEL)
 		.run();
 	await env.DB.prepare(
@@ -132,9 +121,7 @@ export async function indexMessage(
 	env: Env,
 	args: { conversationId: string; messageId: string; role: 'user' | 'assistant'; text: string; createdAt: number },
 ): Promise<void> {
-	await env.DB.prepare(
-		`DELETE FROM conversation_search WHERE conversation_id = ? AND message_id = ?`,
-	)
+	await env.DB.prepare(`DELETE FROM conversation_search WHERE conversation_id = ? AND message_id = ?`)
 		.bind(args.conversationId, args.messageId)
 		.run();
 	const trimmed = args.text.trim();
@@ -148,9 +135,5 @@ export async function indexMessage(
 }
 
 export async function unindexConversation(env: Env, conversationId: string): Promise<void> {
-	await env.DB.prepare(
-		`DELETE FROM conversation_search WHERE conversation_id = ?`,
-	)
-		.bind(conversationId)
-		.run();
+	await env.DB.prepare(`DELETE FROM conversation_search WHERE conversation_id = ?`).bind(conversationId).run();
 }

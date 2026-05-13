@@ -1,9 +1,8 @@
-import { env } from 'cloudflare:test';
+import { env, runInDurableObject } from 'cloudflare:test';
 import { isHttpError } from '@sveltejs/kit';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createConversation } from '$lib/server/conversations';
 import { getConversationStub } from '$lib/server/durable_objects';
-import { runInDurableObject } from 'cloudflare:test';
 import { GET } from './+server';
 
 afterEach(async () => {
@@ -11,15 +10,13 @@ afterEach(async () => {
 });
 
 async function callExport(conversationId: string, format?: string): Promise<Response> {
-	const url = new URL(
-		`http://localhost/c/${conversationId}/export${format ? `?format=${format}` : ''}`,
-	);
+	const url = new URL(`http://localhost/c/${conversationId}/export${format ? `?format=${format}` : ''}`);
 	// Build the minimal RequestEvent shape the handler reads.
 	const event = {
 		params: { id: conversationId },
-		url,
 		platform: { env },
 		request: new Request(url.toString()),
+		url,
 	} as Parameters<typeof GET>[0];
 	return GET(event);
 }
@@ -45,9 +42,9 @@ async function seedConversation(): Promise<string> {
 			"INSERT INTO messages (id, role, content, model, status, created_at) VALUES ('u1', 'user', 'hello', NULL, 'complete', 1001)",
 		);
 		const parts = JSON.stringify([
-			{ type: 'text', text: 'hi back' },
-			{ type: 'tool_use', id: 't1', name: 'web_search', input: { q: 'x' } },
-			{ type: 'tool_result', toolUseId: 't1', content: 'result body', isError: false },
+			{ text: 'hi back', type: 'text' },
+			{ id: 't1', input: { q: 'x' }, name: 'web_search', type: 'tool_use' },
+			{ content: 'result body', isError: false, toolUseId: 't1', type: 'tool_result' },
 		]);
 		ctx.storage.sql.exec(
 			`INSERT INTO messages (id, role, content, model, status, created_at, parts)
@@ -109,9 +106,7 @@ describe('conversation export endpoint', () => {
 
 	it('uses a sanitized filename in Content-Disposition', async () => {
 		const id = await createConversation(env);
-		await env.DB.prepare("UPDATE conversations SET title = 'evil/title with spaces!' WHERE id = ?")
-			.bind(id)
-			.run();
+		await env.DB.prepare("UPDATE conversations SET title = 'evil/title with spaces!' WHERE id = ?").bind(id).run();
 		const res = await callExport(id, 'md');
 		const cd = res.headers.get('Content-Disposition') ?? '';
 		expect(cd).toMatch(/filename="evil_title_with_spaces_?\.md"/);

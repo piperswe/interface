@@ -9,11 +9,13 @@
 import { env, runInDurableObject } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { MessagePart } from '$lib/types/conversation';
+import { assertDefined } from '../../../../test/assert-defined';
 import { createConversation } from '../conversations';
-import { partsFromJson, partsToJson } from './conversation/blob-store';
 import { readState, stubFor } from './conversation/_test-helpers';
+import { partsFromJson, partsToJson } from './conversation/blob-store';
 
-const bucket = env.WORKSPACE_BUCKET!;
+assertDefined(env.WORKSPACE_BUCKET, 'WORKSPACE_BUCKET binding required');
+const bucket = env.WORKSPACE_BUCKET;
 
 async function clearBlobs(): Promise<void> {
 	const list = await bucket.list({ prefix: 'blobs/' });
@@ -41,20 +43,21 @@ describe('ConversationDurableObject — large blob persistence', () => {
 		const stub = stubFor(id);
 		const big = bigImageBase64();
 		const parts: MessagePart[] = [
-			{ type: 'text', text: 'here is the image' },
+			{ text: 'here is the image', type: 'text' },
 			{
-				type: 'tool_result',
-				toolUseId: 't1',
 				content: [
-					{ type: 'text', text: 'Loaded photo.png.' },
-					{ type: 'image', mimeType: 'image/png', data: big },
+					{ text: 'Loaded photo.png.', type: 'text' },
+					{ data: big, mimeType: 'image/png', type: 'image' },
 				],
 				isError: false,
+				toolUseId: 't1',
+				type: 'tool_result',
 			},
 		];
 		const partsJson = await partsToJson(parts, env);
 		// Sanity: the persisted JSON is now small even though the image is huge.
-		expect(partsJson!.length).toBeLessThan(64 * 1024);
+		assertDefined(partsJson);
+		expect(partsJson.length).toBeLessThan(64 * 1024);
 
 		// The actual write that used to fail with `string or blob too big:
 		// SQLITE_TOOBIG` is the UPDATE the DO issues at end-of-turn.
@@ -69,7 +72,9 @@ describe('ConversationDurableObject — large blob persistence', () => {
 		const state = await readState(stub);
 		const msg = state.messages.find((m) => m.id === 'a-big');
 		expect(msg).toBeTruthy();
-		const tr = msg!.parts!.find((p) => p.type === 'tool_result');
+		assertDefined(msg);
+		assertDefined(msg.parts);
+		const tr = msg.parts.find((p) => p.type === 'tool_result');
 		if (!tr || tr.type !== 'tool_result' || typeof tr.content === 'string') throw new Error('shape');
 		const img = tr.content.find((b) => b.type === 'image');
 		if (!img || img.type !== 'image') throw new Error('shape');
@@ -84,10 +89,10 @@ describe('ConversationDurableObject — large blob persistence', () => {
 		const small = 'AAAA'.repeat(256); // ~1 KB
 		const parts: MessagePart[] = [
 			{
-				type: 'tool_result',
-				toolUseId: 't1',
-				content: [{ type: 'image', mimeType: 'image/png', data: small }],
+				content: [{ data: small, mimeType: 'image/png', type: 'image' }],
 				isError: false,
+				toolUseId: 't1',
+				type: 'tool_result',
 			},
 		];
 		const json = await partsToJson(parts, env);

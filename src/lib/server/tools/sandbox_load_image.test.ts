@@ -1,11 +1,14 @@
 import { env } from 'cloudflare:test';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createSandboxLoadImageTool } from './sandbox';
+import { assertDefined } from '../../../../test/assert-defined';
 import type { ProviderModel } from '../providers/types';
 import type { ToolContext } from './registry';
+import { createSandboxLoadImageTool } from './sandbox';
 
 const CONV_ID = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
-const bucket = env.WORKSPACE_BUCKET!;
+const _workspaceBucket = env.WORKSPACE_BUCKET;
+assertDefined(_workspaceBucket, 'WORKSPACE_BUCKET binding required');
+const bucket = _workspaceBucket;
 
 afterEach(async () => {
 	const list = await bucket.list({ prefix: `conversations/${CONV_ID}/` });
@@ -16,17 +19,17 @@ afterEach(async () => {
 
 function model(overrides: Partial<ProviderModel> = {}): ProviderModel {
 	return {
-		id: 'm1',
-		providerId: 'p1',
-		name: 'Test Model',
-		description: null,
-		maxContextLength: 128_000,
-		reasoningType: null,
-		inputCostPerMillionTokens: null,
-		outputCostPerMillionTokens: null,
-		supportsImageInput: false,
-		sortOrder: 0,
 		createdAt: 0,
+		description: null,
+		id: 'm1',
+		inputCostPerMillionTokens: null,
+		maxContextLength: 128_000,
+		name: 'Test Model',
+		outputCostPerMillionTokens: null,
+		providerId: 'p1',
+		reasoningType: null,
+		sortOrder: 0,
+		supportsImageInput: false,
 		updatedAt: 0,
 		...overrides,
 	};
@@ -34,9 +37,9 @@ function model(overrides: Partial<ProviderModel> = {}): ProviderModel {
 
 function ctx(overrides: Partial<ToolContext> = {}): ToolContext {
 	return {
-		env,
-		conversationId: CONV_ID,
 		assistantMessageId: 'a-1',
+		conversationId: CONV_ID,
+		env,
 		modelId: 'p1/m1',
 		...overrides,
 	};
@@ -92,7 +95,8 @@ describe('sandbox_load_image tool', () => {
 		const blocks = result.content as Array<{ type: string; mimeType?: string }>;
 		const img = blocks.find((b) => b.type === 'image');
 		expect(img).toBeDefined();
-		expect(img!.mimeType).toBe('image/webp');
+		assertDefined(img);
+		expect(img.mimeType).toBe('image/webp');
 	});
 
 	it('rejects unsupported file extensions', async () => {
@@ -136,7 +140,7 @@ describe('sandbox_load_image tool', () => {
 		expect(blocks).toHaveLength(2);
 		expect(blocks[0]).toMatchObject({ type: 'text' });
 		expect((blocks[0] as { type: 'text'; text: string }).text).toMatch(/photo\.png/);
-		expect(blocks[1]).toMatchObject({ type: 'image', mimeType: 'image/png' });
+		expect(blocks[1]).toMatchObject({ mimeType: 'image/png', type: 'image' });
 		const data = (blocks[1] as { type: 'image'; data: string }).data;
 		// btoa of [1,2,3,4,5] -> 'AQIDBAU='
 		expect(data).toBe('AQIDBAU=');
@@ -160,21 +164,23 @@ describe('sandbox_load_image tool', () => {
 		// rather than returning a "too large" error when the IMAGES binding is present.
 		const fakeResizedBytes = new Uint8Array([0x01, 0x02, 0x03]);
 		const mockImages: ImagesBinding = {
+			hosted: {} as ImagesBinding['hosted'],
+			info: () => Promise.resolve({ fileSize: fakeResizedBytes.length, format: 'image/jpeg', height: 100, width: 100 }),
 			input(_stream) {
 				return {
-					transform() { return this; },
-					draw() { return this; },
+					draw() {
+						return this;
+					},
 					output() {
 						return Promise.resolve({
 							response: () => new Response(fakeResizedBytes),
-						// eslint-disable-next-line @typescript-eslint/no-explicit-any
-						} as any);
+						} as unknown as Awaited<ReturnType<ReturnType<ImagesBinding['input']>['output']>>);
 					},
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				} as any;
+					transform() {
+						return this;
+					},
+				} as unknown as ReturnType<ImagesBinding['input']>;
 			},
-			info: () => Promise.resolve({ format: 'image/jpeg', fileSize: fakeResizedBytes.length, width: 100, height: 100 }),
-			hosted: {} as ImagesBinding['hosted'],
 		};
 
 		const tool = createSandboxLoadImageTool({ getModels: () => [model({ supportsImageInput: true })] });
@@ -188,9 +194,10 @@ describe('sandbox_load_image tool', () => {
 		expect(Array.isArray(blocks)).toBe(true);
 		const imageBlock = blocks.find((b) => b.type === 'image');
 		expect(imageBlock).toBeDefined();
-		expect(imageBlock!.mimeType).toBe('image/jpeg');
+		assertDefined(imageBlock);
+		expect(imageBlock.mimeType).toBe('image/jpeg');
 		const expectedBase64 = btoa(String.fromCharCode(...fakeResizedBytes));
-		expect(imageBlock!.data).toBe(expectedBase64);
+		expect(imageBlock.data).toBe(expectedBase64);
 	});
 
 	it('resizes via IMAGES binding and returns image/jpeg when binding is present', async () => {
@@ -199,21 +206,23 @@ describe('sandbox_load_image tool', () => {
 		// binding is configured the tool must resize and re-encode as JPEG.
 		const fakeWebPBytes = new Uint8Array([0x52, 0x49, 0x46, 0x46]); // 'RIFF' prefix
 		const mockImages: ImagesBinding = {
+			hosted: {} as ImagesBinding['hosted'],
+			info: () => Promise.resolve({ fileSize: fakeWebPBytes.length, format: 'image/webp', height: 1, width: 4 }),
 			input(_stream) {
 				return {
-					transform() { return this; },
-					draw() { return this; },
+					draw() {
+						return this;
+					},
 					output() {
 						return Promise.resolve({
 							response: () => new Response(fakeWebPBytes),
-						// eslint-disable-next-line @typescript-eslint/no-explicit-any
-						} as any);
+						} as unknown as Awaited<ReturnType<ReturnType<ImagesBinding['input']>['output']>>);
 					},
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				} as any;
+					transform() {
+						return this;
+					},
+				} as unknown as ReturnType<ImagesBinding['input']>;
 			},
-			info: () => Promise.resolve({ format: 'image/webp', fileSize: fakeWebPBytes.length, width: 4, height: 1 }),
-			hosted: {} as ImagesBinding['hosted'],
 		};
 
 		const tool = createSandboxLoadImageTool({ getModels: () => [model({ supportsImageInput: true })] });
@@ -226,10 +235,11 @@ describe('sandbox_load_image tool', () => {
 		expect(Array.isArray(blocks)).toBe(true);
 		const imageBlock = blocks.find((b) => b.type === 'image');
 		expect(imageBlock).toBeDefined();
-		expect(imageBlock!.mimeType).toBe('image/jpeg');
+		assertDefined(imageBlock);
+		expect(imageBlock.mimeType).toBe('image/jpeg');
 		// Verify it's the resized bytes, not the raw upload
 		const expectedBase64 = btoa(String.fromCharCode(...fakeWebPBytes));
-		expect(imageBlock!.data).toBe(expectedBase64);
+		expect(imageBlock.data).toBe(expectedBase64);
 	});
 
 	it('surfaces the IMAGES binding error instead of advising sandbox_exec', async () => {
@@ -237,18 +247,21 @@ describe('sandbox_load_image tool', () => {
 		// error whenever IMAGES.transform threw, which misled agents into pre-resizing
 		// via convert when the binding was actually misconfigured/throwing.
 		const failingImages: ImagesBinding = {
+			hosted: {} as ImagesBinding['hosted'],
+			info: () => Promise.resolve({ fileSize: 0, format: 'image/jpeg', height: 0, width: 0 }),
 			input(_stream) {
 				return {
-					transform() { return this; },
-					draw() { return this; },
+					draw() {
+						return this;
+					},
 					output() {
 						return Promise.reject(new Error('IMAGES_TRANSFORM_ERROR 9402: simulated'));
 					},
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				} as any;
+					transform() {
+						return this;
+					},
+				} as unknown as ReturnType<ImagesBinding['input']>;
 			},
-			info: () => Promise.resolve({ format: 'image/jpeg', fileSize: 0, width: 0, height: 0 }),
-			hosted: {} as ImagesBinding['hosted'],
 		};
 		const tool = createSandboxLoadImageTool({ getModels: () => [model({ supportsImageInput: true })] });
 		await bucket.put(`conversations/${CONV_ID}/uploads/big.jpeg`, new Uint8Array(6 * 1024 * 1024));

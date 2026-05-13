@@ -1,14 +1,8 @@
 import { env } from 'cloudflare:test';
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-	_ftsQueryForTest,
-	_renderSnippetSafe,
-	indexMessage,
-	indexTitle,
-	searchConversations,
-	unindexConversation,
-} from './search';
+import { assertDefined } from '../../../test/assert-defined';
 import { archiveConversation, createConversation } from './conversations';
+import { _ftsQueryForTest, _renderSnippetSafe, indexMessage, indexTitle, searchConversations, unindexConversation } from './search';
 
 afterEach(async () => {
 	await env.DB.prepare('DELETE FROM conversation_search').run();
@@ -73,10 +67,10 @@ describe('searchConversations', () => {
 		const id = await createConversation(env);
 		await indexMessage(env, {
 			conversationId: id,
+			createdAt: 1_700_000_000_000,
 			messageId: 'm1',
 			role: 'user',
 			text: 'sphinx of black quartz judge my vow',
-			createdAt: 1_700_000_000_000,
 		});
 		const hits = await searchConversations(env, 'quartz');
 		const messageHit = hits.find((h) => h.role === 'user' && h.messageId === 'm1');
@@ -95,32 +89,33 @@ describe('searchConversations', () => {
 		const id = await createConversation(env);
 		await indexMessage(env, {
 			conversationId: id,
+			createdAt: 1,
 			messageId: 'm-xss',
 			role: 'user',
 			text: 'before <img src=x onerror=alert(1)> needle after',
-			createdAt: 1,
 		});
 		const hits = await searchConversations(env, 'needle');
 		const hit = hits.find((h) => h.messageId === 'm-xss');
 		expect(hit).toBeDefined();
+		assertDefined(hit);
 		// `<mark>` survives as a real tag (we need the highlight).
-		expect(hit!.snippet).toContain('<mark>needle</mark>');
+		expect(hit.snippet).toContain('<mark>needle</mark>');
 		// `<img>` from the indexed text must NOT survive as a real tag — it's
 		// HTML-escaped so the browser renders it as text, not as an element.
-		expect(hit!.snippet).not.toMatch(/<img\s/i);
-		expect(hit!.snippet).toContain('&lt;img');
+		expect(hit.snippet).not.toMatch(/<img\s/i);
+		expect(hit.snippet).toContain('&lt;img');
 		// The literal "onerror=" appears as escaped text but cannot fire.
-		expect(hit!.snippet).not.toMatch(/<[a-z]+\s[^>]*onerror=/i);
+		expect(hit.snippet).not.toMatch(/<[a-z]+\s[^>]*onerror=/i);
 	});
 
 	it('omits hits whose conversation is archived', async () => {
 		const id = await createConversation(env);
 		await indexMessage(env, {
 			conversationId: id,
+			createdAt: 1,
 			messageId: 'm1',
 			role: 'assistant',
 			text: 'unique-token-archived-test',
-			createdAt: 1,
 		});
 		// Visible while active.
 		expect((await searchConversations(env, 'unique-token-archived-test')).length).toBeGreaterThan(0);
@@ -134,10 +129,10 @@ describe('searchConversations', () => {
 		for (let i = 0; i < 5; i++) {
 			await indexMessage(env, {
 				conversationId: id,
+				createdAt: i,
 				messageId: `m${i}`,
 				role: 'assistant',
 				text: `paragon paragon paragon ${i}`,
-				createdAt: i,
 			});
 		}
 		const hits = await searchConversations(env, 'paragon', 2);
@@ -148,10 +143,10 @@ describe('searchConversations', () => {
 		const id = await createConversation(env);
 		await indexMessage(env, {
 			conversationId: id,
+			createdAt: 1,
 			messageId: 'm1',
 			role: 'user',
 			text: 'cats AND dogs',
-			createdAt: 1,
 		});
 		// "AND" is a reserved FTS5 operator; the query builder must quote it.
 		const hits = await searchConversations(env, 'cats AND dogs');
@@ -169,15 +164,13 @@ describe('searchConversations', () => {
 		// Just confirm the regular "(untitled)" path is exercised by inspecting
 		// the source code constant indirectly via an indexed conversation.
 		const id = await createConversation(env);
-		await env.DB.prepare('UPDATE conversations SET title = ? WHERE id = ?')
-			.bind('', id)
-			.run();
+		await env.DB.prepare('UPDATE conversations SET title = ? WHERE id = ?').bind('', id).run();
 		await indexMessage(env, {
 			conversationId: id,
+			createdAt: 1,
 			messageId: 'm1',
 			role: 'user',
 			text: 'searchable-content',
-			createdAt: 1,
 		});
 		const hits = await searchConversations(env, 'searchable-content');
 		// title is empty string, which is not null — so the fallback doesn't apply.
@@ -202,15 +195,13 @@ describe('indexMessage', () => {
 		const id = await createConversation(env);
 		await indexMessage(env, {
 			conversationId: id,
+			createdAt: 1,
 			messageId: 'm1',
 			role: 'user',
 			text: '   ',
-			createdAt: 1,
 		});
 		// No new row should have been written.
-		const row = await env.DB.prepare(
-			`SELECT message_id FROM conversation_search WHERE conversation_id = ? AND message_id = ?`,
-		)
+		const row = await env.DB.prepare(`SELECT message_id FROM conversation_search WHERE conversation_id = ? AND message_id = ?`)
 			.bind(id, 'm1')
 			.first<{ message_id: string }>();
 		expect(row).toBeNull();
@@ -220,17 +211,17 @@ describe('indexMessage', () => {
 		const id = await createConversation(env);
 		await indexMessage(env, {
 			conversationId: id,
+			createdAt: 1,
 			messageId: 'm1',
 			role: 'user',
 			text: 'pelican',
-			createdAt: 1,
 		});
 		await indexMessage(env, {
 			conversationId: id,
+			createdAt: 2,
 			messageId: 'm1',
 			role: 'user',
 			text: 'flamingo',
-			createdAt: 2,
 		});
 		expect(await searchConversations(env, 'pelican')).toEqual([]);
 		expect((await searchConversations(env, 'flamingo')).length).toBeGreaterThan(0);
@@ -242,10 +233,10 @@ describe('unindexConversation', () => {
 		const id = await createConversation(env);
 		await indexMessage(env, {
 			conversationId: id,
+			createdAt: 1,
 			messageId: 'm1',
 			role: 'user',
 			text: 'orchid-keyword',
-			createdAt: 1,
 		});
 		expect((await searchConversations(env, 'orchid-keyword')).length).toBeGreaterThan(0);
 		await unindexConversation(env, id);

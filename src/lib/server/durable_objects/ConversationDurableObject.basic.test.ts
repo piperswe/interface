@@ -12,14 +12,14 @@ describe('ConversationDurableObject — basic ops & schema', () => {
 		const id = await createConversation(env);
 		const stub = stubFor(id);
 		const result = await stub.addUserMessage(id, '   ', 'm/test');
-		expect(result).toEqual({ status: 'invalid', reason: 'empty' });
+		expect(result).toEqual({ reason: 'empty', status: 'invalid' });
 	});
 
 	it('addUserMessage rejects missing model', async () => {
 		const id = await createConversation(env);
 		const stub = stubFor(id);
 		const result = await stub.addUserMessage(id, 'hi', '');
-		expect(result).toEqual({ status: 'invalid', reason: 'missing model' });
+		expect(result).toEqual({ reason: 'missing model', status: 'invalid' });
 	});
 
 	it('getState returns empty messages for fresh DO', async () => {
@@ -34,9 +34,7 @@ describe('ConversationDurableObject — basic ops & schema', () => {
 		const id = await createConversation(env);
 		const stub = stubFor(id);
 		await runInDurableObject(stub, async (_instance, ctx) => {
-			const cols = ctx.storage.sql
-				.exec('PRAGMA table_info(messages)')
-				.toArray() as unknown as Array<{ name: string }>;
+			const cols = ctx.storage.sql.exec('PRAGMA table_info(messages)').toArray() as unknown as Array<{ name: string }>;
 			const names = cols.map((c) => c.name);
 			expect(names).toEqual(
 				expect.arrayContaining([
@@ -86,8 +84,8 @@ describe('ConversationDurableObject — basic ops & schema', () => {
 
 		const state = await readState(stub);
 		expect(state.messages).toHaveLength(2);
-		expect(state.messages[0]).toMatchObject({ role: 'user', content: 'hello world', status: 'complete' });
-		expect(state.messages[1]).toMatchObject({ role: 'assistant', content: 'hi back', status: 'complete' });
+		expect(state.messages[0]).toMatchObject({ content: 'hello world', role: 'user', status: 'complete' });
+		expect(state.messages[1]).toMatchObject({ content: 'hi back', role: 'assistant', status: 'complete' });
 		expect(state.inProgress).toBeNull();
 	});
 
@@ -171,9 +169,7 @@ describe('ConversationDurableObject — basic ops & schema', () => {
 			const id = await createConversation(env);
 			const stub = stubFor(id);
 			await stub.setStyle(id, 42);
-			const row = await env.DB.prepare('SELECT style_id FROM conversations WHERE id = ?')
-				.bind(id)
-				.first<{ style_id: number | null }>();
+			const row = await env.DB.prepare('SELECT style_id FROM conversations WHERE id = ?').bind(id).first<{ style_id: number | null }>();
 			expect(row?.style_id).toBe(42);
 		});
 
@@ -182,9 +178,7 @@ describe('ConversationDurableObject — basic ops & schema', () => {
 			const stub = stubFor(id);
 			await stub.setStyle(id, 7);
 			await stub.setStyle(id, null);
-			const row = await env.DB.prepare('SELECT style_id FROM conversations WHERE id = ?')
-				.bind(id)
-				.first<{ style_id: number | null }>();
+			const row = await env.DB.prepare('SELECT style_id FROM conversations WHERE id = ?').bind(id).first<{ style_id: number | null }>();
 			expect(row?.style_id).toBeNull();
 		});
 
@@ -192,9 +186,7 @@ describe('ConversationDurableObject — basic ops & schema', () => {
 			const id = await createConversation(env);
 			const stub = stubFor(id);
 			await stub.setStyle(id, 0);
-			const row = await env.DB.prepare('SELECT style_id FROM conversations WHERE id = ?')
-				.bind(id)
-				.first<{ style_id: number | null }>();
+			const row = await env.DB.prepare('SELECT style_id FROM conversations WHERE id = ?').bind(id).first<{ style_id: number | null }>();
 			expect(row?.style_id).toBeNull();
 		});
 	});

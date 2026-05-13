@@ -1,6 +1,6 @@
 <script lang="ts">
+	import { ArrowUp, Download, FileArchive, FileText, Folder, X } from 'lucide-svelte';
 	import { onMount } from 'svelte';
-	import { Folder, FileText, FileArchive, Download, X, ArrowUp } from 'lucide-svelte';
 
 	const _markdownMod = import('$lib/markdown.client');
 
@@ -23,27 +23,27 @@
 	let viewSeq = 0;
 
 	const EXT_LANG: Record<string, string> = {
-		ts: 'typescript',
-		tsx: 'tsx',
-		js: 'javascript',
-		mjs: 'javascript',
+		bash: 'bash',
 		cjs: 'javascript',
+		css: 'css',
+		env: 'bash',
+		html: 'html',
+		js: 'javascript',
+		json: 'json',
 		jsx: 'jsx',
+		markdown: 'markdown',
+		md: 'markdown',
+		mjs: 'javascript',
 		py: 'python',
 		rs: 'rust',
-		sql: 'sql',
 		sh: 'bash',
-		bash: 'bash',
-		env: 'bash',
-		json: 'json',
+		sql: 'sql',
+		svg: 'html',
+		ts: 'typescript',
+		tsx: 'tsx',
+		xml: 'html',
 		yaml: 'yaml',
 		yml: 'yaml',
-		md: 'markdown',
-		markdown: 'markdown',
-		html: 'html',
-		svg: 'html',
-		xml: 'html',
-		css: 'css',
 	};
 
 	function langForPath(path: string): string {

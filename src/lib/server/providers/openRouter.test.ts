@@ -1,43 +1,35 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-	fetchOpenRouterCatalog,
-	mapOpenRouterToCreateModelInput,
-	type OpenRouterEntry,
-} from './openRouter';
+import { fetchOpenRouterCatalog, mapOpenRouterToCreateModelInput, type OpenRouterEntry } from './openRouter';
 
 afterEach(() => {
 	vi.restoreAllMocks();
 });
 
 function mockOnce(body: unknown, init?: ResponseInit) {
-	return vi
-		.spyOn(globalThis, 'fetch')
-		.mockResolvedValueOnce(
-			new Response(typeof body === 'string' ? body : JSON.stringify(body), init),
-		);
+	return vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(typeof body === 'string' ? body : JSON.stringify(body), init));
 }
 
 const CLAUDE_MODEL = {
-	id: 'anthropic/claude-opus-4-6',
-	name: 'Anthropic: Claude Opus 4',
-	description: 'Most capable Claude model.',
-	context_length: 200_000,
 	architecture: { input_modalities: ['text', 'image'], output_modalities: ['text'] },
-	pricing: { prompt: '0.000015', completion: '0.000075' },
-	supported_parameters: ['reasoning', 'max_tokens'],
+	context_length: 200_000,
+	description: 'Most capable Claude model.',
+	id: 'anthropic/claude-opus-4-6',
 	knowledge_cutoff: '2025-03-31',
+	name: 'Anthropic: Claude Opus 4',
+	pricing: { completion: '0.000075', prompt: '0.000015' },
+	supported_parameters: ['reasoning', 'max_tokens'],
 	top_provider: { context_length: 200_000 },
 };
 
 const GPT5_MODEL = {
-	id: 'openai/gpt-5',
-	name: 'OpenAI: GPT-5',
-	description: 'Frontier reasoning model.',
-	context_length: 400_000,
 	architecture: { input_modalities: ['text'], output_modalities: ['text'] },
-	pricing: { prompt: '0.00000125', completion: '0.00001' },
-	supported_parameters: ['reasoning_effort', 'max_completion_tokens'],
+	context_length: 400_000,
+	description: 'Frontier reasoning model.',
+	id: 'openai/gpt-5',
 	knowledge_cutoff: null,
+	name: 'OpenAI: GPT-5',
+	pricing: { completion: '0.00001', prompt: '0.00000125' },
+	supported_parameters: ['reasoning_effort', 'max_completion_tokens'],
 	top_provider: { context_length: 400_000 },
 };
 
@@ -100,8 +92,8 @@ describe('fetchOpenRouterCatalog', () => {
 	it('treats empty / "0" / unparsable prices as null', async () => {
 		mockOnce({
 			data: [
-				{ ...CLAUDE_MODEL, pricing: { prompt: '', completion: '0' } },
-				{ ...GPT5_MODEL, pricing: { prompt: 'free', completion: '0.000001' } },
+				{ ...CLAUDE_MODEL, pricing: { completion: '0', prompt: '' } },
+				{ ...GPT5_MODEL, pricing: { completion: '0.000001', prompt: 'free' } },
 			],
 		});
 		const [a, b] = await fetchOpenRouterCatalog();
@@ -131,9 +123,7 @@ describe('fetchOpenRouterCatalog', () => {
 		// An anthropic-prefixed id would normally infer max_tokens; explicit
 		// reasoning_effort support should win.
 		mockOnce({
-			data: [
-				{ ...CLAUDE_MODEL, supported_parameters: ['reasoning_effort'] },
-			],
+			data: [{ ...CLAUDE_MODEL, supported_parameters: ['reasoning_effort'] }],
 		});
 		const [entry] = await fetchOpenRouterCatalog();
 		expect(entry.reasoningType).toBe('effort');
@@ -148,9 +138,7 @@ describe('fetchOpenRouterCatalog', () => {
 
 	it('returns null reasoningType for non-reasoning models with no hints', async () => {
 		mockOnce({
-			data: [
-				{ ...CLAUDE_MODEL, id: 'mistralai/mistral-small', supported_parameters: ['max_tokens'] },
-			],
+			data: [{ ...CLAUDE_MODEL, id: 'mistralai/mistral-small', supported_parameters: ['max_tokens'] }],
 		});
 		const [entry] = await fetchOpenRouterCatalog();
 		expect(entry.reasoningType).toBe(null);
@@ -159,9 +147,7 @@ describe('fetchOpenRouterCatalog', () => {
 
 	it('defaults contextLength to 128_000 when both fields are absent', async () => {
 		mockOnce({
-			data: [
-				{ ...CLAUDE_MODEL, context_length: null, top_provider: { context_length: null } },
-			],
+			data: [{ ...CLAUDE_MODEL, context_length: null, top_provider: { context_length: null } }],
 		});
 		const [entry] = await fetchOpenRouterCatalog();
 		expect(entry.contextLength).toBe(128_000);
@@ -194,17 +180,17 @@ describe('fetchOpenRouterCatalog', () => {
 
 function makeEntry(over: Partial<OpenRouterEntry> = {}): OpenRouterEntry {
 	return {
-		vendor: 'anthropic',
-		fullId: 'anthropic/claude-opus-4-6',
-		name: 'Anthropic: Claude Opus 4',
-		description: 'Most capable Claude model.',
 		contextLength: 200_000,
+		description: 'Most capable Claude model.',
+		fullId: 'anthropic/claude-opus-4-6',
 		inputCostPerMillionTokens: 15,
+		knowledgeCutoff: '2025-03-31',
+		name: 'Anthropic: Claude Opus 4',
 		outputCostPerMillionTokens: 75,
+		reasoningType: 'max_tokens',
 		supportsImageInput: true,
 		supportsReasoning: true,
-		reasoningType: 'max_tokens',
-		knowledgeCutoff: '2025-03-31',
+		vendor: 'anthropic',
 		...over,
 	};
 }
@@ -218,14 +204,14 @@ describe('mapOpenRouterToCreateModelInput', () => {
 	it('passes through all the prefilled metadata', () => {
 		const input = mapOpenRouterToCreateModelInput(makeEntry());
 		expect(input).toMatchObject({
-			name: 'Anthropic: Claude Opus 4',
 			description: 'Most capable Claude model.',
-			maxContextLength: 200_000,
-			reasoningType: 'max_tokens',
 			inputCostPerMillionTokens: 15,
+			maxContextLength: 200_000,
+			name: 'Anthropic: Claude Opus 4',
 			outputCostPerMillionTokens: 75,
-			supportsImageInput: true,
+			reasoningType: 'max_tokens',
 			sortOrder: 0,
+			supportsImageInput: true,
 		});
 	});
 
@@ -235,17 +221,13 @@ describe('mapOpenRouterToCreateModelInput', () => {
 	});
 
 	it('preserves null costs', () => {
-		const input = mapOpenRouterToCreateModelInput(
-			makeEntry({ inputCostPerMillionTokens: null, outputCostPerMillionTokens: null }),
-		);
+		const input = mapOpenRouterToCreateModelInput(makeEntry({ inputCostPerMillionTokens: null, outputCostPerMillionTokens: null }));
 		expect(input.inputCostPerMillionTokens).toBe(null);
 		expect(input.outputCostPerMillionTokens).toBe(null);
 	});
 
 	it('preserves null reasoningType', () => {
-		const input = mapOpenRouterToCreateModelInput(
-			makeEntry({ reasoningType: null, supportsReasoning: false }),
-		);
+		const input = mapOpenRouterToCreateModelInput(makeEntry({ reasoningType: null, supportsReasoning: false }));
 		expect(input.reasoningType).toBe(null);
 	});
 });

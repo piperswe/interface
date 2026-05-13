@@ -2,7 +2,7 @@ import { env } from 'cloudflare:test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createOpenWeatherMapTools } from './openweathermap';
 
-const ctx = { env, conversationId: 'c', assistantMessageId: 'a', modelId: 'p/m' };
+const ctx = { assistantMessageId: 'a', conversationId: 'c', env, modelId: 'p/m' };
 
 function getTool(name: string) {
 	const tool = createOpenWeatherMapTools('test-key').find((t) => t.definition.name === name);
@@ -29,15 +29,13 @@ describe('openweather_geocode', () => {
 	});
 
 	it('passes appid and limit and returns slim hits', async () => {
-		const fetchSpy = vi
-			.spyOn(globalThis, 'fetch')
-			.mockResolvedValueOnce(
-				new Response(JSON.stringify([{ name: 'Austin', lat: 30.27, lon: -97.74, country: 'US', state: 'Texas', extra: 'drop' }]), {
-					status: 200,
-					headers: { 'content-type': 'application/json' },
-				}),
-			);
-		const result = await getTool('openweather_geocode').execute(ctx, { query: 'Austin,TX,US', limit: 1 });
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			new Response(JSON.stringify([{ country: 'US', extra: 'drop', lat: 30.27, lon: -97.74, name: 'Austin', state: 'Texas' }]), {
+				headers: { 'content-type': 'application/json' },
+				status: 200,
+			}),
+		);
+		const result = await getTool('openweather_geocode').execute(ctx, { limit: 1, query: 'Austin,TX,US' });
 		expect(result.isError).toBeFalsy();
 		const url = new URL(fetchSpy.mock.calls[0][0] as string);
 		expect(url.searchParams.get('q')).toBe('Austin,TX,US');
@@ -48,9 +46,7 @@ describe('openweather_geocode', () => {
 	});
 
 	it('returns no-match string for empty array', async () => {
-		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-			new Response('[]', { status: 200, headers: { 'content-type': 'application/json' } }),
-		);
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('[]', { headers: { 'content-type': 'application/json' }, status: 200 }));
 		const result = await getTool('openweather_geocode').execute(ctx, { query: 'Nowhere' });
 		expect(result.isError).toBeFalsy();
 		expect(result.content).toMatch(/No locations matched/);
@@ -59,8 +55,8 @@ describe('openweather_geocode', () => {
 	it('surfaces upstream error message', async () => {
 		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
 			new Response(JSON.stringify({ message: 'Invalid API key' }), {
-				status: 401,
 				headers: { 'content-type': 'application/json' },
+				status: 401,
 			}),
 		);
 		const result = await getTool('openweather_geocode').execute(ctx, { query: 'Austin' });
@@ -80,18 +76,18 @@ describe('openweather_current', () => {
 		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
 			new Response(
 				JSON.stringify({
-					name: 'Austin',
-					dt: 1700000000,
-					timezone: -21600,
-					coord: { lat: 30.27, lon: -97.74 },
-					sys: { country: 'US', sunrise: 1700000000, sunset: 1700040000 },
-					weather: [{ id: 800, main: 'Clear', description: 'clear sky', icon: '01d' }],
-					main: { temp: 25, feels_like: 24, temp_min: 22, temp_max: 27, pressure: 1013, humidity: 40 },
-					wind: { speed: 3.5, deg: 180 },
 					clouds: { all: 0 },
+					coord: { lat: 30.27, lon: -97.74 },
+					dt: 1700000000,
+					main: { feels_like: 24, humidity: 40, pressure: 1013, temp: 25, temp_max: 27, temp_min: 22 },
+					name: 'Austin',
+					sys: { country: 'US', sunrise: 1700000000, sunset: 1700040000 },
+					timezone: -21600,
 					visibility: 10000,
+					weather: [{ description: 'clear sky', icon: '01d', id: 800, main: 'Clear' }],
+					wind: { deg: 180, speed: 3.5 },
 				}),
-				{ status: 200, headers: { 'content-type': 'application/json' } },
+				{ headers: { 'content-type': 'application/json' }, status: 200 },
 			),
 		);
 		const result = await getTool('openweather_current').execute(ctx, { lat: 30.27, lon: -97.74 });
@@ -109,26 +105,26 @@ describe('openweather_forecast', () => {
 		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
 			new Response(
 				JSON.stringify({
-					city: { name: 'Austin', country: 'US', coord: { lat: 30.27, lon: -97.74 }, timezone: -21600 },
+					city: { coord: { lat: 30.27, lon: -97.74 }, country: 'US', name: 'Austin', timezone: -21600 },
 					list: [
 						{
+							clouds: { all: 0 },
 							dt: 1700000000,
 							dt_txt: '2026-05-04 12:00:00',
-							main: { temp: 25, feels_like: 24, humidity: 40, pressure: 1013 },
-							weather: [{ id: 800, main: 'Clear', description: 'clear sky', icon: '01d' }],
-							wind: { speed: 3.5, deg: 180 },
-							clouds: { all: 0 },
+							main: { feels_like: 24, humidity: 40, pressure: 1013, temp: 25 },
 							pop: 0.1,
+							weather: [{ description: 'clear sky', icon: '01d', id: 800, main: 'Clear' }],
+							wind: { deg: 180, speed: 3.5 },
 						},
 					],
 				}),
-				{ status: 200, headers: { 'content-type': 'application/json' } },
+				{ headers: { 'content-type': 'application/json' }, status: 200 },
 			),
 		);
 		const result = await getTool('openweather_forecast').execute(ctx, {
 			lat: 30.27,
-			lon: -97.74,
 			limit: 999,
+			lon: -97.74,
 		});
 		expect(result.isError).toBeFalsy();
 		const url = new URL(fetchSpy.mock.calls[0][0] as string);

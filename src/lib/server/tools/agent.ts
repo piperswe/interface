@@ -9,16 +9,16 @@
 
 import { z } from 'zod';
 import { safeValidate } from '$lib/zod-utils';
-import { routeLLMByGlobalId } from '../llm/route';
-import type { ChatRequest, ContentBlock, Message, ToolDefinition } from '../llm/LLM';
 import type LLM from '../llm/LLM';
+import type { ChatRequest, ContentBlock, Message, ToolDefinition } from '../llm/LLM';
+import { routeLLMByGlobalId } from '../llm/route';
 import { getSubAgentByName, type SubAgentRow } from '../sub_agents';
-import { ToolRegistry, type Tool, type ToolArtifactSpec, type ToolCitation, type ToolContext, type ToolExecutionResult } from './registry';
+import type { Tool, ToolArtifactSpec, ToolCitation, ToolContext, ToolExecutionResult, ToolRegistry } from './registry';
 
 const inputArgsSchema = z.object({
-	subagent_type: z.string(),
-	prompt: z.string(),
 	model: z.string(),
+	prompt: z.string(),
+	subagent_type: z.string(),
 });
 
 const DEFAULT_MAX_INNER_ITERATIONS = 5;
@@ -54,35 +54,34 @@ export function createAgentTool(deps: AgentToolDeps, subAgents: SubAgentRow[]): 
 
 	const globalIds = deps.availableModelGlobalIds ?? [];
 	const modelProperty: Record<string, unknown> = {
-		type: 'string',
 		description:
 			"Model global ID to run the sub-agent on (format: {provider_id}/{model_id}). REQUIRED — confirm with the user before delegating; do not guess. Use the `get_models` tool to see the user's available models and the model the parent is currently running on.",
+		type: 'string',
 	};
 	if (globalIds.length > 0) {
 		modelProperty.enum = globalIds;
 	}
 
 	const inputSchema = {
-		type: 'object',
 		properties: {
-			subagent_type: {
-				type: 'string',
-				enum: enumNames,
-				description: 'Identifier of the sub-agent to delegate to.',
-			},
+			model: modelProperty,
 			prompt: {
-				type: 'string',
 				description:
 					'A self-contained brief for the sub-agent: what to do, why, and what form the answer should take. The sub-agent has no view of the parent conversation, so include all context it needs to act.',
+				type: 'string',
 			},
-			model: modelProperty,
+			subagent_type: {
+				description: 'Identifier of the sub-agent to delegate to.',
+				enum: enumNames,
+				type: 'string',
+			},
 		},
 		required: ['subagent_type', 'prompt', 'model'],
+		type: 'object',
 	} as const;
 
 	return {
 		definition: {
-			name: AGENT_TOOL_NAME,
 			description: [
 				'Delegate a self-contained task to a specialised sub-agent. The sub-agent runs its own LLM loop with a custom system prompt and a curated tool subset, then returns its final answer as a single block of text. Use when a task benefits from a focused persona or a different tool scope, or when offloading multi-step work that would clutter the main thread.',
 				'',
@@ -91,11 +90,12 @@ export function createAgentTool(deps: AgentToolDeps, subAgents: SubAgentRow[]): 
 				lines.join('\n'),
 			].join('\n'),
 			inputSchema,
+			name: AGENT_TOOL_NAME,
 		},
 		async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
 			const parsed = safeValidate(inputArgsSchema, input);
 			if (!parsed.ok) {
-				return { content: `Invalid input: ${parsed.error}`, isError: true, errorCode: 'invalid_input' };
+				return { content: `Invalid input: ${parsed.error}`, errorCode: 'invalid_input', isError: true };
 			}
 			const args = parsed.value;
 			if (!args.model.trim()) {
@@ -130,10 +130,10 @@ export function createAgentTool(deps: AgentToolDeps, subAgents: SubAgentRow[]): 
 				.filter((d) => d.name !== AGENT_TOOL_NAME)
 				.filter((d) => (allowed ? allowed.includes(d.name) : true));
 
-			const model = requestedModel || (subAgent.model && subAgent.model.trim() ? subAgent.model : deps.defaultModel);
+			const model = requestedModel || (subAgent.model?.trim() ? subAgent.model : deps.defaultModel);
 			const llm = await (deps.routeLLM ?? routeLLMByGlobalId)(ctx.env, model);
 
-			const messages: Message[] = [{ role: 'user', content: args.prompt }];
+			const messages: Message[] = [{ content: args.prompt, role: 'user' }];
 			const maxIter = subAgent.maxIterations && subAgent.maxIterations > 0 ? subAgent.maxIterations : DEFAULT_MAX_INNER_ITERATIONS;
 
 			let finalText = '';
@@ -160,7 +160,7 @@ export function createAgentTool(deps: AgentToolDeps, subAgents: SubAgentRow[]): 
 					if (ev.type === 'text_delta') {
 						turnText += ev.delta;
 					} else if (ev.type === 'tool_call') {
-						turnToolCalls.push({ id: ev.id, name: ev.name, input: ev.input });
+						turnToolCalls.push({ id: ev.id, input: ev.input, name: ev.name });
 					} else if (ev.type === 'error') {
 						providerError = ev.message;
 					}
@@ -177,48 +177,47 @@ export function createAgentTool(deps: AgentToolDeps, subAgents: SubAgentRow[]): 
 				}
 
 				const assistantBlocks: ContentBlock[] = [];
-				if (turnText) assistantBlocks.push({ type: 'text', text: turnText });
+				if (turnText) assistantBlocks.push({ text: turnText, type: 'text' });
 				for (const tc of turnToolCalls) {
-					assistantBlocks.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.input });
+					assistantBlocks.push({ id: tc.id, input: tc.input, name: tc.name, type: 'tool_use' });
 				}
-				messages.push({ role: 'assistant', content: assistantBlocks });
+				messages.push({ content: assistantBlocks, role: 'assistant' });
 
 				for (const call of turnToolCalls) {
 					if (allowed && !allowed.includes(call.name)) {
 						messages.push({
-							role: 'tool',
 							content: [
 								{
-									type: 'tool_result',
-									toolUseId: call.id,
 									content: `Tool "${call.name}" is not available to sub-agent "${subAgent.name}".`,
 									isError: true,
+									toolUseId: call.id,
+									type: 'tool_result',
 								},
 							],
+							role: 'tool',
 						});
 						continue;
 					}
 					if (call.name === AGENT_TOOL_NAME) {
 						messages.push({
-							role: 'tool',
 							content: [
 								{
-									type: 'tool_result',
-									toolUseId: call.id,
 									content: 'Sub-agents cannot delegate to other sub-agents.',
 									isError: true,
+									toolUseId: call.id,
+									type: 'tool_result',
 								},
 							],
+							role: 'tool',
 						});
 						continue;
 					}
 					const result = await innerRegistry.execute(
 						{
-							env: ctx.env,
-							conversationId: ctx.conversationId,
 							assistantMessageId: ctx.assistantMessageId,
+							conversationId: ctx.conversationId,
+							env: ctx.env,
 							modelId: model,
-							signal: ctx.signal,
 							// Forward the parent's `registerCitation` so a sub-agent
 							// that runs `web_search` shares the parent turn's global
 							// citation numbering. The sub-agent's own text becomes
@@ -228,6 +227,7 @@ export function createAgentTool(deps: AgentToolDeps, subAgents: SubAgentRow[]): 
 							// result can reference the same `[N]` indices in its own
 							// reply, and they'll resolve to the right Sources entry.
 							registerCitation: ctx.registerCitation,
+							signal: ctx.signal,
 						},
 						call.name,
 						call.input,
@@ -245,15 +245,15 @@ export function createAgentTool(deps: AgentToolDeps, subAgents: SubAgentRow[]): 
 					}
 					if (result.artifacts) accumulatedArtifacts.push(...result.artifacts);
 					messages.push({
-						role: 'tool',
 						content: [
 							{
-								type: 'tool_result',
-								toolUseId: call.id,
 								content: result.content,
+								toolUseId: call.id,
+								type: 'tool_result',
 								...(result.isError ? { isError: true } : {}),
 							},
 						],
+						role: 'tool',
 					});
 				}
 			}
@@ -276,9 +276,7 @@ export function createAgentTool(deps: AgentToolDeps, subAgents: SubAgentRow[]): 
 				// When the parent provides `registerCitation`, sub-agent tool
 				// citations have already been merged into the parent's global
 				// list, so don't surface them here too.
-				...(!ctx.registerCitation && accumulatedCitations.length > 0
-					? { citations: accumulatedCitations }
-					: {}),
+				...(!ctx.registerCitation && accumulatedCitations.length > 0 ? { citations: accumulatedCitations } : {}),
 				...(accumulatedArtifacts.length > 0 ? { artifacts: accumulatedArtifacts } : {}),
 			};
 		},

@@ -6,16 +6,16 @@
 // (which also needs the id, to set `fly-prefer-instance-id`) doesn't pay
 // the D1 round-trip on every request.
 
+import { clearFlyMachineId, getFlyMachineId, setFlyMachineId } from './d1';
 import {
 	createMachine,
 	destroyMachine,
+	type FlyConfig,
+	type FlyMachineConfig,
 	getMachine,
 	startMachine,
 	waitForMachineState,
-	type FlyConfig,
-	type FlyMachineConfig,
 } from './machines-api';
-import { clearFlyMachineId, getFlyMachineId, setFlyMachineId } from './d1';
 
 // Image: pushed to fly's per-app registry by CI. The convention here
 // matches `scripts/build-fly-image.sh` / `flyctl deploy`.
@@ -25,7 +25,7 @@ function imageFor(cfg: FlyConfig): string {
 
 function defaultMachineConfig(cfg: FlyConfig, conversationId: string): FlyMachineConfig {
 	return {
-		image: imageFor(cfg),
+		auto_destroy: false,
 		// Inject the conversation id so the in-container preview proxy
 		// can validate inbound Host headers against it. Without this,
 		// any request that reaches the machine (e.g. via a missing
@@ -34,27 +34,27 @@ function defaultMachineConfig(cfg: FlyConfig, conversationId: string): FlyMachin
 		// port the Host's leading digits resolve to, regardless of
 		// whether that conversation owns the machine.
 		env: { SANDBOX_CONVERSATION_ID: conversationId },
+		image: imageFor(cfg),
+		restart: { max_retries: 3, policy: 'on-failure' },
 		services: [
 			{
+				autostart: true,
+				// Let fly's proxy idle-stop the machine; ensureMachine wakes
+				// it back up before each exec/file call.
+				autostop: 'stop',
+				internal_port: 8080,
 				// Single public HTTP service. The in-container reverse
 				// proxy (started by scripts/fly-entrypoint.sh) listens on
 				// :8080 and routes by Host header: requests with host
 				// `${port}-${conversationId}-${token}.${appHostname}` are
 				// forwarded to localhost:${port}.
 				ports: [
-					{ port: 80, handlers: ['http'] },
-					{ port: 443, handlers: ['tls', 'http'], force_https: true },
+					{ handlers: ['http'], port: 80 },
+					{ force_https: true, handlers: ['tls', 'http'], port: 443 },
 				],
 				protocol: 'tcp',
-				internal_port: 8080,
-				// Let fly's proxy idle-stop the machine; ensureMachine wakes
-				// it back up before each exec/file call.
-				autostop: 'stop',
-				autostart: true,
 			},
 		],
-		restart: { policy: 'on-failure', max_retries: 3 },
-		auto_destroy: false,
 	};
 }
 
@@ -85,10 +85,7 @@ function forgetMachine(conversationId: string): void {
 	machineCache.delete(conversationId);
 }
 
-export async function getCachedMachineId(
-	env: Env,
-	conversationId: string,
-): Promise<string | null> {
+export async function getCachedMachineId(env: Env, conversationId: string): Promise<string | null> {
 	const cached = machineCache.get(conversationId);
 	if (cached) return cached;
 	const fromDb = await getFlyMachineId(env, conversationId);
@@ -96,11 +93,7 @@ export async function getCachedMachineId(
 	return fromDb;
 }
 
-export async function ensureMachine(
-	env: Env,
-	cfg: FlyConfig,
-	conversationId: string,
-): Promise<string> {
+export async function ensureMachine(env: Env, cfg: FlyConfig, conversationId: string): Promise<string> {
 	const existing = inFlight.get(conversationId);
 	if (existing) return existing;
 	const promise = ensureMachineInner(env, cfg, conversationId).finally(() => {
@@ -110,11 +103,7 @@ export async function ensureMachine(
 	return promise;
 }
 
-async function ensureMachineInner(
-	env: Env,
-	cfg: FlyConfig,
-	conversationId: string,
-): Promise<string> {
+async function ensureMachineInner(env: Env, cfg: FlyConfig, conversationId: string): Promise<string> {
 	let machineId = await getCachedMachineId(env, conversationId);
 
 	if (machineId) {
@@ -125,11 +114,7 @@ async function ensureMachineInner(
 			await clearFlyMachineId(env, conversationId);
 			forgetMachine(conversationId);
 			machineId = null;
-		} else if (
-			machine.state === 'stopped' ||
-			machine.state === 'suspended' ||
-			machine.state === 'created'
-		) {
+		} else if (machine.state === 'stopped' || machine.state === 'suspended' || machine.state === 'created') {
 			await startMachine(cfg, machineId);
 			await waitForMachineState(cfg, machineId, 'started', 20);
 		} else if (machine.state === 'destroyed' || machine.state === 'destroying') {
@@ -147,8 +132,8 @@ async function ensureMachineInner(
 		// and write its id to D1. After we create, re-read D1; if a
 		// different id is now present, prefer it and destroy our orphan.
 		const created = await createMachine(cfg, {
-			name: `sandbox-${conversationId.slice(0, 24)}`,
 			config: defaultMachineConfig(cfg, conversationId),
+			name: `sandbox-${conversationId.slice(0, 24)}`,
 		});
 		machineId = created.id;
 		const existingInDb = await getFlyMachineId(env, conversationId);
@@ -176,11 +161,7 @@ async function ensureMachineInner(
 	return machineId;
 }
 
-export async function destroyManagedMachine(
-	env: Env,
-	cfg: FlyConfig,
-	conversationId: string,
-): Promise<void> {
+export async function destroyManagedMachine(env: Env, cfg: FlyConfig, conversationId: string): Promise<void> {
 	const machineId = await getCachedMachineId(env, conversationId);
 	if (!machineId) return;
 	try {

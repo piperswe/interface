@@ -12,10 +12,10 @@ export type GetModelsToolDeps = {
 export function createGetModelsTool(deps: GetModelsToolDeps): Tool {
 	return {
 		definition: {
-			name: 'get_models',
 			description:
 				'List the models available to this Interface deployment, plus the model you (the parent agent) are currently running on. Call this before invoking the `agent` tool so you can ask the user which model the sub-agent should run on.',
-			inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+			inputSchema: { additionalProperties: false, properties: {}, type: 'object' },
+			name: 'get_models',
 		},
 		async execute(): Promise<ToolExecutionResult> {
 			const lines: string[] = [];

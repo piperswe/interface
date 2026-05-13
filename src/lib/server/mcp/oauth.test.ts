@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { assertDefined } from '../../../../test/assert-defined';
 import {
 	buildAuthorizationUrl,
 	discoverEndpoints,
@@ -63,11 +64,11 @@ describe('buildAuthorizationUrl', () => {
 		const u = buildAuthorizationUrl({
 			authorizationEndpoint: 'https://as.example/authorize',
 			clientId: 'client123',
-			redirectUri: 'https://app.example/callback',
-			state: 'st4te',
 			codeChallenge: 'chal',
-			scopes: 'read write',
+			redirectUri: 'https://app.example/callback',
 			resource: 'https://rs.example/mcp',
+			scopes: 'read write',
+			state: 'st4te',
 		});
 		const parsed = new URL(u);
 		expect(parsed.searchParams.get('response_type')).toBe('code');
@@ -83,37 +84,24 @@ describe('buildAuthorizationUrl', () => {
 
 describe('expiresAtFromResponse', () => {
 	it('returns now + expires_in*1000', () => {
-		expect(expiresAtFromResponse({ access_token: 't', token_type: 'Bearer', expires_in: 60 }, 1000)).toBe(61_000);
+		expect(expiresAtFromResponse({ access_token: 't', expires_in: 60, token_type: 'Bearer' }, 1000)).toBe(61_000);
 	});
 	it('returns null when expires_in is missing or non-positive', () => {
 		expect(expiresAtFromResponse({ access_token: 't', token_type: 'Bearer' }, 1000)).toBeNull();
-		expect(expiresAtFromResponse({ access_token: 't', token_type: 'Bearer', expires_in: 0 }, 1000)).toBeNull();
+		expect(expiresAtFromResponse({ access_token: 't', expires_in: 0, token_type: 'Bearer' }, 1000)).toBeNull();
 	});
 
 	// Regression: a malicious AS could previously return expires_in=Infinity
 	// to keep a stale token "valid" forever (`Infinity < nowMs() === false`,
 	// so the refresh path never fires). Clamp at 1 year and reject Infinity.
 	it('clamps obscenely large expires_in to the 1-year ceiling', () => {
-		const out = expiresAtFromResponse(
-			{ access_token: 't', token_type: 'Bearer', expires_in: 10_000_000_000 },
-			0,
-		);
+		const out = expiresAtFromResponse({ access_token: 't', expires_in: 10_000_000_000, token_type: 'Bearer' }, 0);
 		expect(out).toBe(31_536_000 * 1000);
 	});
 
 	it('returns null for non-finite expires_in', () => {
-		expect(
-			expiresAtFromResponse(
-				{ access_token: 't', token_type: 'Bearer', expires_in: Infinity },
-				0,
-			),
-		).toBeNull();
-		expect(
-			expiresAtFromResponse(
-				{ access_token: 't', token_type: 'Bearer', expires_in: NaN },
-				0,
-			),
-		).toBeNull();
+		expect(expiresAtFromResponse({ access_token: 't', expires_in: Infinity, token_type: 'Bearer' }, 0)).toBeNull();
+		expect(expiresAtFromResponse({ access_token: 't', expires_in: NaN, token_type: 'Bearer' }, 0)).toBeNull();
 	});
 });
 
@@ -137,18 +125,18 @@ describe('discoverEndpoints', () => {
 						authorization_servers: ['https://as.example'],
 						scopes_supported: ['read', 'write'],
 					}),
-					{ status: 200, headers: { 'Content-Type': 'application/json' } },
+					{ headers: { 'Content-Type': 'application/json' }, status: 200 },
 				);
 			}
 			if (url === 'https://as.example/.well-known/oauth-authorization-server') {
 				return new Response(
 					JSON.stringify({
-						issuer: 'https://as.example',
 						authorization_endpoint: 'https://as.example/authorize',
-						token_endpoint: 'https://as.example/token',
+						issuer: 'https://as.example',
 						registration_endpoint: 'https://as.example/register',
+						token_endpoint: 'https://as.example/token',
 					}),
-					{ status: 200, headers: { 'Content-Type': 'application/json' } },
+					{ headers: { 'Content-Type': 'application/json' }, status: 200 },
 				);
 			}
 			throw new Error(`unexpected fetch ${url}`);
@@ -175,7 +163,7 @@ describe('discoverEndpoints', () => {
 						authorization_endpoint: 'https://rs.example/authorize',
 						token_endpoint: 'https://rs.example/token',
 					}),
-					{ status: 200, headers: { 'Content-Type': 'application/json' } },
+					{ headers: { 'Content-Type': 'application/json' }, status: 200 },
 				);
 			}
 			throw new Error(`unexpected fetch ${url}`);
@@ -201,14 +189,12 @@ describe('discoverEndpoints', () => {
 						authorization_endpoint: 'https://rs.example/authorize',
 						token_endpoint: 'http://attacker.example/token',
 					}),
-					{ status: 200, headers: { 'Content-Type': 'application/json' } },
+					{ headers: { 'Content-Type': 'application/json' }, status: 200 },
 				);
 			}
 			throw new Error(`unexpected fetch ${url}`);
 		});
-		await expect(discoverEndpoints('https://rs.example/mcp')).rejects.toThrow(
-			/https/i,
-		);
+		await expect(discoverEndpoints('https://rs.example/mcp')).rejects.toThrow(/https/i);
 	});
 
 	it('rejects mismatched issuer in AS metadata', async () => {
@@ -220,18 +206,16 @@ describe('discoverEndpoints', () => {
 			if (url === 'https://rs.example/.well-known/oauth-authorization-server') {
 				return new Response(
 					JSON.stringify({
-						issuer: 'https://different.example',
 						authorization_endpoint: 'https://rs.example/authorize',
+						issuer: 'https://different.example',
 						token_endpoint: 'https://rs.example/token',
 					}),
-					{ status: 200, headers: { 'Content-Type': 'application/json' } },
+					{ headers: { 'Content-Type': 'application/json' }, status: 200 },
 				);
 			}
 			throw new Error(`unexpected fetch ${url}`);
 		});
-		await expect(discoverEndpoints('https://rs.example/mcp')).rejects.toThrow(
-			/issuer/i,
-		);
+		await expect(discoverEndpoints('https://rs.example/mcp')).rejects.toThrow(/issuer/i);
 	});
 });
 
@@ -240,12 +224,13 @@ describe('dynamicallyRegister', () => {
 		const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
 			expect(String(input)).toBe('https://as.example/register');
 			expect(init?.method).toBe('POST');
-			const body = JSON.parse(init!.body as string);
+			assertDefined(init);
+			const body = JSON.parse(init.body as string);
 			expect(body.redirect_uris).toEqual(['https://app.example/callback']);
 			expect(body.grant_types).toContain('authorization_code');
 			return new Response(JSON.stringify({ client_id: 'abc', client_secret: 'shh' }), {
-				status: 201,
 				headers: { 'Content-Type': 'application/json' },
+				status: 201,
 			});
 		});
 		const reg = await dynamicallyRegister('https://as.example/register', 'https://app.example/callback', 'Test');
@@ -255,12 +240,8 @@ describe('dynamicallyRegister', () => {
 	});
 
 	it('throws when the response is missing client_id', async () => {
-		vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-			new Response('{}', { status: 201, headers: { 'Content-Type': 'application/json' } }),
-		);
-		await expect(
-			dynamicallyRegister('https://as.example/register', 'https://app.example/callback', 'Test'),
-		).rejects.toThrow(/client_id/);
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', { headers: { 'Content-Type': 'application/json' }, status: 201 }));
+		await expect(dynamicallyRegister('https://as.example/register', 'https://app.example/callback', 'Test')).rejects.toThrow(/client_id/);
 	});
 });
 
@@ -269,7 +250,8 @@ describe('exchangeCode / refreshAccessToken', () => {
 		vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
 			expect(String(input)).toBe('https://as.example/token');
 			expect(init?.method).toBe('POST');
-			const body = String(init!.body);
+			assertDefined(init);
+			const body = String(init.body);
 			const params = new URLSearchParams(body);
 			expect(params.get('grant_type')).toBe('authorization_code');
 			expect(params.get('code')).toBe('the-code');
@@ -277,20 +259,20 @@ describe('exchangeCode / refreshAccessToken', () => {
 			return new Response(
 				JSON.stringify({
 					access_token: 'A',
-					token_type: 'Bearer',
 					expires_in: 3600,
 					refresh_token: 'R',
+					token_type: 'Bearer',
 				}),
-				{ status: 200, headers: { 'Content-Type': 'application/json' } },
+				{ headers: { 'Content-Type': 'application/json' }, status: 200 },
 			);
 		});
 		const tok = await exchangeCode({
-			tokenEndpoint: 'https://as.example/token',
 			clientId: 'cid',
 			clientSecret: null,
 			code: 'the-code',
 			codeVerifier: 'verif',
 			redirectUri: 'https://app.example/callback',
+			tokenEndpoint: 'https://as.example/token',
 		});
 		expect(tok.access_token).toBe('A');
 		expect(tok.refresh_token).toBe('R');
@@ -298,19 +280,20 @@ describe('exchangeCode / refreshAccessToken', () => {
 
 	it('refreshAccessToken sends grant_type=refresh_token', async () => {
 		vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
-			const params = new URLSearchParams(String(init!.body));
+			assertDefined(init);
+			const params = new URLSearchParams(String(init.body));
 			expect(params.get('grant_type')).toBe('refresh_token');
 			expect(params.get('refresh_token')).toBe('R');
-			return new Response(
-				JSON.stringify({ access_token: 'A2', token_type: 'Bearer', expires_in: 60 }),
-				{ status: 200, headers: { 'Content-Type': 'application/json' } },
-			);
+			return new Response(JSON.stringify({ access_token: 'A2', expires_in: 60, token_type: 'Bearer' }), {
+				headers: { 'Content-Type': 'application/json' },
+				status: 200,
+			});
 		});
 		const tok = await refreshAccessToken({
-			tokenEndpoint: 'https://as.example/token',
 			clientId: 'cid',
 			clientSecret: null,
 			refreshToken: 'R',
+			tokenEndpoint: 'https://as.example/token',
 		});
 		expect(tok.access_token).toBe('A2');
 	});
@@ -319,10 +302,10 @@ describe('exchangeCode / refreshAccessToken', () => {
 		vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('nope', { status: 400 }));
 		await expect(
 			refreshAccessToken({
-				tokenEndpoint: 'https://as.example/token',
 				clientId: 'c',
 				clientSecret: null,
 				refreshToken: 'R',
+				tokenEndpoint: 'https://as.example/token',
 			}),
 		).rejects.toThrow(/Token endpoint/);
 	});

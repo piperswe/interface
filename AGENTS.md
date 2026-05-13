@@ -117,13 +117,69 @@ Practical guidance:
 | `npm run build` | Production build (vite + postbuild for DO export) |
 | `npm run preview` | `wrangler dev` against the production bundle |
 | `npm run deploy` | Build and `wrangler deploy` |
-| `npm run check` | Type-check (`svelte-check`) |
+| `npm run check` | `svelte-check` + remote-form usage + `biome check` |
+| `npm run lint` | `biome check` (lint + format + import sort, no writes) |
+| `npm run lint:fix` | `biome check --write` — auto-fix everything Biome can |
+| `npm run format` | `biome format --write` only |
 | `npm run test` | Run vitest |
 | `npx wrangler types` | Refresh `worker-configuration.d.ts` after binding changes |
 
 `vite dev` does not run the Workers runtime — it uses `getPlatformProxy` from
 the cloudflare adapter, which connects to a real workerd. DO RPC has limited
 support in proxy mode; for end-to-end DO behaviour, `npm run preview`.
+
+## Linting
+
+Biome (`biome.jsonc` at the repo root) is the single source of truth for
+formatting, linting, and import organisation. `experimentalFullSupportEnabled`
+is on, so `.svelte` files are checked alongside `.ts`/`.js`/`.css`/`.json`.
+
+**Run the linter against every change.** Before declaring work done:
+
+```bash
+npm run lint:fix   # auto-fix what Biome can
+npm run lint       # confirm zero diagnostics remain
+```
+
+`npm run check` also chains `biome check` after type-checking — running it is
+the single command that proves the change passes CI's gates locally.
+
+### Fix lint errors at the source — do not ignore them
+
+Each rule disabled in `biome.jsonc` carries a one-line comment explaining
+*why* it can't be applied here (SvelteKit's `+page.svelte` naming, D1
+snake_case column names, etc.). Do **not** add new rule-group disables in
+`biome.jsonc` without similar justification — and never disable a rule in
+order to make a single call site quiet.
+
+For genuine one-off escape hatches, the only acceptable pattern is a
+per-line suppression with a concrete reason:
+
+```ts
+// biome-ignore lint/<group>/<rule>: <why this specific site can't satisfy the rule>
+```
+
+A bare suppression without justification will be flagged in review. If you
+find yourself reaching for a suppression three times in the same change,
+the rule probably needs to be downgraded in `biome.jsonc` instead — discuss
+in the PR.
+
+CI runs `biome ci --reporter=github` and fails the build on any
+diagnostic. Do not bypass it (no `--max-diagnostics=0`, no `--skip`,
+no env-var overrides).
+
+### Test helper
+
+Tests that previously relied on `value!` non-null assertions should use the
+`assertDefined` helper at `test/assert-defined.ts`:
+
+```ts
+import { assertDefined } from '../../../test/assert-defined';
+
+const row = await getThing();
+assertDefined(row);          // narrows row to NonNullable<T>
+expect(row.id).toBe('x');    // no `!` needed
+```
 
 ## Sandbox SSH key
 

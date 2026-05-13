@@ -4,14 +4,8 @@
 // serialised in-memory.
 
 import { now as nowMs } from '../clock';
-import {
-	exchangeCode,
-	refreshAccessToken,
-	expiresAtFromResponse,
-	STATE_TTL_MS,
-	type TokenResponse,
-} from './oauth';
 import { setMcpServerOauthTokens } from '../mcp_servers';
+import { exchangeCode, expiresAtFromResponse, refreshAccessToken, STATE_TTL_MS, type TokenResponse } from './oauth';
 import type { McpOauthState } from './types';
 
 export type StoredAuthState = {
@@ -50,10 +44,10 @@ export async function consumeAuthState(env: Env, state: string): Promise<StoredA
 	await env.DB.prepare('DELETE FROM mcp_oauth_state WHERE state = ?').bind(state).run();
 	if (row.expires_at < nowMs()) return null;
 	return {
-		state: row.state,
-		serverId: row.server_id,
 		codeVerifier: row.code_verifier,
 		redirectUri: row.redirect_uri,
+		serverId: row.server_id,
+		state: row.state,
 	};
 }
 
@@ -71,15 +65,10 @@ const REFRESH_BUFFER_MS = 60_000;
 // Returns a valid access token for the given server, refreshing if needed.
 // `null` means the server has no usable token (never connected, or refresh
 // failed and there's no fallback).
-export async function getValidAccessToken(
-	env: Env,
-	serverId: number,
-	oauth: McpOauthState | null,
-): Promise<string | null> {
-	if (!oauth || !oauth.accessToken) return null;
+export async function getValidAccessToken(env: Env, serverId: number, oauth: McpOauthState | null): Promise<string | null> {
+	if (!oauth?.accessToken) return null;
 	const expiresAt = oauth.expiresAt;
-	const needsRefresh =
-		expiresAt != null && expiresAt - REFRESH_BUFFER_MS < nowMs() && !!oauth.refreshToken;
+	const needsRefresh = expiresAt != null && expiresAt - REFRESH_BUFFER_MS < nowMs() && !!oauth.refreshToken;
 	if (!needsRefresh) return oauth.accessToken;
 
 	const existing = refreshInFlight.get(serverId);
@@ -89,11 +78,11 @@ export async function getValidAccessToken(
 		try {
 			if (!oauth.tokenEndpoint || !oauth.clientId || !oauth.refreshToken) return oauth.accessToken;
 			const refreshed = await refreshAccessToken({
-				tokenEndpoint: oauth.tokenEndpoint,
 				clientId: oauth.clientId,
 				clientSecret: oauth.clientSecret,
 				refreshToken: oauth.refreshToken,
 				scopes: oauth.scopes,
+				tokenEndpoint: oauth.tokenEndpoint,
 			});
 			// RFC 6749 §6: if the AS omits a new refresh_token, the client
 			// MUST retain the existing refresh token. Thread the previous
@@ -101,8 +90,8 @@ export async function getValidAccessToken(
 			// operator's enabled/disabled choice — a background refresh
 			// should not re-enable a server the operator paused.
 			await persistTokens(env, serverId, refreshed, {
-				previousRefreshToken: oauth.refreshToken,
 				preserveEnabled: true,
+				previousRefreshToken: oauth.refreshToken,
 			});
 			return refreshed.access_token;
 		} catch {
@@ -130,21 +119,15 @@ export type PersistTokensOptions = {
 	preserveEnabled?: boolean;
 };
 
-export async function persistTokens(
-	env: Env,
-	serverId: number,
-	token: TokenResponse,
-	options: PersistTokensOptions = {},
-): Promise<void> {
-	const refreshToken =
-		token.refresh_token ?? options.previousRefreshToken ?? null;
+export async function persistTokens(env: Env, serverId: number, token: TokenResponse, options: PersistTokensOptions = {}): Promise<void> {
+	const refreshToken = token.refresh_token ?? options.previousRefreshToken ?? null;
 	await setMcpServerOauthTokens(
 		env,
 		serverId,
 		{
 			accessToken: token.access_token,
-			refreshToken,
 			expiresAt: expiresAtFromResponse(token, nowMs()),
+			refreshToken,
 		},
 		{ reEnable: !options.preserveEnabled },
 	);
@@ -161,12 +144,12 @@ export async function exchangeAndPersist(
 	redirectUri: string,
 ): Promise<TokenResponse> {
 	const tokens = await exchangeCode({
-		tokenEndpoint,
 		clientId,
 		clientSecret,
 		code,
 		codeVerifier,
 		redirectUri,
+		tokenEndpoint,
 	});
 	await persistTokens(env, serverId, tokens);
 	return tokens;

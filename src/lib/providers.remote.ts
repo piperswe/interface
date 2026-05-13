@@ -1,17 +1,21 @@
-import { form, command, getRequestEvent } from '$app/server';
 import { error, redirect } from '@sveltejs/kit';
 import { z } from 'zod';
-import { createProvider, deleteProvider, getProvider, updateProvider, isValidProviderId } from '$lib/server/providers/store';
-import { createModel, deleteModel, getModel, listModelsForProvider, moveModelToPosition, updateModel, swapModelOrder } from '$lib/server/providers/models';
+import { command, form, getRequestEvent } from '$app/server';
 import { fetchOpenRouterModels } from '$lib/server/providers/fetch';
-import { getPresetById } from '$lib/server/providers/presets';
+import {
+	createModel,
+	deleteModel,
+	getModel,
+	listModelsForProvider,
+	moveModelToPosition,
+	swapModelOrder,
+	updateModel,
+} from '$lib/server/providers/models';
 import { fetchModelsDevCatalog, mapToCreateModelInput } from '$lib/server/providers/modelsDev';
 import { fetchOpenRouterCatalog, mapOpenRouterToCreateModelInput } from '$lib/server/providers/openRouter';
-import {
-	checkboxBoolean,
-	trimmedNonEmpty,
-	trimmedOptionalOrNull,
-} from '$lib/server/remote-schemas';
+import { getPresetById } from '$lib/server/providers/presets';
+import { createProvider, deleteProvider, getProvider, isValidProviderId, updateProvider } from '$lib/server/providers/store';
+import { checkboxBoolean, trimmedNonEmpty, trimmedOptionalOrNull } from '$lib/server/remote-schemas';
 
 function getEnv(): Env {
 	const event = getRequestEvent();
@@ -29,13 +33,13 @@ const providerIdField = z
 
 export const saveProvider = form(
 	z.object({
+		api_key: trimmedOptionalOrNull,
+		endpoint: trimmedOptionalOrNull,
+		gateway_id: trimmedOptionalOrNull,
 		id: providerIdField,
 		type: z.enum(['anthropic', 'openai_compatible'], {
 			errorMap: (_issue, ctx) => ({ message: `Invalid provider type: ${ctx.data}` }),
 		}),
-		api_key: trimmedOptionalOrNull,
-		endpoint: trimmedOptionalOrNull,
-		gateway_id: trimmedOptionalOrNull,
 	}),
 	async ({ id, type, api_key, endpoint, gateway_id }) => {
 		const env = getEnv();
@@ -46,20 +50,17 @@ export const saveProvider = form(
 		if (existing) {
 			await updateProvider(env, id, { apiKey: api_key, endpoint, gatewayId: gateway_id });
 		} else {
-			await createProvider(env, { id, type, apiKey: api_key, endpoint, gatewayId: gateway_id });
+			await createProvider(env, { apiKey: api_key, endpoint, gatewayId: gateway_id, id, type });
 		}
 
 		redirect(303, '/settings');
 	},
 );
 
-export const deleteProviderAction = form(
-	z.object({ id: trimmedNonEmpty('Provider ID required') }),
-	async ({ id }) => {
-		await deleteProvider(getEnv(), id);
-		redirect(303, '/settings');
-	},
-);
+export const deleteProviderAction = form(z.object({ id: trimmedNonEmpty('Provider ID required') }), async ({ id }) => {
+	await deleteProvider(getEnv(), id);
+	redirect(303, '/settings');
+});
 
 const optionalNonNegativeFloat = (label: string) =>
 	z
@@ -93,14 +94,13 @@ const optionalPositiveIntWithDefault = (defaultValue: number, label: string) =>
 
 export const saveProviderModel = form(
 	z.object({
-		provider_id: trimmedNonEmpty('Provider ID required'),
+		description: trimmedOptionalOrNull,
+		input_cost_per_million_tokens: optionalNonNegativeFloat('Input cost per million tokens'),
+		max_context_length: optionalPositiveIntWithDefault(128_000, 'Max context length must be a positive integer'),
 		model_id: trimmedNonEmpty('Model ID required'),
 		name: trimmedNonEmpty('Model name required'),
-		description: trimmedOptionalOrNull,
-		max_context_length: optionalPositiveIntWithDefault(
-			128_000,
-			'Max context length must be a positive integer',
-		),
+		output_cost_per_million_tokens: optionalNonNegativeFloat('Output cost per million tokens'),
+		provider_id: trimmedNonEmpty('Provider ID required'),
 		reasoning_type: z
 			.string()
 			.optional()
@@ -110,8 +110,6 @@ export const saveProviderModel = form(
 				ctx.addIssue({ code: 'custom', message: `Invalid reasoning type: ${v}` });
 				return z.NEVER;
 			}),
-		input_cost_per_million_tokens: optionalNonNegativeFloat('Input cost per million tokens'),
-		output_cost_per_million_tokens: optionalNonNegativeFloat('Output cost per million tokens'),
 		supports_image_input: checkboxBoolean,
 	}),
 	async ({
@@ -130,23 +128,23 @@ export const saveProviderModel = form(
 
 		if (existing) {
 			await updateModel(env, provider_id, model_id, {
-				name,
 				description,
-				maxContextLength: max_context_length,
-				reasoningType: reasoning_type,
 				inputCostPerMillionTokens: input_cost_per_million_tokens,
+				maxContextLength: max_context_length,
+				name,
 				outputCostPerMillionTokens: output_cost_per_million_tokens,
+				reasoningType: reasoning_type,
 				supportsImageInput: supports_image_input,
 			});
 		} else {
 			await createModel(env, provider_id, {
-				id: model_id,
-				name,
 				description,
-				maxContextLength: max_context_length,
-				reasoningType: reasoning_type,
+				id: model_id,
 				inputCostPerMillionTokens: input_cost_per_million_tokens,
+				maxContextLength: max_context_length,
+				name,
 				outputCostPerMillionTokens: output_cost_per_million_tokens,
+				reasoningType: reasoning_type,
 				supportsImageInput: supports_image_input,
 			});
 		}
@@ -157,8 +155,8 @@ export const saveProviderModel = form(
 
 export const deleteProviderModel = form(
 	z.object({
-		provider_id: trimmedNonEmpty('Provider ID and Model ID required'),
 		model_id: trimmedNonEmpty('Provider ID and Model ID required'),
+		provider_id: trimmedNonEmpty('Provider ID and Model ID required'),
 	}),
 	async ({ provider_id, model_id }) => {
 		await deleteModel(getEnv(), provider_id, model_id);
@@ -168,11 +166,11 @@ export const deleteProviderModel = form(
 
 export const reorderProviderModel = form(
 	z.object({
-		provider_id: trimmedNonEmpty('Provider ID and Model ID required'),
-		model_id: trimmedNonEmpty('Provider ID and Model ID required'),
 		direction: z.enum(['up', 'down'], {
 			errorMap: () => ({ message: 'Direction must be up or down' }),
 		}),
+		model_id: trimmedNonEmpty('Provider ID and Model ID required'),
+		provider_id: trimmedNonEmpty('Provider ID and Model ID required'),
 	}),
 	async ({ provider_id, model_id, direction }) => {
 		const env = getEnv();
@@ -193,9 +191,9 @@ export const reorderProviderModel = form(
 
 export const moveProviderModel = command(
 	z.object({
-		provider_id: trimmedNonEmpty('Provider ID required'),
-		model_id: trimmedNonEmpty('Model ID required'),
 		before_model_id: z.string().optional(),
+		model_id: trimmedNonEmpty('Model ID required'),
+		provider_id: trimmedNonEmpty('Provider ID required'),
 	}),
 	async ({ provider_id, model_id, before_model_id }) => {
 		await moveModelToPosition(getEnv(), provider_id, model_id, before_model_id || null);
@@ -204,11 +202,11 @@ export const moveProviderModel = command(
 
 export const addPresetProvider = form(
 	z.object({
-		id: trimmedNonEmpty('Preset ID required'),
-		provider_id: providerIdField,
 		api_key: trimmedOptionalOrNull,
 		endpoint: trimmedOptionalOrNull,
+		id: trimmedNonEmpty('Preset ID required'),
 		model_ids: z.string().optional().default(''),
+		provider_id: providerIdField,
 	}),
 	async ({ id: presetId, provider_id, api_key, endpoint, model_ids }) => {
 		const preset = getPresetById(presetId);
@@ -225,24 +223,23 @@ export const addPresetProvider = form(
 
 		// Create the provider
 		await createProvider(env, {
-			id: provider_id,
-			type: preset.type,
 			apiKey: api_key,
 			endpoint: endpoint || preset.defaultEndpoint || null,
+			id: provider_id,
+			type: preset.type,
 		});
 
 		// Add selected models (or all default models if none selected)
 		const selectedIds = model_ids ? model_ids.split(',').filter(Boolean) : [];
-		const modelsToAdd =
-			selectedIds.length > 0 ? preset.defaultModels.filter((m) => selectedIds.includes(m.id)) : preset.defaultModels;
+		const modelsToAdd = selectedIds.length > 0 ? preset.defaultModels.filter((m) => selectedIds.includes(m.id)) : preset.defaultModels;
 
 		for (let i = 0; i < modelsToAdd.length; i++) {
 			const m = modelsToAdd[i];
 			await createModel(env, provider_id, {
-				id: m.id,
-				name: m.name,
 				description: m.description ?? null,
+				id: m.id,
 				maxContextLength: m.maxContextLength,
+				name: m.name,
 				reasoningType: m.reasoningType ?? null,
 				sortOrder: i * 10, // leave gaps for future inserts
 			});
@@ -254,8 +251,8 @@ export const addPresetProvider = form(
 
 export const fetchPresetModels = command(
 	z.object({
-		preset_id: trimmedNonEmpty('Preset ID required'),
 		api_key: z.string().trim().optional(),
+		preset_id: trimmedNonEmpty('Preset ID required'),
 	}),
 	async ({ preset_id, api_key }) => {
 		const preset = getPresetById(preset_id);
@@ -279,9 +276,9 @@ export const searchModelsDev = command(z.void(), async () => {
 
 export const importModelsFromDev = form(
 	z.object({
-		provider_id: trimmedNonEmpty('Provider ID required'),
-		model_keys: trimmedNonEmpty('Select at least one model'),
 		id_prefix: z.string().optional().default(''),
+		model_keys: trimmedNonEmpty('Select at least one model'),
+		provider_id: trimmedNonEmpty('Provider ID required'),
 	}),
 	async ({ provider_id, model_keys, id_prefix }) => {
 		const env = getEnv();
@@ -331,8 +328,8 @@ export const searchOpenRouter = command(z.void(), async () => {
 
 export const importModelsFromOpenRouter = form(
 	z.object({
-		provider_id: trimmedNonEmpty('Provider ID required'),
 		model_keys: trimmedNonEmpty('Select at least one model'),
+		provider_id: trimmedNonEmpty('Provider ID required'),
 	}),
 	async ({ provider_id, model_keys }) => {
 		const env = getEnv();

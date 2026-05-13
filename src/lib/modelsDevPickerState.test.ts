@@ -1,35 +1,35 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { computeAutoPrefixUpdate } from './modelsDevPickerState';
 
 describe('computeAutoPrefixUpdate', () => {
 	it('auto-fills on the first filter selection', () => {
 		const result = computeAutoPrefixUpdate({
-			providerType: 'openai_compatible',
+			currentPrefix: '',
 			filter: 'anthropic',
 			previousAutoFilter: '',
-			currentPrefix: '',
+			providerType: 'openai_compatible',
 		});
-		expect(result).toEqual({ prefix: 'anthropic/', autoFilter: 'anthropic' });
+		expect(result).toEqual({ autoFilter: 'anthropic', prefix: 'anthropic/' });
 	});
 
 	it('updates the prefix when switching between filters and the user has not customized', () => {
 		const result = computeAutoPrefixUpdate({
-			providerType: 'openai_compatible',
+			currentPrefix: 'anthropic/',
 			filter: 'openai',
 			previousAutoFilter: 'anthropic',
-			currentPrefix: 'anthropic/',
+			providerType: 'openai_compatible',
 		});
-		expect(result).toEqual({ prefix: 'openai/', autoFilter: 'openai' });
+		expect(result).toEqual({ autoFilter: 'openai', prefix: 'openai/' });
 	});
 
 	it('leaves a user-customized prefix alone when the filter changes', () => {
 		const result = computeAutoPrefixUpdate({
-			providerType: 'openai_compatible',
+			currentPrefix: 'custom/',
 			filter: 'openai',
 			previousAutoFilter: 'anthropic',
-			currentPrefix: 'custom/',
+			providerType: 'openai_compatible',
 		});
-		expect(result).toEqual({ prefix: 'custom/', autoFilter: 'openai' });
+		expect(result).toEqual({ autoFilter: 'openai', prefix: 'custom/' });
 	});
 
 	// Regression: the previous implementation treated an empty prefix as
@@ -37,12 +37,12 @@ describe('computeAutoPrefixUpdate', () => {
 	// every reactive tick. Users couldn't keep the prefix empty.
 	it('no-ops when the filter has not changed since the last auto-fill (preserves a user-cleared empty prefix)', () => {
 		const result = computeAutoPrefixUpdate({
-			providerType: 'openai_compatible',
+			currentPrefix: '',
 			filter: 'anthropic',
 			previousAutoFilter: 'anthropic',
-			currentPrefix: '',
+			providerType: 'openai_compatible',
 		});
-		expect(result).toEqual({ prefix: '', autoFilter: 'anthropic' });
+		expect(result).toEqual({ autoFilter: 'anthropic', prefix: '' });
 	});
 
 	// Regression companion: once the user clears the auto-filled prefix, the
@@ -51,31 +51,31 @@ describe('computeAutoPrefixUpdate', () => {
 	// removed.
 	it('preserves a user-cleared empty prefix across filter changes', () => {
 		const result = computeAutoPrefixUpdate({
-			providerType: 'openai_compatible',
+			currentPrefix: '',
 			filter: 'openai',
 			previousAutoFilter: 'anthropic',
-			currentPrefix: '',
+			providerType: 'openai_compatible',
 		});
-		expect(result).toEqual({ prefix: '', autoFilter: 'openai' });
+		expect(result).toEqual({ autoFilter: 'openai', prefix: '' });
 	});
 
 	it('clears the auto-filled prefix when the filter is cleared', () => {
 		const result = computeAutoPrefixUpdate({
-			providerType: 'openai_compatible',
+			currentPrefix: 'anthropic/',
 			filter: '',
 			previousAutoFilter: 'anthropic',
-			currentPrefix: 'anthropic/',
+			providerType: 'openai_compatible',
 		});
-		expect(result).toEqual({ prefix: '', autoFilter: '' });
+		expect(result).toEqual({ autoFilter: '', prefix: '' });
 	});
 
 	it('never modifies state for anthropic-typed providers', () => {
 		const result = computeAutoPrefixUpdate({
-			providerType: 'anthropic',
+			currentPrefix: '',
 			filter: 'anthropic',
 			previousAutoFilter: '',
-			currentPrefix: '',
+			providerType: 'anthropic',
 		});
-		expect(result).toEqual({ prefix: '', autoFilter: '' });
+		expect(result).toEqual({ autoFilter: '', prefix: '' });
 	});
 });

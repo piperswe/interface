@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MCP_SERVER_PRESETS, getMcpPreset } from './presets';
+import { getMcpPreset, MCP_SERVER_PRESETS } from './presets';
 
 describe('MCP_SERVER_PRESETS', () => {
 	it('every preset has id, label, url, transport, authMode, description', () => {

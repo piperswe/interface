@@ -5,7 +5,7 @@
 // JSON payloads stored in DB columns, form bodies — as untyped and run it
 // through a zod schema before treating it as a known shape.
 
-import { z, type ZodError, type ZodSchema, type ZodTypeAny } from 'zod';
+import { type ZodError, type ZodSchema, type ZodTypeAny, z } from 'zod';
 
 // Generic safe-parse-or-error helper. Returns either `{ ok: true, value }`
 // or `{ ok: false, error }`, where `error` is a short summary of the first
@@ -16,17 +16,13 @@ export function safeValidate<S extends ZodTypeAny>(
 ): { ok: true; value: z.infer<S> } | { ok: false; error: string } {
 	const parsed = schema.safeParse(data);
 	if (parsed.success) return { ok: true, value: parsed.data };
-	return { ok: false, error: formatZodError(parsed.error) };
+	return { error: formatZodError(parsed.error), ok: false };
 }
 
 // Throw on validation failure. Use when the caller would otherwise have
 // blindly cast the value with `as Type` — failures should be exceptional
 // and bubbling them up makes the bug visible.
-export function validateOrThrow<S extends ZodTypeAny>(
-	schema: S,
-	data: unknown,
-	context: string,
-): z.infer<S> {
+export function validateOrThrow<S extends ZodTypeAny>(schema: S, data: unknown, context: string): z.infer<S> {
 	const parsed = schema.safeParse(data);
 	if (parsed.success) return parsed.data;
 	throw new ValidationError(context, parsed.error);
@@ -55,10 +51,7 @@ export function formatZodError(error: ZodError): string {
 // Parse a JSON string and validate it in one step. Returns null on either
 // JSON syntax errors or schema mismatches; pass a logger if you need to
 // distinguish the two.
-export function parseJsonWith<S extends ZodTypeAny>(
-	schema: S,
-	json: string,
-): z.infer<S> | null {
+export function parseJsonWith<S extends ZodTypeAny>(schema: S, json: string): z.infer<S> | null {
 	let raw: unknown;
 	try {
 		raw = JSON.parse(json);
@@ -69,5 +62,5 @@ export function parseJsonWith<S extends ZodTypeAny>(
 	return parsed.success ? parsed.data : null;
 }
 
-export { z };
 export type { ZodSchema, ZodTypeAny };
+export { z };

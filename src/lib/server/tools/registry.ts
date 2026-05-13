@@ -85,15 +85,15 @@ export class ToolRegistry {
 	async execute(ctx: ToolContext, name: string, input: unknown): Promise<ToolExecutionResult> {
 		const tool = this.#tools.get(name);
 		if (!tool) {
-			return { content: `Unknown tool: ${name}`, isError: true, errorCode: 'not_found' };
+			return { content: `Unknown tool: ${name}`, errorCode: 'not_found', isError: true };
 		}
 		try {
 			return await tool.execute(ctx, input);
 		} catch (e) {
 			return {
 				content: e instanceof Error ? e.message : String(e),
-				isError: true,
 				errorCode: 'execution_failure',
+				isError: true,
 			};
 		}
 	}

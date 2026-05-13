@@ -33,19 +33,19 @@ export function resolveReasoningConfig(opts: {
 			return { thinking: { type: 'disabled' } };
 		}
 		if (reasoningType === 'effort') {
-			return { reasoning: { type: 'effort', effort: 'none' } };
+			return { reasoning: { effort: 'none', type: 'effort' } };
 		}
 		return {};
 	}
 	if (isNativeAnthropic) {
-		return { thinking: { type: 'enabled', budgetTokens: thinkingBudget } };
+		return { thinking: { budgetTokens: thinkingBudget, type: 'enabled' } };
 	}
 	if (reasoningType === 'effort') {
 		const effort = budgetToEffort(thinkingBudget);
-		return effort ? { reasoning: { type: 'effort', effort } } : {};
+		return effort ? { reasoning: { effort, type: 'effort' } } : {};
 	}
 	if (reasoningType === 'max_tokens') {
-		return { reasoning: { type: 'max_tokens', maxTokens: thinkingBudget } };
+		return { reasoning: { maxTokens: thinkingBudget, type: 'max_tokens' } };
 	}
 	return {};
 }

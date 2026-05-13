@@ -4,36 +4,36 @@ import type { WebSearchBackend } from '../search/types';
 import type { Tool, ToolCitation, ToolContext, ToolExecutionResult } from './registry';
 
 const inputArgsSchema = z.object({
-	query: z.string(),
 	count: z.number().optional(),
+	query: z.string(),
 });
 
 const inputSchema = {
-	type: 'object',
 	properties: {
-		query: { type: 'string', description: 'Search query.' },
 		count: {
-			type: 'integer',
-			minimum: 1,
-			maximum: 10,
 			description: 'Number of results to fetch (default 5).',
+			maximum: 10,
+			minimum: 1,
+			type: 'integer',
 		},
+		query: { description: 'Search query.', type: 'string' },
 	},
 	required: ['query'],
+	type: 'object',
 } as const;
 
 export function createWebSearchTool(backend: WebSearchBackend): Tool {
 	return {
 		definition: {
-			name: 'web_search',
 			description:
 				'Search the web for up-to-date information. Returns a list of result snippets with titles and URLs. Use when the answer depends on current events or facts the assistant may not have memorized.',
 			inputSchema,
+			name: 'web_search',
 		},
 		async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
 			const parsed = safeValidate(inputArgsSchema, input);
 			if (!parsed.ok) {
-				return { content: `Invalid input: ${parsed.error}`, isError: true, errorCode: 'invalid_input' };
+				return { content: `Invalid input: ${parsed.error}`, errorCode: 'invalid_input', isError: true };
 			}
 			const args = parsed.value;
 			// Schema says count ∈ [1, 10] but the model is free to ignore it.
@@ -70,7 +70,7 @@ export function createWebSearchTool(backend: WebSearchBackend): Tool {
 			};
 			const register = ctx.registerCitation ?? fallbackRegister;
 			for (const r of response.results) {
-				const c = { url: r.url, title: r.title, snippet: r.snippet };
+				const c = { snippet: r.snippet, title: r.title, url: r.url };
 				const idx = register(c);
 				lines.push(`\n[${idx}] ${r.title}\n  ${r.url}\n  ${r.snippet}`);
 			}
@@ -80,9 +80,7 @@ export function createWebSearchTool(backend: WebSearchBackend): Tool {
 			// `result.citations` is only set on the legacy path; the production
 			// path threads citations through `ctx.registerCitation`, which the
 			// loop accumulates directly.
-			return ctx.registerCitation
-				? { content: lines.join('\n') }
-				: { content: lines.join('\n'), citations };
+			return ctx.registerCitation ? { content: lines.join('\n') } : { citations, content: lines.join('\n') };
 		},
 	};
 }

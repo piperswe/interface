@@ -1,5 +1,7 @@
 import { env } from 'cloudflare:test';
 import { afterEach, describe, expect, it } from 'vitest';
+import { assertDefined } from '../../../test/assert-defined';
+import { createConversation } from './conversations';
 import {
 	addTagToConversation,
 	createTag,
@@ -8,11 +10,10 @@ import {
 	listTags,
 	removeTagFromConversation,
 	renameTag,
+	TAG_COLORS,
 	tagsForConversation,
 	tagsForConversations,
-	TAG_COLORS,
 } from './tags';
-import { createConversation } from './conversations';
 
 afterEach(async () => {
 	await env.DB.prepare('DELETE FROM conversation_tags').run();
@@ -35,16 +36,14 @@ describe('isValidColor', () => {
 		expect(isValidColor(7 as unknown as string)).toBe(false);
 	});
 	it('TAG_COLORS exposes the canonical palette in a predictable order', () => {
-		expect(TAG_COLORS).toEqual([
-			'gray', 'red', 'orange', 'amber', 'green', 'teal', 'blue', 'indigo', 'purple', 'pink',
-		]);
+		expect(TAG_COLORS).toEqual(['gray', 'red', 'orange', 'amber', 'green', 'teal', 'blue', 'indigo', 'purple', 'pink']);
 	});
 });
 
 describe('createTag + listTags', () => {
 	it('round-trips a tag through create + list + listTags ordering', async () => {
 		const id1 = await createTag(env, { name: 'work' });
-		const id2 = await createTag(env, { name: 'personal', color: 'pink' });
+		const id2 = await createTag(env, { color: 'pink', name: 'personal' });
 		expect(id1).toBeGreaterThan(0);
 		expect(id2).toBeGreaterThan(0);
 		expect(id2).not.toBe(id1);
@@ -52,8 +51,10 @@ describe('createTag + listTags', () => {
 		// listTags orders by name ascending.
 		expect(rows.map((r) => r.name)).toEqual(['personal', 'work']);
 		// `color` defaults to null when not provided.
-		const work = rows.find((r) => r.name === 'work')!;
-		const personal = rows.find((r) => r.name === 'personal')!;
+		const work = rows.find((r) => r.name === 'work');
+		const personal = rows.find((r) => r.name === 'personal');
+		assertDefined(work);
+		assertDefined(personal);
 		expect(work.color).toBeNull();
 		expect(personal.color).toBe('pink');
 		expect(work.createdAt).toBeGreaterThan(0);
@@ -77,7 +78,7 @@ describe('createTag + listTags', () => {
 	});
 
 	it('coerces an unknown color to null', async () => {
-		const id = await createTag(env, { name: 'odd', color: 'magenta' });
+		const id = await createTag(env, { color: 'magenta', name: 'odd' });
 		const rows = await listTags(env);
 		expect(rows.find((r) => r.id === id)?.color).toBeNull();
 	});
@@ -92,29 +93,29 @@ describe('createTag + listTags', () => {
 
 describe('renameTag', () => {
 	it('renames the tag and updates color independently', async () => {
-		const id = await createTag(env, { name: 'old', color: 'red' });
+		const id = await createTag(env, { color: 'red', name: 'old' });
 		await renameTag(env, id, { name: 'new' });
-		expect((await listTags(env)).find((r) => r.id === id)).toMatchObject({ name: 'new', color: 'red' });
+		expect((await listTags(env)).find((r) => r.id === id)).toMatchObject({ color: 'red', name: 'new' });
 		await renameTag(env, id, { color: 'blue' });
-		expect((await listTags(env)).find((r) => r.id === id)).toMatchObject({ name: 'new', color: 'blue' });
+		expect((await listTags(env)).find((r) => r.id === id)).toMatchObject({ color: 'blue', name: 'new' });
 	});
 
 	it('clears the color when set to null', async () => {
-		const id = await createTag(env, { name: 'x', color: 'red' });
+		const id = await createTag(env, { color: 'red', name: 'x' });
 		await renameTag(env, id, { color: null });
 		expect((await listTags(env)).find((r) => r.id === id)?.color).toBeNull();
 	});
 
 	it('coerces an unknown color to null on rename', async () => {
-		const id = await createTag(env, { name: 'x', color: 'red' });
+		const id = await createTag(env, { color: 'red', name: 'x' });
 		await renameTag(env, id, { color: 'magenta' });
 		expect((await listTags(env)).find((r) => r.id === id)?.color).toBeNull();
 	});
 
 	it('is a no-op when input has no fields', async () => {
-		const id = await createTag(env, { name: 'x', color: 'red' });
+		const id = await createTag(env, { color: 'red', name: 'x' });
 		await renameTag(env, id, {});
-		expect((await listTags(env)).find((r) => r.id === id)).toMatchObject({ name: 'x', color: 'red' });
+		expect((await listTags(env)).find((r) => r.id === id)).toMatchObject({ color: 'red', name: 'x' });
 	});
 
 	it('rejects an empty new name', async () => {
@@ -122,7 +123,7 @@ describe('renameTag', () => {
 		await expect(renameTag(env, id, { name: '   ' })).rejects.toThrow(/required/);
 	});
 
-	it('is scoped by user_id (does not rename another user\'s tag)', async () => {
+	it("is scoped by user_id (does not rename another user's tag)", async () => {
 		const id = await createTag(env, { name: 'shared' }, 1);
 		await renameTag(env, id, { name: 'hijacked' }, 2);
 		expect((await listTags(env, 1)).find((r) => r.id === id)?.name).toBe('shared');
@@ -197,8 +198,8 @@ describe('tagsForConversations', () => {
 		await addTagToConversation(env, c1, tagPersonal);
 		await addTagToConversation(env, c2, tagWork);
 		const m = await tagsForConversations(env, [c1, c2]);
-		expect(m.get(c1)!.map((t) => t.name)).toEqual(['personal', 'work']);
-		expect(m.get(c2)!.map((t) => t.name)).toEqual(['work']);
+		expect(m.get(c1)?.map((t) => t.name)).toEqual(['personal', 'work']);
+		expect(m.get(c2)?.map((t) => t.name)).toEqual(['work']);
 	});
 
 	it('omits conversations that have no tags', async () => {

@@ -3,6 +3,7 @@ import { isHttpError } from '@sveltejs/kit';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createConversation } from '$lib/server/conversations';
 import { getConversationStub } from '$lib/server/durable_objects';
+import { assertDefined } from '../../../../../test/assert-defined';
 import { GET } from './+server';
 
 afterEach(async () => {
@@ -13,9 +14,9 @@ async function callGet(conversationId: string, opts?: { platform?: unknown }): P
 	const url = new URL(`http://localhost/c/${conversationId}/events`);
 	const event = {
 		params: { id: conversationId },
-		url,
 		platform: opts && 'platform' in opts ? opts.platform : { env },
 		request: new Request(url.toString()),
+		url,
 	} as Parameters<typeof GET>[0];
 	return GET(event);
 }
@@ -36,10 +37,7 @@ describe('events +server.ts — GET (SSE proxy)', () => {
 	});
 
 	it('returns 500 when platform is missing', async () => {
-		await expectError(
-			callGet('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', { platform: undefined }),
-			500,
-		);
+		await expectError(callGet('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', { platform: undefined }), 500);
 	});
 
 	it('proxies the DO subscribe stream as text/event-stream with caching disabled', async () => {
@@ -56,7 +54,8 @@ describe('events +server.ts — GET (SSE proxy)', () => {
 		expect(res.headers.get('Content-Type')).toBe('text/event-stream');
 		expect(res.headers.get('Cache-Control')).toBe('no-cache, no-transform');
 		expect(res.headers.get('X-Accel-Buffering')).toBe('no');
-		const reader = res.body!.getReader();
+		assertDefined(res.body);
+		const reader = res.body.getReader();
 		const decoder = new TextDecoder();
 		let buffer = '';
 		while (!buffer.includes('event: sync')) {

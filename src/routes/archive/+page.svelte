@@ -1,8 +1,8 @@
 <script lang="ts">
-	import type { PageData } from './$types';
 	import { destroy, unarchive } from '$lib/conversations.remote';
 	import { fmtRelative } from '$lib/formatters';
 	import { pushToast } from '$lib/toasts';
+	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
 	let now = $state(Date.now());

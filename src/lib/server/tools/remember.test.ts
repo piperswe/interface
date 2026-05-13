@@ -1,8 +1,8 @@
 import { env } from 'cloudflare:test';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createRememberTool } from './remember';
 import { listMemories } from '../memories';
 import type { ToolContext } from './registry';
+import { createRememberTool } from './remember';
 
 afterEach(async () => {
 	await env.DB.prepare('DELETE FROM memories').run();
@@ -10,9 +10,9 @@ afterEach(async () => {
 
 function makeCtx(overrides: Partial<ToolContext> = {}): ToolContext {
 	return {
-		env,
-		conversationId: 'conv-id',
 		assistantMessageId: 'asst-id',
+		conversationId: 'conv-id',
+		env,
 		modelId: 'p/m',
 		...overrides,
 	};
@@ -23,8 +23,8 @@ describe('remember tool', () => {
 		const t = createRememberTool();
 		expect(t.definition.name).toBe('remember');
 		expect(t.definition.inputSchema).toMatchObject({
-			type: 'object',
 			required: ['content'],
+			type: 'object',
 		});
 	});
 
@@ -37,8 +37,8 @@ describe('remember tool', () => {
 		expect(rows).toHaveLength(1);
 		expect(rows[0]).toMatchObject({
 			content: 'My dog is named Pepper.',
-			type: 'auto',
 			source: 'tool:remember',
+			type: 'auto',
 		});
 	});
 

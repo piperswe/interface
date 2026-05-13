@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit';
+import { CONVERSATION_ID_PATTERN } from '$lib/conversation-id';
 import { getConversation } from '$lib/server/conversations';
 import { getConversationStub } from '$lib/server/durable_objects';
-import { CONVERSATION_ID_PATTERN } from '$lib/conversation-id';
 import type { ConversationState, MessagePart, MessageRow } from '$lib/types/conversation';
 import type { RequestHandler } from './$types';
 
@@ -15,7 +15,13 @@ function partToMarkdown(p: MessagePart): string {
 		case 'text':
 			return p.text;
 		case 'thinking':
-			return `> _thinking_\n>\n` + p.text.split('\n').map((l) => `> ${l}`).join('\n');
+			return (
+				`> _thinking_\n>\n` +
+				p.text
+					.split('\n')
+					.map((l) => `> ${l}`)
+					.join('\n')
+			);
 		case 'tool_use':
 			return [
 				`<details><summary>tool call: <code>${p.name}</code></summary>`,
@@ -26,44 +32,32 @@ function partToMarkdown(p: MessagePart): string {
 				'</details>',
 			].join('\n');
 		case 'tool_result':
-			return [
-				`<details><summary>tool result${p.isError ? ' (error)' : ''}</summary>`,
-				'',
-				'```',
-				p.content,
-				'```',
-				'</details>',
-			].join('\n');
+			return [`<details><summary>tool result${p.isError ? ' (error)' : ''}</summary>`, '', '```', p.content, '```', '</details>'].join('\n');
 		case 'info':
 			return `_${p.text}_`;
 		case 'citations':
 			if (p.citations.length === 0) return '';
-			return [
-				'**Sources:**',
-				'',
-				...p.citations.map((c) => `- [${c.title || c.url}](${c.url})${c.snippet ? `\n  ${c.snippet}` : ''}`),
-			].join('\n');
+			return ['**Sources:**', '', ...p.citations.map((c) => `- [${c.title || c.url}](${c.url})${c.snippet ? `\n  ${c.snippet}` : ''}`)].join(
+				'\n',
+			);
 	}
 }
 
 function messageToMarkdown(m: MessageRow): string {
 	const heading = `### ${m.role}${m.model ? ` · ${m.model}` : ''} — ${new Date(m.createdAt).toISOString()}`;
-	const body =
-		m.parts && m.parts.length > 0
-			? m.parts.map(partToMarkdown).filter(Boolean).join('\n\n')
-			: m.content || '_(empty)_';
+	const body = m.parts && m.parts.length > 0 ? m.parts.map(partToMarkdown).filter(Boolean).join('\n\n') : m.content || '_(empty)_';
 	const artifacts =
 		m.artifacts && m.artifacts.length > 0
 			? '\n\n' +
 				m.artifacts
 					.map(
-					(a) =>
-						`#### Artifact: ${a.name ?? a.type}${a.language ? ` (${a.language})` : ''} — v${a.version}\n\n` +
-						(a.type === 'code'
-							? '```' + (a.language ?? '') + '\n' + a.content + '\n```'
-							: a.type === 'html' || a.type === 'svg'
-								? '```html\n' + a.content + '\n```'
-								: a.content),
+						(a) =>
+							`#### Artifact: ${a.name ?? a.type}${a.language ? ` (${a.language})` : ''} — v${a.version}\n\n` +
+							(a.type === 'code'
+								? `\`\`\`${a.language ?? ''}\n${a.content}\n\`\`\``
+								: a.type === 'html' || a.type === 'svg'
+									? `\`\`\`html\n${a.content}\n\`\`\``
+									: a.content),
 					)
 					.join('\n\n')
 			: '';
@@ -86,37 +80,37 @@ export const GET: RequestHandler = async ({ params, url, platform }) => {
 
 	if (format === 'json') {
 		const payload = {
-			id: conversation.id,
-			title: conversation.title,
 			created_at: conversation.created_at,
-			updated_at: conversation.updated_at,
+			id: conversation.id,
 			messages: state.messages.map((m) => ({
-				id: m.id,
-				role: m.role,
-				model: m.model,
-				createdAt: m.createdAt,
-				content: m.content,
-				thinking: m.thinking ?? null,
-				parts: m.parts ?? null,
 				artifacts:
 					m.artifacts?.map((a) => ({
-						id: a.id,
-						type: a.type,
-						name: a.name,
-						version: a.version,
-						language: a.language ?? null,
 						content: a.content,
 						createdAt: a.createdAt,
+						id: a.id,
+						language: a.language ?? null,
+						name: a.name,
+						type: a.type,
+						version: a.version,
 					})) ?? null,
-				status: m.status,
+				content: m.content,
+				createdAt: m.createdAt,
 				error: m.error,
+				id: m.id,
+				model: m.model,
+				parts: m.parts ?? null,
+				role: m.role,
+				status: m.status,
+				thinking: m.thinking ?? null,
 				usage: m.meta?.usage ?? null,
 			})),
+			title: conversation.title,
+			updated_at: conversation.updated_at,
 		};
 		return new Response(JSON.stringify(payload, null, 2), {
 			headers: {
-				'Content-Type': 'application/json; charset=utf-8',
 				'Content-Disposition': `attachment; filename="${baseName}.json"`,
+				'Content-Type': 'application/json; charset=utf-8',
 			},
 		});
 	}
@@ -129,8 +123,8 @@ export const GET: RequestHandler = async ({ params, url, platform }) => {
 	].join('\n\n');
 	return new Response(md, {
 		headers: {
-			'Content-Type': 'text/markdown; charset=utf-8',
 			'Content-Disposition': `attachment; filename="${baseName}.md"`,
+			'Content-Type': 'text/markdown; charset=utf-8',
 		},
 	});
 };

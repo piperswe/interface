@@ -24,12 +24,12 @@ export type VadOpts = {
 };
 
 export const DEFAULT_VAD_OPTS: VadOpts = {
-	speechThresholdDb: -45,
-	silenceThresholdDb: -50,
+	frameIntervalMs: 20,
+	minSpeechMs: 400,
 	onsetFrames: 3,
 	silenceMs: 1500,
-	minSpeechMs: 400,
-	frameIntervalMs: 20,
+	silenceThresholdDb: -50,
+	speechThresholdDb: -45,
 };
 
 // Stricter onset for detecting barge-in while assistant TTS is playing
@@ -77,7 +77,7 @@ export type VadState = {
 };
 
 export function initialVadState(): VadState {
-	return { inSpeech: false, onsetRun: 0, speechMs: 0, silenceMs: 0 };
+	return { inSpeech: false, onsetRun: 0, silenceMs: 0, speechMs: 0 };
 }
 
 export type VadEvent = 'speech_onset' | 'turn_ended';
@@ -98,47 +98,44 @@ export function stepVad(state: VadState, db: number, opts: VadOpts): VadFrameRes
 			const onsetRun = state.onsetRun + 1;
 			if (onsetRun >= opts.onsetFrames) {
 				return {
+					event: 'speech_onset',
 					state: {
 						inSpeech: true,
 						onsetRun: 0,
-						speechMs: opts.frameIntervalMs * onsetRun,
 						silenceMs: 0,
+						speechMs: opts.frameIntervalMs * onsetRun,
 					},
-					event: 'speech_onset',
 				};
 			}
-			return { state: { ...state, onsetRun }, event: null };
+			return { event: null, state: { ...state, onsetRun } };
 		}
 		if (state.onsetRun > 0) {
-			return { state: { ...state, onsetRun: 0 }, event: null };
+			return { event: null, state: { ...state, onsetRun: 0 } };
 		}
-		return { state, event: null };
+		return { event: null, state };
 	}
 
 	if (db < opts.silenceThresholdDb) {
 		const silenceMs = state.silenceMs + opts.frameIntervalMs;
 		if (silenceMs >= opts.silenceMs && state.speechMs >= opts.minSpeechMs) {
-			return { state: initialVadState(), event: 'turn_ended' };
+			return { event: 'turn_ended', state: initialVadState() };
 		}
-		return { state: { ...state, silenceMs }, event: null };
+		return { event: null, state: { ...state, silenceMs } };
 	}
 
 	return {
+		event: null,
 		state: {
 			inSpeech: true,
 			onsetRun: 0,
-			speechMs: state.speechMs + opts.frameIntervalMs,
 			silenceMs: 0,
+			speechMs: state.speechMs + opts.frameIntervalMs,
 		},
-		event: null,
 	};
 }
 
 /** Convenience: drive the VAD over a dB sequence and collect the events. */
-export function runVad(
-	history: number[],
-	opts: VadOpts,
-): { events: VadEvent[]; state: VadState } {
+export function runVad(history: number[], opts: VadOpts): { events: VadEvent[]; state: VadState } {
 	let state = initialVadState();
 	const events: VadEvent[] = [];
 	for (const db of history) {

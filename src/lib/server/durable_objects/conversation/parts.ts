@@ -1,5 +1,5 @@
-import type { ContentBlock, Message } from '../../llm/LLM';
 import type { MessagePart } from '$lib/types/conversation';
+import type { ContentBlock, Message } from '../../llm/LLM';
 
 export function parseJson<T>(s: string | null): T | null {
 	if (!s) return null;
@@ -28,13 +28,13 @@ export function normalizeParts(parts: MessagePart[], reason: string): void {
 	for (let i = 0; i < parts.length; i++) {
 		const p = parts[i];
 		if (p.type === 'tool_result' && p.streaming && !matched.has(p.toolUseId)) {
-			parts[i] = { type: 'tool_result', toolUseId: p.toolUseId, content: reason, isError: true };
+			parts[i] = { content: reason, isError: true, toolUseId: p.toolUseId, type: 'tool_result' };
 			matched.add(p.toolUseId);
 		}
 	}
 	for (const p of parts) {
 		if (p.type !== 'tool_use' || matched.has(p.id)) continue;
-		parts.push({ type: 'tool_result', toolUseId: p.id, content: reason, isError: true });
+		parts.push({ content: reason, isError: true, toolUseId: p.id, type: 'tool_result' });
 		matched.add(p.id);
 	}
 }
@@ -85,36 +85,36 @@ export function partsToMessages(parts: MessagePart[]): Message[] {
 	let toolBlocks: ContentBlock[] = [];
 	const flushAssistant = () => {
 		if (asstBlocks.length > 0) {
-			out.push({ role: 'assistant', content: asstBlocks });
+			out.push({ content: asstBlocks, role: 'assistant' });
 			asstBlocks = [];
 		}
 	};
 	const flushTool = () => {
 		if (toolBlocks.length > 0) {
-			out.push({ role: 'tool', content: toolBlocks });
+			out.push({ content: toolBlocks, role: 'tool' });
 			toolBlocks = [];
 		}
 	};
 	for (const p of parts) {
 		if (p.type === 'text') {
 			flushTool();
-			asstBlocks.push({ type: 'text', text: p.text });
+			asstBlocks.push({ text: p.text, type: 'text' });
 		} else if (p.type === 'thinking') {
 			flushTool();
 			asstBlocks.push({
-				type: 'thinking',
 				text: p.text,
+				type: 'thinking',
 				...(p.signature ? { signature: p.signature } : {}),
 			});
 		} else if (p.type === 'tool_use') {
 			flushTool();
-			asstBlocks.push({ type: 'tool_use', id: p.id, name: p.name, input: p.input, thoughtSignature: p.thoughtSignature });
+			asstBlocks.push({ id: p.id, input: p.input, name: p.name, thoughtSignature: p.thoughtSignature, type: 'tool_use' });
 		} else if (p.type === 'tool_result') {
 			flushAssistant();
 			toolBlocks.push({
-				type: 'tool_result',
-				toolUseId: p.toolUseId,
 				content: p.content,
+				toolUseId: p.toolUseId,
+				type: 'tool_result',
 				...(p.isError ? { isError: true } : {}),
 			});
 		}

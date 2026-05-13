@@ -1,6 +1,6 @@
 <script lang="ts">
-	import type { Artifact } from '$lib/types/conversation';
 	import { ArrowRight } from 'lucide-svelte';
+	import type { Artifact } from '$lib/types/conversation';
 
 	let {
 		artifact,

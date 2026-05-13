@@ -9,9 +9,7 @@ export type WebSearchResult = {
 	publishedAt?: string | null;
 };
 
-export type WebSearchResponse =
-	| { ok: true; results: WebSearchResult[] }
-	| { ok: false; error: string };
+export type WebSearchResponse = { ok: true; results: WebSearchResult[] } | { ok: false; error: string };
 
 export interface WebSearchBackend {
 	readonly id: string;

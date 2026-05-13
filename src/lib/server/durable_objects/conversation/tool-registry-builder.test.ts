@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildToolRegistry, type ConversationContext, type McpCache } from './tool-registry-builder';
 import type { ProviderModel } from '../../providers/types';
+import { buildToolRegistry, type ConversationContext, type McpCache } from './tool-registry-builder';
 
 // Regression coverage for `buildToolRegistry`. The registry's job is to
 // expose the right tool set for a turn given the current model + context.
@@ -13,31 +13,31 @@ import type { ProviderModel } from '../../providers/types';
 
 function makeModel(providerId: string, id: string): ProviderModel {
 	return {
-		id,
-		providerId,
-		name: id,
-		description: null,
-		maxContextLength: 128_000,
-		reasoningType: null,
-		inputCostPerMillionTokens: null,
-		outputCostPerMillionTokens: null,
-		supportsImageInput: false,
-		sortOrder: 0,
 		createdAt: 0,
+		description: null,
+		id,
+		inputCostPerMillionTokens: null,
+		maxContextLength: 128_000,
+		name: id,
+		outputCostPerMillionTokens: null,
+		providerId,
+		reasoningType: null,
+		sortOrder: 0,
+		supportsImageInput: false,
 		updatedAt: 0,
 	};
 }
 
 function makeContext(overrides: Partial<ConversationContext> = {}): ConversationContext {
 	return {
-		systemPrompt: null,
-		userBio: null,
 		allModels: [],
-		subAgents: [],
+		customTools: [],
 		mcpServers: [],
 		memories: [],
 		styles: [],
-		customTools: [],
+		subAgents: [],
+		systemPrompt: null,
+		userBio: null,
 		...overrides,
 	};
 }
@@ -70,15 +70,15 @@ describe('buildToolRegistry', () => {
 				allModels: [makeModel('p', 'm')],
 				subAgents: [
 					{
-						id: 1,
-						name: 'researcher',
-						description: 'researches stuff',
-						systemPrompt: 'be thorough',
-						model: null,
-						maxIterations: null,
 						allowedTools: null,
-						enabled: true,
 						createdAt: 0,
+						description: 'researches stuff',
+						enabled: true,
+						id: 1,
+						maxIterations: null,
+						model: null,
+						name: 'researcher',
+						systemPrompt: 'be thorough',
 						updatedAt: 0,
 					},
 				],
@@ -97,15 +97,15 @@ describe('buildToolRegistry', () => {
 				allModels: [makeModel('p', 'm')],
 				subAgents: [
 					{
-						id: 1,
-						name: 'researcher',
-						description: 'researches stuff',
-						systemPrompt: 'be thorough',
-						model: null,
-						maxIterations: null,
 						allowedTools: null,
-						enabled: false,
 						createdAt: 0,
+						description: 'researches stuff',
+						enabled: false,
+						id: 1,
+						maxIterations: null,
+						model: null,
+						name: 'researcher',
+						systemPrompt: 'be thorough',
 						updatedAt: 0,
 					},
 				],

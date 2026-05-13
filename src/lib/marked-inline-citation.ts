@@ -12,8 +12,12 @@ export function markedInlineCitation() {
 	return {
 		extensions: [
 			{
-				name: 'inlineCitation',
 				level: 'inline' as const,
+				name: 'inlineCitation',
+				renderer(token: { number: number }) {
+					const n = token.number;
+					return `<sup class="citation-ref"><a href="#cite-${n}" data-citation="${n}">[${n}]</a></sup>`;
+				},
 				start(src: string) {
 					const i = src.indexOf('[');
 					return i === -1 ? undefined : i;
@@ -34,14 +38,10 @@ export function markedInlineCitation() {
 					// almost certainly a year, not a citation).
 					if (n <= 0 || n > 99) return undefined;
 					return {
-						type: 'inlineCitation',
-						raw: match[0],
 						number: n,
+						raw: match[0],
+						type: 'inlineCitation',
 					};
-				},
-				renderer(token: { number: number }) {
-					const n = token.number;
-					return `<sup class="citation-ref"><a href="#cite-${n}" data-citation="${n}">[${n}]</a></sup>`;
 				},
 			},
 		],

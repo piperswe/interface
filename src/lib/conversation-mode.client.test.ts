@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { nextPhase, type ConversationModePhase } from './conversation-mode.client';
+import { type ConversationModePhase, nextPhase } from './conversation-mode.client';
 
 describe('nextPhase', () => {
 	it('toggle_on takes us from idle to listening', () => {
@@ -12,15 +12,7 @@ describe('nextPhase', () => {
 	});
 
 	it('toggle_off resets any phase to idle', () => {
-		const phases: ConversationModePhase[] = [
-			'listening',
-			'recording',
-			'transcribing',
-			'sending',
-			'thinking',
-			'speaking',
-			'error',
-		];
+		const phases: ConversationModePhase[] = ['listening', 'recording', 'transcribing', 'sending', 'thinking', 'speaking', 'error'];
 		for (const p of phases) {
 			expect(nextPhase(p, { type: 'toggle_off' })).toBe('idle');
 		}
@@ -29,7 +21,7 @@ describe('nextPhase', () => {
 	it('happy path: listening → recording → transcribing → sending → thinking → speaking → listening', () => {
 		expect(nextPhase('listening', { type: 'speech_onset' })).toBe('recording');
 		expect(nextPhase('recording', { type: 'turn_ended' })).toBe('transcribing');
-		expect(nextPhase('transcribing', { type: 'transcribed', text: 'hello' })).toBe('sending');
+		expect(nextPhase('transcribing', { text: 'hello', type: 'transcribed' })).toBe('sending');
 		expect(nextPhase('sending', { type: 'sent' })).toBe('thinking');
 		expect(nextPhase('thinking', { type: 'assistant_complete' })).toBe('speaking');
 		expect(nextPhase('speaking', { type: 'tts_ended' })).toBe('listening');
@@ -40,20 +32,12 @@ describe('nextPhase', () => {
 	});
 
 	it('empty transcript bounces back to listening instead of sending', () => {
-		expect(nextPhase('transcribing', { type: 'transcribed', text: '' })).toBe('listening');
-		expect(nextPhase('transcribing', { type: 'transcribed', text: '   ' })).toBe('listening');
+		expect(nextPhase('transcribing', { text: '', type: 'transcribed' })).toBe('listening');
+		expect(nextPhase('transcribing', { text: '   ', type: 'transcribed' })).toBe('listening');
 	});
 
 	it('fail event always transitions to error', () => {
-		const phases: ConversationModePhase[] = [
-			'idle',
-			'listening',
-			'recording',
-			'transcribing',
-			'sending',
-			'thinking',
-			'speaking',
-		];
+		const phases: ConversationModePhase[] = ['idle', 'listening', 'recording', 'transcribing', 'sending', 'thinking', 'speaking'];
 		for (const p of phases) {
 			expect(nextPhase(p, { type: 'fail' })).toBe('error');
 		}

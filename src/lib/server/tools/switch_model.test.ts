@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createSwitchModelTool } from './switch_model';
 import type { ToolContext } from './registry';
+import { createSwitchModelTool } from './switch_model';
 
 const baseCtx: Omit<ToolContext, 'env'> = {
-	conversationId: 'c1',
 	assistantMessageId: 'a1',
+	conversationId: 'c1',
 	modelId: 'p/m',
 };
 // We don't need a real Env for this tool — it never reads from `ctx.env`.

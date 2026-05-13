@@ -17,8 +17,8 @@ describe('ConversationDurableObject — artifacts & sandbox', () => {
 			);
 		});
 
-		const a1 = await stub.addArtifact({ messageId: 'a1', type: 'code', language: 'typescript', name: 'index.ts', content: 'const x = 1;' });
-		const a2 = await stub.addArtifact({ messageId: 'a1', type: 'code', language: 'typescript', name: 'index.ts', content: 'const x = 2;' });
+		const a1 = await stub.addArtifact({ content: 'const x = 1;', language: 'typescript', messageId: 'a1', name: 'index.ts', type: 'code' });
+		const a2 = await stub.addArtifact({ content: 'const x = 2;', language: 'typescript', messageId: 'a1', name: 'index.ts', type: 'code' });
 
 		expect(a1.version).toBe(1);
 		expect(a2.version).toBe(2);
@@ -34,13 +34,9 @@ describe('ConversationDurableObject — artifacts & sandbox', () => {
 		const id = await createConversation(env);
 		const stub = stubFor(id);
 		await runInDurableObject(stub, async (_instance, ctx) => {
-			const cols = ctx.storage.sql
-				.exec('PRAGMA table_info(artifacts)')
-				.toArray() as unknown as Array<{ name: string }>;
+			const cols = ctx.storage.sql.exec('PRAGMA table_info(artifacts)').toArray() as unknown as Array<{ name: string }>;
 			const names = cols.map((c) => c.name);
-			expect(names).toEqual(
-				expect.arrayContaining(['id', 'message_id', 'type', 'name', 'language', 'version', 'content', 'created_at']),
-			);
+			expect(names).toEqual(expect.arrayContaining(['id', 'message_id', 'type', 'name', 'language', 'version', 'content', 'created_at']));
 		});
 	});
 
@@ -53,9 +49,9 @@ describe('ConversationDurableObject — artifacts & sandbox', () => {
 			);
 		});
 
-		const html = await stub.addArtifact({ messageId: 'a1', type: 'html', name: 'page.html', content: '<h1>Hello</h1>' });
-		const svg = await stub.addArtifact({ messageId: 'a1', type: 'svg', name: 'icon.svg', content: '<svg><circle r="5"/></svg>' });
-		const mermaid = await stub.addArtifact({ messageId: 'a1', type: 'mermaid', name: 'diagram', content: 'graph TD; A-->B;' });
+		const html = await stub.addArtifact({ content: '<h1>Hello</h1>', messageId: 'a1', name: 'page.html', type: 'html' });
+		const svg = await stub.addArtifact({ content: '<svg><circle r="5"/></svg>', messageId: 'a1', name: 'icon.svg', type: 'svg' });
+		const mermaid = await stub.addArtifact({ content: 'graph TD; A-->B;', messageId: 'a1', name: 'diagram', type: 'mermaid' });
 
 		expect(html.type).toBe('html');
 		expect(html.contentHtml).toBeUndefined();

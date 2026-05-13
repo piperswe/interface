@@ -1,7 +1,8 @@
 import { env, runInDurableObject } from 'cloudflare:test';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createConversation } from '../conversations';
+import { assertDefined } from '../../../../test/assert-defined';
 import { textTurn, toolUseTurn } from '../../../../test/fakes/FakeLLM';
+import { createConversation } from '../conversations';
 import { readState, setOverride, stubFor, waitForState } from './conversation/_test-helpers';
 import type { ConversationStub } from './index';
 
@@ -32,8 +33,8 @@ describe('ConversationDurableObject — #generate (FakeLLM)', () => {
 		});
 		expect(state.messages).toHaveLength(3);
 		expect(state.messages[0]).toMatchObject({ role: 'system' });
-		expect(state.messages[1]).toMatchObject({ role: 'user', content: 'hi' });
-		expect(state.messages[2]).toMatchObject({ role: 'assistant', status: 'complete', content: 'hello back' });
+		expect(state.messages[1]).toMatchObject({ content: 'hi', role: 'user' });
+		expect(state.messages[2]).toMatchObject({ content: 'hello back', role: 'assistant', status: 'complete' });
 		expect(state.inProgress).toBeNull();
 	});
 
@@ -45,11 +46,16 @@ describe('ConversationDurableObject — #generate (FakeLLM)', () => {
 		await setOverride(stub, script);
 
 		await stub.addUserMessage(id, 'use a tool repeatedly', 'fake/model');
-		const state = await waitForState(stub, (s) => {
-			const last = s.messages.at(-1);
-			return last?.status === 'complete';
-		}, { timeoutMs: 10_000 });
-		const last = state.messages.at(-1)!;
+		const state = await waitForState(
+			stub,
+			(s) => {
+				const last = s.messages.at(-1);
+				return last?.status === 'complete';
+			},
+			{ timeoutMs: 10_000 },
+		);
+		const last = state.messages.at(-1);
+		assertDefined(last);
 		const infoParts = (last.parts ?? []).filter((p) => p.type === 'info');
 		expect(infoParts.length).toBeGreaterThanOrEqual(1);
 		expect(infoParts.some((p) => p.type === 'info' && p.text.includes('iteration budget'))).toBe(true);
@@ -75,9 +81,10 @@ describe('ConversationDurableObject — #generate (FakeLLM)', () => {
 		await waitForState(stub, (s) => s.messages.at(-1)?.status === 'complete');
 
 		await runInDurableObject(stub, async (_instance, ctx) => {
-			const rows = ctx.storage.sql
-				.exec("SELECT content, content_html FROM messages WHERE role = 'assistant'")
-				.toArray() as unknown as Array<{ content: string; content_html: string | null }>;
+			const rows = ctx.storage.sql.exec("SELECT content, content_html FROM messages WHERE role = 'assistant'").toArray() as unknown as Array<{
+				content: string;
+				content_html: string | null;
+			}>;
 			expect(rows).toHaveLength(1);
 			expect(rows[0].content).toContain('# heading');
 			// Markdown is rendered client-side; the server stores raw text only.
@@ -89,9 +96,9 @@ describe('ConversationDurableObject — #generate (FakeLLM)', () => {
 		const id = await createConversation(env);
 		const stub = stubFor(id);
 		await runInDurableObject(stub, async (_instance, ctx) => {
-			const rows = ctx.storage.sql
-				.exec("SELECT value FROM _meta WHERE key = 'schema_version'")
-				.toArray() as unknown as Array<{ value: string }>;
+			const rows = ctx.storage.sql.exec("SELECT value FROM _meta WHERE key = 'schema_version'").toArray() as unknown as Array<{
+				value: string;
+			}>;
 			expect(rows).toHaveLength(1);
 			expect(Number(rows[0].value)).toBeGreaterThanOrEqual(2);
 		});
@@ -103,25 +110,23 @@ describe('ConversationDurableObject — #generate (FakeLLM)', () => {
 		// First turn: a tool call. Second turn: final text. We use the
 		// built-in `remember` tool because its execution is fast and
 		// deterministic — no network calls.
-		await setOverride(stub, [
-			toolUseTurn('t1', 'remember', { content: 'I prefer brief replies' }).events,
-			textTurn('saved').events,
-		]);
+		await setOverride(stub, [toolUseTurn('t1', 'remember', { content: 'I prefer brief replies' }).events, textTurn('saved').events]);
 		await stub.addUserMessage(id, 'remember this', 'fake/model');
 		const state = await waitForState(stub, (s) => s.messages.at(-1)?.status === 'complete');
-		const last = state.messages.at(-1)!;
+		const last = state.messages.at(-1);
+		assertDefined(last);
 		const toolUse = last.parts?.find((p) => p.type === 'tool_use' && p.id === 't1');
 		const toolResult = last.parts?.find((p) => p.type === 'tool_result' && p.toolUseId === 't1');
 		expect(toolUse).toBeTruthy();
 		expect(toolResult).toBeTruthy();
 		if (toolUse?.type === 'tool_use') {
 			expect(typeof toolUse.startedAt).toBe('number');
-			expect(toolUse.startedAt!).toBeGreaterThan(0);
+			expect(toolUse.startedAt ?? 0).toBeGreaterThan(0);
 		}
 		if (toolResult?.type === 'tool_result') {
 			expect(typeof toolResult.startedAt).toBe('number');
 			expect(typeof toolResult.endedAt).toBe('number');
-			expect(toolResult.endedAt!).toBeGreaterThanOrEqual(toolResult.startedAt!);
+			expect(toolResult.endedAt ?? 0).toBeGreaterThanOrEqual(toolResult.startedAt ?? 0);
 		}
 		// Cleanup the memory the tool created so other tests start clean.
 		await env.DB.prepare('DELETE FROM memories').run();
@@ -172,7 +177,9 @@ describe('ConversationDurableObject — #generate (FakeLLM)', () => {
 			const last = s.messages.at(-1);
 			return (last?.parts ?? []).some((p) => p.type === 'tool_result' && p.streaming === true);
 		});
-		const abortedAssistantId = beforeAbort.messages.at(-1)!.id;
+		const lastBeforeAbort = beforeAbort.messages.at(-1);
+		assertDefined(lastBeforeAbort);
+		const abortedAssistantId = lastBeforeAbort.id;
 
 		await stub.abortGeneration(id);
 
@@ -188,10 +195,7 @@ describe('ConversationDurableObject — #generate (FakeLLM)', () => {
 
 		await waitForState(stub, (s) => {
 			const last = s.messages.at(-1);
-			return (
-				last?.id !== abortedAssistantId &&
-				(last?.parts ?? []).some((p) => p.type === 'tool_result' && p.streaming === true)
-			);
+			return last?.id !== abortedAssistantId && (last?.parts ?? []).some((p) => p.type === 'tool_result' && p.streaming === true);
 		});
 
 		// Release the aborted turn's hold first. With the bug this lands
@@ -201,13 +205,18 @@ describe('ConversationDurableObject — #generate (FakeLLM)', () => {
 		// test can synchronize on its terminal state.
 		await barrierFor(stub).__releaseToolExecBarrier(slotB);
 
-		await waitForState(stub, (s) => {
-			const last = s.messages.at(-1);
-			return last?.role === 'assistant' && last.status === 'complete';
-		}, { timeoutMs: 5000 });
+		await waitForState(
+			stub,
+			(s) => {
+				const last = s.messages.at(-1);
+				return last?.role === 'assistant' && last.status === 'complete';
+			},
+			{ timeoutMs: 5000 },
+		);
 
 		const finalState = await readState(stub);
-		const aborted = finalState.messages.find((m) => m.id === abortedAssistantId)!;
+		const aborted = finalState.messages.find((m) => m.id === abortedAssistantId);
+		assertDefined(aborted);
 		expect(aborted.status).toBe('complete');
 		// The persisted parts must reflect the abort, not the late-arriving
 		// `remember` result that resolved after the user clicked stop.
@@ -215,9 +224,10 @@ describe('ConversationDurableObject — #generate (FakeLLM)', () => {
 			(p): p is import('$lib/types/conversation').ToolResultPart => p.type === 'tool_result' && p.toolUseId === 't1',
 		);
 		expect(abortedToolResult).toBeTruthy();
-		expect(abortedToolResult!.content).toBe('Aborted by user before this tool completed.');
-		expect(abortedToolResult!.isError).toBe(true);
-		expect(abortedToolResult!.streaming).toBeUndefined();
+		assertDefined(abortedToolResult);
+		expect(abortedToolResult.content).toBe('Aborted by user before this tool completed.');
+		expect(abortedToolResult.isError).toBe(true);
+		expect(abortedToolResult.streaming).toBeUndefined();
 
 		// Cleanup the memories `remember` may have written.
 		await env.DB.prepare('DELETE FROM memories').run();

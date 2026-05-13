@@ -5,8 +5,8 @@
 // single-quoted via `shellQuote` (no interpolation) and option parsing is
 // terminated with `--` before the user-supplied path.
 
-import { execMachine, type FlyConfig } from './machines-api';
 import type { ReadFileResult } from '../backend';
+import { execMachine, type FlyConfig } from './machines-api';
 
 // Single-quote a string for safe use in a POSIX shell command. Embedded
 // single quotes are escaped by closing-quote, escaped quote, reopening
@@ -27,16 +27,12 @@ async function execShell(
 	});
 	return {
 		exitCode: resp.exit_code,
-		stdout: resp.stdout ?? '',
 		stderr: resp.stderr ?? '',
+		stdout: resp.stdout ?? '',
 	};
 }
 
-export async function readFileShell(
-	cfg: FlyConfig,
-	machineId: string,
-	path: string,
-): Promise<ReadFileResult> {
+export async function readFileShell(cfg: FlyConfig, machineId: string, path: string): Promise<ReadFileResult> {
 	const p = shellQuote(path);
 	// 1) Verify the file exists & is a regular file. We use `test`/`-e` /
 	//    `-f` rather than `[ -e -- ${p} ]` — bash's `[` (and `test`) does
@@ -81,12 +77,7 @@ base64 -w0 -- ${p}`;
 	return { content: b64, encoding: 'base64' };
 }
 
-export async function writeFileShell(
-	cfg: FlyConfig,
-	machineId: string,
-	path: string,
-	content: string,
-): Promise<void> {
+export async function writeFileShell(cfg: FlyConfig, machineId: string, path: string, content: string): Promise<void> {
 	const p = shellQuote(path);
 	// Encode content as base64 on the client side, pipe via stdin to
 	// `base64 -d` on the server. This avoids any shell-escaping or
@@ -95,10 +86,7 @@ export async function writeFileShell(
 	let bin = '';
 	const CHUNK = 0x8000;
 	for (let i = 0; i < bytes.length; i += CHUNK) {
-		bin += String.fromCharCode.apply(
-			null,
-			Array.from(bytes.subarray(i, i + CHUNK)),
-		);
+		bin += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CHUNK)));
 	}
 	const b64 = btoa(bin);
 	const script = `set -e
@@ -110,11 +98,7 @@ base64 -d > ${p}`;
 	}
 }
 
-export async function deleteFileShell(
-	cfg: FlyConfig,
-	machineId: string,
-	path: string,
-): Promise<void> {
+export async function deleteFileShell(cfg: FlyConfig, machineId: string, path: string): Promise<void> {
 	const p = shellQuote(path);
 	const r = await execShell(cfg, machineId, `rm -f -- ${p}`);
 	if (r.exitCode !== 0) {
@@ -122,12 +106,7 @@ export async function deleteFileShell(
 	}
 }
 
-export async function mkdirShell(
-	cfg: FlyConfig,
-	machineId: string,
-	path: string,
-	recursive: boolean,
-): Promise<void> {
+export async function mkdirShell(cfg: FlyConfig, machineId: string, path: string, recursive: boolean): Promise<void> {
 	const p = shellQuote(path);
 	const flag = recursive ? '-p' : '';
 	const r = await execShell(cfg, machineId, `mkdir ${flag} -- ${p}`);
@@ -136,11 +115,7 @@ export async function mkdirShell(
 	}
 }
 
-export async function existsShell(
-	cfg: FlyConfig,
-	machineId: string,
-	path: string,
-): Promise<{ exists: boolean }> {
+export async function existsShell(cfg: FlyConfig, machineId: string, path: string): Promise<{ exists: boolean }> {
 	const p = shellQuote(path);
 	// Return 0 with stdout "1"/"0" so we don't confuse the test result with
 	// other errors (a missing path is not a failure). `test -e` rather
@@ -165,12 +140,7 @@ export async function runCodeShell(
 	exitCode: number;
 }> {
 	const ext = language === 'python' ? 'py' : language === 'javascript' ? 'js' : 'ts';
-	const runner =
-		language === 'python'
-			? 'python3'
-			: language === 'javascript'
-				? 'node'
-				: 'tsx';
+	const runner = language === 'python' ? 'python3' : language === 'javascript' ? 'node' : 'tsx';
 	// Random-ish file name to avoid collisions across concurrent calls.
 	const nonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 	const file = `/tmp/run-${nonce}.${ext}`;
@@ -181,10 +151,7 @@ export async function runCodeShell(
 	let bin = '';
 	const CHUNK = 0x8000;
 	for (let i = 0; i < bytes.length; i += CHUNK) {
-		bin += String.fromCharCode.apply(
-			null,
-			Array.from(bytes.subarray(i, i + CHUNK)),
-		);
+		bin += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CHUNK)));
 	}
 	const b64 = btoa(bin);
 	// `set -e` for the prelude so a base64-decode failure aborts before we
@@ -204,8 +171,8 @@ exit $RC`;
 		...(timeoutMs ? { timeout: Math.ceil(timeoutMs / 1000) } : {}),
 	});
 	return {
-		stdout: resp.stdout ?? '',
-		stderr: resp.stderr ?? '',
 		exitCode: resp.exit_code,
+		stderr: resp.stderr ?? '',
+		stdout: resp.stdout ?? '',
 	};
 }

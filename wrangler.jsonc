@@ -8,95 +8,95 @@
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "interface",
-	"main": ".svelte-kit/cloudflare/_worker.js",
+	"ai": {
+		"binding": "AI"
+	},
+	"assets": {
+		"binding": "ASSETS",
+		"directory": ".svelte-kit/cloudflare"
+	},
 	"compatibility_date": "2026-04-22",
 	"compatibility_flags": ["nodejs_compat"],
-	"migrations": [
-		{
-			"new_sqlite_classes": ["ConversationDurableObject"],
-			"tag": "v1",
-		},
-		{
-			"new_sqlite_classes": ["Sandbox"],
-			"tag": "v2",
-		},
-		{
-			"new_sqlite_classes": ["SchedulerDurableObject"],
-			"tag": "v3",
-		},
-	],
 	"containers": [
 		{
 			"class_name": "Sandbox",
-			"image": "./Dockerfile",
-			"instance_type": "standard-2",
-			"max_instances": 100,
 			"constraints": {
 				// keep it close to the R2 bucket
-				"regions": ["WNAM"],
+				"regions": ["WNAM"]
 			},
-		},
+			"image": "./Dockerfile",
+			"instance_type": "standard-2",
+			"max_instances": 100
+		}
+	],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_id": "45f097c8-b921-4034-b580-c1ac47e0b2db",
+			"database_name": "interface",
+			"migrations_dir": "migrations"
+		}
 	],
 	"durable_objects": {
 		"bindings": [
 			{
 				"class_name": "ConversationDurableObject",
-				"name": "CONVERSATION_DURABLE_OBJECT",
+				"name": "CONVERSATION_DURABLE_OBJECT"
 			},
 			{
 				"class_name": "SchedulerDurableObject",
-				"name": "SCHEDULER_DURABLE_OBJECT",
+				"name": "SCHEDULER_DURABLE_OBJECT"
 			},
 			{
 				"class_name": "Sandbox",
-				"name": "SANDBOX",
-			},
-		],
+				"name": "SANDBOX"
+			}
+		]
 	},
-	"d1_databases": [
-		{
-			"binding": "DB",
-			"database_name": "interface",
-			"database_id": "45f097c8-b921-4034-b580-c1ac47e0b2db",
-			"migrations_dir": "migrations",
-		},
-	],
-	"r2_buckets": [
-		{
-			"binding": "WORKSPACE_BUCKET",
-			"bucket_name": "interface-workspace",
-		},
-	],
 	"images": {
-		"binding": "IMAGES",
+		"binding": "IMAGES"
 	},
-	"ai": {
-		"binding": "AI",
-	},
-	"worker_loaders": [
+	"main": ".svelte-kit/cloudflare/_worker.js",
+	"migrations": [
 		{
-			"binding": "RUN_JS_LOADER",
+			"new_sqlite_classes": ["ConversationDurableObject"],
+			"tag": "v1"
 		},
+		{
+			"new_sqlite_classes": ["Sandbox"],
+			"tag": "v2"
+		},
+		{
+			"new_sqlite_classes": ["SchedulerDurableObject"],
+			"tag": "v3"
+		}
 	],
+	"minify": true,
+	"name": "interface",
 	"observability": {
 		"enabled": true,
 		"traces": {
-			"enabled": true,
-		},
+			"enabled": true
+		}
 	},
-	"upload_source_maps": true,
-	"minify": true,
 	"placement": { "mode": "smart" },
-	"assets": {
-		"directory": ".svelte-kit/cloudflare",
-		"binding": "ASSETS",
-	},
+	"preview_urls": true,
+	"r2_buckets": [
+		{
+			"binding": "WORKSPACE_BUCKET",
+			"bucket_name": "interface-workspace"
+		}
+	],
 	"routes": [
 		{
-			"pattern": "interface.piperswe.me",
 			"custom_domain": true,
-		},
+			"pattern": "interface.piperswe.me"
+		}
 	],
-	"preview_urls": true,
+	"upload_source_maps": true,
+	"worker_loaders": [
+		{
+			"binding": "RUN_JS_LOADER"
+		}
+	]
 }

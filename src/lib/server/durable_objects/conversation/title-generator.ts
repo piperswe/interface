@@ -1,8 +1,8 @@
-import type { ChatRequest, StreamEvent } from '../../llm/LLM';
-import { getSetting } from '../../settings';
-import { buildGlobalModelId } from '../../providers/types';
 import { now as nowMs } from '../../clock';
+import type { ChatRequest, StreamEvent } from '../../llm/LLM';
+import { buildGlobalModelId } from '../../providers/types';
 import { indexTitle as indexSearchTitle } from '../../search';
+import { getSetting } from '../../settings';
 import type { ConversationContext } from './tool-registry-builder';
 
 const TITLE_MAX = 60;
@@ -37,11 +37,11 @@ export async function writeTitle(
 		const llm = await deps.routeLLM(titleModel, { purpose: 'title' });
 		let buf = '';
 		for await (const ev of llm.chat({
-			messages: [
-				{ role: 'system', content: opts.systemPrompt },
-				{ role: 'user', content: collapsed },
-			],
 			maxTokens: 1024,
+			messages: [
+				{ content: opts.systemPrompt, role: 'system' },
+				{ content: collapsed, role: 'user' },
+			],
 			temperature: 0.5,
 		})) {
 			if (ev.type === 'text_delta') buf += ev.delta;
@@ -60,7 +60,7 @@ export async function writeTitle(
 			.slice(0, TITLE_MAX);
 		if (!title) throw new Error('empty title from LLM');
 	} catch {
-		title = collapsed.length <= TITLE_MAX ? collapsed : collapsed.slice(0, TITLE_MAX).trimEnd() + '…';
+		title = collapsed.length <= TITLE_MAX ? collapsed : `${collapsed.slice(0, TITLE_MAX).trimEnd()}…`;
 	}
 	const sql = opts.onlyIfDefault
 		? `UPDATE conversations SET title = CASE WHEN title = 'New conversation' THEN ? ELSE title END WHERE id = ?`
@@ -69,9 +69,7 @@ export async function writeTitle(
 	// Refresh the FTS title row to match what the conversations table now
 	// holds. Read it back so `onlyIfDefault` no-ops keep their original
 	// title indexed correctly.
-	const row = await env.DB.prepare('SELECT title FROM conversations WHERE id = ?')
-		.bind(conversationId)
-		.first<{ title: string }>();
+	const row = await env.DB.prepare('SELECT title FROM conversations WHERE id = ?').bind(conversationId).first<{ title: string }>();
 	if (row) await indexSearchTitle(env, conversationId, row.title, nowMs());
 }
 

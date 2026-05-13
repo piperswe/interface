@@ -1,21 +1,22 @@
 <script lang="ts" module>
-	import type { Conversation } from '$lib/types/conversation';
 	import type { Tag } from '$lib/server/tags';
+	import type { Conversation } from '$lib/types/conversation';
 	import { BAND_ORDER, groupByBand, mergeOptimisticConversations } from './sidebar';
-	export { groupByBand, BAND_ORDER, mergeOptimisticConversations };
+
+	export { BAND_ORDER, groupByBand, mergeOptimisticConversations };
 </script>
 
 <script lang="ts">
-	import { fmtRelative, recencyBandLabel } from '$lib/formatters';
+	import { Archive, Menu, Search } from 'lucide-svelte';
 	import type { Snippet } from 'svelte';
 	import { onMount } from 'svelte';
+	import { z } from 'zod';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { z } from 'zod';
-	import { createNewConversation, archive } from '$lib/conversations.remote';
+	import { archive, createNewConversation } from '$lib/conversations.remote';
+	import { fmtRelative, recencyBandLabel } from '$lib/formatters';
 	import { pushToast } from '$lib/toasts';
 	import SearchPalette from './SearchPalette.svelte';
-	import { Search, Archive, Menu } from 'lucide-svelte';
 
 	let {
 		conversations,
@@ -32,11 +33,11 @@
 	} = $props();
 
 	let activeTagFilter = $state<number | null>(null);
-	const filteredConversations = $derived(
-		activeTagFilter == null
-			? conversations
-			: conversations.filter((c) => (conversationTags[c.id] ?? []).includes(activeTagFilter!)),
-	);
+	const filteredConversations = $derived.by(() => {
+		const filter = activeTagFilter;
+		if (filter == null) return conversations;
+		return conversations.filter((c) => (conversationTags[c.id] ?? []).includes(filter));
+	});
 	const tagById = $derived(new Map(tags.map((t) => [t.id, t])));
 
 	// Reactive `now` so relative timestamps in the sidebar refresh while the
@@ -92,7 +93,7 @@
 		const id = crypto.randomUUID();
 		const ts = Date.now();
 		optimisticallyCreated = [
-			{ id, title: 'New conversation', created_at: ts, updated_at: ts },
+			{ created_at: ts, id, title: 'New conversation', updated_at: ts },
 			...optimisticallyCreated,
 		];
 		// Fire-and-forget: the server creates the row asynchronously. The page
@@ -316,7 +317,6 @@
 	.sidebar {
 		position: relative;
 		width: var(--sidebar-width);
-		min-height: 100vh;
 		min-height: 100dvh;
 	}
 
@@ -422,11 +422,6 @@
 		background: var(--bs-tertiary-bg);
 	}
 
-	.sidebar-list-item:hover .sidebar-archive-form {
-		opacity: 1;
-		pointer-events: auto;
-	}
-
 	.sidebar-archive-form {
 		position: absolute;
 		top: 50%;
@@ -436,6 +431,11 @@
 		pointer-events: none;
 		transition: opacity 120ms ease;
 		margin: 0;
+	}
+
+	.sidebar-list-item:hover .sidebar-archive-form {
+		opacity: 1;
+		pointer-events: auto;
 	}
 
 	.sidebar-archive-btn {

@@ -3,8 +3,8 @@ import { isHttpError, isRedirect } from '@sveltejs/kit';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { clearMockRequestEvent, setMockRequestEvent } from '../../test/shims/app-server';
 import * as remote from './schedules.remote';
-import { listSchedules } from './server/schedules';
 import { getSchedulerStub } from './server/durable_objects';
+import { listSchedules } from './server/schedules';
 
 type AnyArgs = (...args: unknown[]) => Promise<unknown>;
 const addSchedule = remote.addSchedule as unknown as AnyArgs;
@@ -76,11 +76,11 @@ describe('schedules.remote — addSchedule', () => {
 		const list = await listSchedules(env);
 		expect(list).toHaveLength(1);
 		expect(list[0]).toMatchObject({
+			enabled: true,
 			name: 'morning brief',
 			prompt: 'Summarise overnight emails.',
 			recurrence: 'daily',
 			timeOfDay: 8 * 60,
-			enabled: true,
 		});
 		// nextRunAt is set to the next 08:00 UTC.
 		expect(list[0].nextRunAt).toBeGreaterThan(0);
@@ -106,11 +106,11 @@ describe('schedules.remote — addSchedule', () => {
 	it('weekly schedule defaults day_of_week to Monday (1) when unparseable', async () => {
 		await expectRedirect(
 			addSchedule({
+				day_of_week: 'nope',
 				name: 'weekly',
 				prompt: 'check in',
 				recurrence: 'weekly',
 				time_of_day: '09:00',
-				day_of_week: 'nope',
 			}) as Promise<unknown>,
 			'/settings',
 		);
@@ -134,27 +134,15 @@ describe('schedules.remote — addSchedule', () => {
 	});
 
 	it('rejects empty name', async () => {
-		await expectError(
-			addSchedule({ name: '', prompt: 'p', recurrence: 'daily' }) as Promise<unknown>,
-			400,
-			/Name/,
-		);
+		await expectError(addSchedule({ name: '', prompt: 'p', recurrence: 'daily' }) as Promise<unknown>, 400, /Name/);
 	});
 
 	it('rejects empty prompt', async () => {
-		await expectError(
-			addSchedule({ name: 'n', prompt: '', recurrence: 'daily' }) as Promise<unknown>,
-			400,
-			/Prompt/,
-		);
+		await expectError(addSchedule({ name: 'n', prompt: '', recurrence: 'daily' }) as Promise<unknown>, 400, /Prompt/);
 	});
 
 	it('rejects unknown recurrence', async () => {
-		await expectError(
-			addSchedule({ name: 'n', prompt: 'p', recurrence: 'yearly' }) as Promise<unknown>,
-			400,
-			/Recurrence/,
-		);
+		await expectError(addSchedule({ name: 'n', prompt: 'p', recurrence: 'yearly' }) as Promise<unknown>, 400, /Recurrence/);
 	});
 
 	it('keeps target_conversation_id null when malformed', async () => {
@@ -163,8 +151,8 @@ describe('schedules.remote — addSchedule', () => {
 				name: 'targeted',
 				prompt: 'p',
 				recurrence: 'daily',
-				time_of_day: '08:00',
 				target_conversation_id: 'not-a-uuid',
+				time_of_day: '08:00',
 			}) as Promise<unknown>,
 			'/settings',
 		);
@@ -190,7 +178,7 @@ describe('schedules.remote — toggleSchedule', () => {
 	it('disables an enabled schedule', async () => {
 		await runForm(addSchedule({ name: 's', prompt: 'p', recurrence: 'daily', time_of_day: '08:00' }));
 		const id = (await listSchedules(env))[0].id;
-		await expectRedirect(toggleSchedule({ id, enabled: 'false' }) as Promise<unknown>, '/settings');
+		await expectRedirect(toggleSchedule({ enabled: 'false', id }) as Promise<unknown>, '/settings');
 		const list = await listSchedules(env);
 		expect(list[0].enabled).toBe(false);
 	});
@@ -198,14 +186,14 @@ describe('schedules.remote — toggleSchedule', () => {
 	it('re-enables a disabled schedule', async () => {
 		await runForm(addSchedule({ name: 's', prompt: 'p', recurrence: 'daily', time_of_day: '08:00' }));
 		const id = (await listSchedules(env))[0].id;
-		await runForm(toggleSchedule({ id, enabled: 'false' }));
-		await expectRedirect(toggleSchedule({ id, enabled: 'true' }) as Promise<unknown>, '/settings');
+		await runForm(toggleSchedule({ enabled: 'false', id }));
+		await expectRedirect(toggleSchedule({ enabled: 'true', id }) as Promise<unknown>, '/settings');
 		const list = await listSchedules(env);
 		expect(list[0].enabled).toBe(true);
 	});
 
 	it('rejects an invalid id', async () => {
-		await expectError(toggleSchedule({ id: 0, enabled: 'true' }) as Promise<unknown>, 400);
+		await expectError(toggleSchedule({ enabled: 'true', id: 0 }) as Promise<unknown>, 400);
 	});
 });
 

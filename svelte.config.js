@@ -3,7 +3,11 @@ import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
-	preprocess: vitePreprocess(),
+	compilerOptions: {
+		experimental: {
+			async: true,
+		},
+	},
 	kit: {
 		adapter: adapter({
 			platformProxy: {
@@ -11,18 +15,14 @@ const config = {
 				persist: true,
 			},
 		}),
-		experimental: {
-			remoteFunctions: true,
-		},
 		csrf: {
 			trustedOrigins: [],
 		},
-	},
-	compilerOptions: {
 		experimental: {
-			async: true,
+			remoteFunctions: true,
 		},
 	},
+	preprocess: vitePreprocess(),
 };
 
 export default config;

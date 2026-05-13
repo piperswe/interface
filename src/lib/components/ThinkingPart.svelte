@@ -1,6 +1,6 @@
 <script lang="ts">
-	import type { ThinkingPart } from '$lib/types/conversation';
 	import { ChevronRight } from 'lucide-svelte';
+	import type { ThinkingPart } from '$lib/types/conversation';
 
 	let {
 		part,

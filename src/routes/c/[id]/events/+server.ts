@@ -1,6 +1,6 @@
 import { error } from '@sveltejs/kit';
-import { getConversationStub } from '$lib/server/durable_objects';
 import { CONVERSATION_ID_PATTERN } from '$lib/conversation-id';
+import { getConversationStub } from '$lib/server/durable_objects';
 import type { RequestHandler } from './$types';
 
 // SSE endpoint for live conversation events. Remote functions can't return
@@ -16,8 +16,8 @@ export const GET: RequestHandler = async ({ params, platform }) => {
 	const stream = await stub.subscribe();
 	return new Response(stream, {
 		headers: {
-			'Content-Type': 'text/event-stream',
 			'Cache-Control': 'no-cache, no-transform',
+			'Content-Type': 'text/event-stream',
 			'X-Accel-Buffering': 'no',
 		},
 	});

@@ -1,11 +1,11 @@
 import { env } from 'cloudflare:test';
 import { isHttpError } from '@sveltejs/kit';
 import { afterEach, describe, expect, it } from 'vitest';
-import { setSetting } from '$lib/server/settings';
 import { createMcpServer } from '$lib/server/mcp_servers';
-import { createProvider } from '$lib/server/providers/store';
 import { createModel } from '$lib/server/providers/models';
+import { createProvider } from '$lib/server/providers/store';
 import { createSchedule } from '$lib/server/schedules';
+import { setSetting } from '$lib/server/settings';
 import { load } from './+page.server';
 
 afterEach(async () => {
@@ -35,12 +35,11 @@ async function expectError(promise: Promise<unknown>, status: number): Promise<v
 	}
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function loadOk(event: LoadEvent): Promise<Record<string, any>> {
+async function loadOk(event: LoadEvent): Promise<Record<string, unknown>> {
 	const result = await load(event);
 	if (!result) throw new Error('load returned void');
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	return result as Record<string, any>;
+
+	return result as Record<string, unknown>;
 }
 
 describe('settings/+page.server.ts — load', () => {
@@ -109,15 +108,15 @@ describe('settings/+page.server.ts — load', () => {
 
 	it('aggregates seeded data into the loader output', async () => {
 		await createMcpServer(env, { name: 'srv', transport: 'http', url: 'https://x' });
-		await createProvider(env, { id: 'p1', type: 'anthropic', apiKey: 'k' });
+		await createProvider(env, { apiKey: 'k', id: 'p1', type: 'anthropic' });
 		await createModel(env, 'p1', { id: 'm1', name: 'Model 1' });
 		await createSchedule(env, {
+			dayOfWeek: null,
 			name: 'daily',
 			prompt: 'p',
 			recurrence: 'daily',
-			timeOfDay: 8 * 60,
-			dayOfWeek: null,
 			targetConversationId: null,
+			timeOfDay: 8 * 60,
 		});
 		const data = await loadOk(makeEvent());
 		const mcpServers = data.mcpServers as Array<{ name: string }>;

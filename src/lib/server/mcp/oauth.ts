@@ -18,23 +18,23 @@ const AUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const protectedResourceMetadataSchema = z
 	.object({
 		authorization_servers: z.array(z.string()).optional(),
-		scopes_supported: z.array(z.string()).optional(),
 		resource: z.string().optional(),
+		scopes_supported: z.array(z.string()).optional(),
 	})
 	.passthrough();
 
 const authorizationServerMetadataSchema = z
 	.object({
+		authorization_endpoint: z.string().url(),
+		code_challenge_methods_supported: z.array(z.string()).optional(),
+		grant_types_supported: z.array(z.string()).optional(),
 		// `issuer` is later validated to match the AS URL we fetched from
 		// (RFC 8414 §3.3) — having it be a string here just means the field
 		// was present; the URL check happens after parsing.
 		issuer: z.string().optional(),
-		authorization_endpoint: z.string().url(),
-		token_endpoint: z.string().url(),
 		registration_endpoint: z.string().url().optional(),
 		scopes_supported: z.array(z.string()).optional(),
-		code_challenge_methods_supported: z.array(z.string()).optional(),
-		grant_types_supported: z.array(z.string()).optional(),
+		token_endpoint: z.string().url(),
 		token_endpoint_auth_methods_supported: z.array(z.string()).optional(),
 	})
 	.passthrough();
@@ -49,7 +49,6 @@ const dynamicRegistrationResponseSchema = z
 const tokenResponseSchema = z
 	.object({
 		access_token: z.string(),
-		token_type: z.string(),
 		// Cap to 1 year so a malicious AS can't return Infinity / NaN /
 		// MAX_SAFE_INTEGER and keep a stale token "valid" forever from our
 		// perspective. `finite()` rejects Infinity/NaN; `positive()` rejects
@@ -57,6 +56,7 @@ const tokenResponseSchema = z
 		expires_in: z.number().int().positive().finite().max(31_536_000).optional(),
 		refresh_token: z.string().optional(),
 		scope: z.string().optional(),
+		token_type: z.string(),
 	})
 	.passthrough();
 
@@ -116,11 +116,7 @@ export async function discoverProtectedResource(serverUrl: string): Promise<Prot
 	try {
 		const res = await fetch(candidate, { headers: { Accept: 'application/json' } });
 		if (!res.ok) return null;
-		return validateOrThrow(
-			protectedResourceMetadataSchema,
-			await res.json(),
-			`protected resource metadata at ${candidate}`,
-		);
+		return validateOrThrow(protectedResourceMetadataSchema, await res.json(), `protected resource metadata at ${candidate}`);
 	} catch {
 		return null;
 	}
@@ -139,17 +135,11 @@ export async function discoverAuthorizationServer(asUrl: string): Promise<Author
 	const candidate = joinWellKnown(asUrl, '/.well-known/oauth-authorization-server');
 	const res = await fetch(candidate, { headers: { Accept: 'application/json' } });
 	if (!res.ok) {
-		throw new OauthDiscoveryError(
-			`Authorization server metadata unavailable at ${candidate} (${res.status})`,
-		);
+		throw new OauthDiscoveryError(`Authorization server metadata unavailable at ${candidate} (${res.status})`);
 	}
 	let meta: AuthorizationServerMetadata;
 	try {
-		meta = validateOrThrow(
-			authorizationServerMetadataSchema,
-			await res.json(),
-			`authorization server metadata at ${candidate}`,
-		);
+		meta = validateOrThrow(authorizationServerMetadataSchema, await res.json(), `authorization server metadata at ${candidate}`);
 	} catch (e) {
 		throw new OauthDiscoveryError(e instanceof Error ? e.message : String(e));
 	}
@@ -180,18 +170,14 @@ export async function discoverAuthorizationServer(asUrl: string): Promise<Author
 
 export async function discoverEndpoints(serverUrl: string): Promise<DiscoveredOauthEndpoints> {
 	const protectedMeta = await discoverProtectedResource(serverUrl);
-	const asUrl =
-		protectedMeta?.authorization_servers?.[0] ?? new URL(serverUrl).origin;
+	const asUrl = protectedMeta?.authorization_servers?.[0] ?? new URL(serverUrl).origin;
 	const meta = await discoverAuthorizationServer(asUrl);
 	return {
-		authorizationServer: asUrl,
 		authorizationEndpoint: meta.authorization_endpoint,
-		tokenEndpoint: meta.token_endpoint,
+		authorizationServer: asUrl,
 		registrationEndpoint: meta.registration_endpoint ?? null,
-		scopes:
-			(meta.scopes_supported && meta.scopes_supported.join(' ')) ||
-			(protectedMeta?.scopes_supported && protectedMeta.scopes_supported.join(' ')) ||
-			null,
+		scopes: meta.scopes_supported?.join(' ') || protectedMeta?.scopes_supported?.join(' ') || null,
+		tokenEndpoint: meta.token_endpoint,
 	};
 }
 
@@ -206,17 +192,17 @@ export async function dynamicallyRegister(
 	clientName: string,
 ): Promise<DynamicallyRegisteredClient> {
 	const body = {
+		application_type: 'web',
 		client_name: clientName,
-		redirect_uris: [redirectUri],
 		grant_types: ['authorization_code', 'refresh_token'],
+		redirect_uris: [redirectUri],
 		response_types: ['code'],
 		token_endpoint_auth_method: 'none', // PKCE-public client by default
-		application_type: 'web',
 	};
 	const res = await fetch(registrationEndpoint, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
 		body: JSON.stringify(body),
+		headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+		method: 'POST',
 	});
 	if (!res.ok) {
 		const detail = await res.text().catch(() => '');
@@ -295,11 +281,11 @@ export type ExchangeCodeInput = {
 
 export async function exchangeCode(input: ExchangeCodeInput): Promise<TokenResponse> {
 	const params = new URLSearchParams({
-		grant_type: 'authorization_code',
-		code: input.code,
-		redirect_uri: input.redirectUri,
 		client_id: input.clientId,
+		code: input.code,
 		code_verifier: input.codeVerifier,
+		grant_type: 'authorization_code',
+		redirect_uri: input.redirectUri,
 	});
 	if (input.clientSecret) params.set('client_secret', input.clientSecret);
 	return await tokenRequest(input.tokenEndpoint, params);
@@ -315,9 +301,9 @@ export type RefreshTokenInput = {
 
 export async function refreshAccessToken(input: RefreshTokenInput): Promise<TokenResponse> {
 	const params = new URLSearchParams({
+		client_id: input.clientId,
 		grant_type: 'refresh_token',
 		refresh_token: input.refreshToken,
-		client_id: input.clientId,
 	});
 	if (input.clientSecret) params.set('client_secret', input.clientSecret);
 	if (input.scopes) params.set('scope', input.scopes);
@@ -326,12 +312,12 @@ export async function refreshAccessToken(input: RefreshTokenInput): Promise<Toke
 
 async function tokenRequest(endpoint: string, params: URLSearchParams): Promise<TokenResponse> {
 	const res = await fetch(endpoint, {
-		method: 'POST',
-		headers: {
-			'Content-Type': 'application/x-www-form-urlencoded',
-			Accept: 'application/json',
-		},
 		body: params.toString(),
+		headers: {
+			Accept: 'application/json',
+			'Content-Type': 'application/x-www-form-urlencoded',
+		},
+		method: 'POST',
 	});
 	if (!res.ok) {
 		const detail = await res.text().catch(() => '');

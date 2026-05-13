@@ -56,39 +56,39 @@ describe('isValidCustomToolName', () => {
 describe('custom_tools CRUD', () => {
 	it('createCustomTool round-trips through listCustomTools', async () => {
 		const id = await createCustomTool(env, {
-			name: 'weather',
 			description: 'gets weather',
-			source: STUB_SOURCE,
 			inputSchema: STUB_SCHEMA,
+			name: 'weather',
 			secretsJson: '{"OWM_KEY":"abc"}',
+			source: STUB_SOURCE,
 		});
 		expect(id).toBeGreaterThan(0);
 		const rows = await listCustomTools(env);
 		expect(rows).toHaveLength(1);
 		expect(rows[0]).toMatchObject({
-			id,
-			name: 'weather',
 			description: 'gets weather',
-			source: STUB_SOURCE,
-			inputSchema: STUB_SCHEMA,
-			secretsJson: '{"OWM_KEY":"abc"}',
 			enabled: true,
+			id,
+			inputSchema: STUB_SCHEMA,
+			name: 'weather',
+			secretsJson: '{"OWM_KEY":"abc"}',
+			source: STUB_SOURCE,
 		});
 	});
 
 	it('listCustomTools returns rows ordered by name', async () => {
-		await createCustomTool(env, { name: 'b', description: 'd', source: STUB_SOURCE, inputSchema: STUB_SCHEMA });
-		await createCustomTool(env, { name: 'a', description: 'd', source: STUB_SOURCE, inputSchema: STUB_SCHEMA });
+		await createCustomTool(env, { description: 'd', inputSchema: STUB_SCHEMA, name: 'b', source: STUB_SOURCE });
+		await createCustomTool(env, { description: 'd', inputSchema: STUB_SCHEMA, name: 'a', source: STUB_SOURCE });
 		const rows = await listCustomTools(env);
 		expect(rows.map((r) => r.name)).toEqual(['a', 'b']);
 	});
 
 	it('getCustomToolByName finds the row', async () => {
 		const id = await createCustomTool(env, {
-			name: 'weather',
 			description: 'd',
-			source: STUB_SOURCE,
 			inputSchema: STUB_SCHEMA,
+			name: 'weather',
+			source: STUB_SOURCE,
 		});
 		const row = await getCustomToolByName(env, 'weather');
 		expect(row?.id).toBe(id);
@@ -97,28 +97,28 @@ describe('custom_tools CRUD', () => {
 	it('rejects an invalid name on create', async () => {
 		await expect(
 			createCustomTool(env, {
-				name: 'mcp_taken',
 				description: 'd',
-				source: STUB_SOURCE,
 				inputSchema: STUB_SCHEMA,
+				name: 'mcp_taken',
+				source: STUB_SOURCE,
 			}),
 		).rejects.toThrow(/reserved/);
 	});
 
 	it('rejects a duplicate name on create', async () => {
-		await createCustomTool(env, { name: 'dup', description: 'd', source: STUB_SOURCE, inputSchema: STUB_SCHEMA });
-		await expect(
-			createCustomTool(env, { name: 'dup', description: 'd2', source: STUB_SOURCE, inputSchema: STUB_SCHEMA }),
-		).rejects.toThrow(/already exists/);
+		await createCustomTool(env, { description: 'd', inputSchema: STUB_SCHEMA, name: 'dup', source: STUB_SOURCE });
+		await expect(createCustomTool(env, { description: 'd2', inputSchema: STUB_SCHEMA, name: 'dup', source: STUB_SOURCE })).rejects.toThrow(
+			/already exists/,
+		);
 	});
 
 	it('rejects invalid JSON in input_schema', async () => {
 		await expect(
 			createCustomTool(env, {
-				name: 'badschema',
 				description: 'd',
-				source: STUB_SOURCE,
 				inputSchema: 'not-json',
+				name: 'badschema',
+				source: STUB_SOURCE,
 			}),
 		).rejects.toThrow(/input_schema/);
 	});
@@ -126,11 +126,11 @@ describe('custom_tools CRUD', () => {
 	it('rejects invalid JSON in secrets_json', async () => {
 		await expect(
 			createCustomTool(env, {
-				name: 'badsec',
 				description: 'd',
-				source: STUB_SOURCE,
 				inputSchema: STUB_SCHEMA,
+				name: 'badsec',
 				secretsJson: 'not-json',
+				source: STUB_SOURCE,
 			}),
 		).rejects.toThrow(/secrets_json/);
 	});
@@ -141,11 +141,11 @@ describe('custom_tools CRUD', () => {
 	it('rejects non-string values in secrets_json', async () => {
 		await expect(
 			createCustomTool(env, {
-				name: 'badsec2',
 				description: 'd',
-				source: STUB_SOURCE,
 				inputSchema: STUB_SCHEMA,
+				name: 'badsec2',
 				secretsJson: '{"KEY": 123}',
+				source: STUB_SOURCE,
 			}),
 		).rejects.toThrow(/must be a string/);
 	});
@@ -155,11 +155,11 @@ describe('custom_tools CRUD', () => {
 	it('rejects forbidden keys (__proto__, constructor, prototype) in secrets_json', async () => {
 		await expect(
 			createCustomTool(env, {
-				name: 'badsec3',
 				description: 'd',
-				source: STUB_SOURCE,
 				inputSchema: STUB_SCHEMA,
+				name: 'badsec3',
 				secretsJson: '{"__proto__":"x"}',
+				source: STUB_SOURCE,
 			}),
 		).rejects.toThrow(/forbidden key/);
 	});
@@ -170,10 +170,10 @@ describe('custom_tools CRUD', () => {
 	it('rejects descriptions longer than the cap', async () => {
 		await expect(
 			createCustomTool(env, {
-				name: 'longdesc',
 				description: 'x'.repeat(2000),
-				source: STUB_SOURCE,
 				inputSchema: STUB_SCHEMA,
+				name: 'longdesc',
+				source: STUB_SOURCE,
 			}),
 		).rejects.toThrow(/maximum length/);
 	});
@@ -184,20 +184,20 @@ describe('custom_tools CRUD', () => {
 	it('rejects arrays in input_schema', async () => {
 		await expect(
 			createCustomTool(env, {
-				name: 'arrschema',
 				description: 'd',
-				source: STUB_SOURCE,
 				inputSchema: '[]',
+				name: 'arrschema',
+				source: STUB_SOURCE,
 			}),
 		).rejects.toThrow(/must be a JSON object/);
 	});
 
 	it('updateCustomTool patches partial fields', async () => {
 		const id = await createCustomTool(env, {
-			name: 'foo',
 			description: 'old',
-			source: STUB_SOURCE,
 			inputSchema: STUB_SCHEMA,
+			name: 'foo',
+			source: STUB_SOURCE,
 		});
 		await updateCustomTool(env, id, { description: 'new' });
 		const row = await getCustomTool(env, id);
@@ -206,19 +206,19 @@ describe('custom_tools CRUD', () => {
 	});
 
 	it('updateCustomTool rejects renaming to an existing name', async () => {
-		await createCustomTool(env, { name: 'a', description: 'd', source: STUB_SOURCE, inputSchema: STUB_SCHEMA });
-		const id2 = await createCustomTool(env, { name: 'b', description: 'd', source: STUB_SOURCE, inputSchema: STUB_SCHEMA });
+		await createCustomTool(env, { description: 'd', inputSchema: STUB_SCHEMA, name: 'a', source: STUB_SOURCE });
+		const id2 = await createCustomTool(env, { description: 'd', inputSchema: STUB_SCHEMA, name: 'b', source: STUB_SOURCE });
 		await expect(updateCustomTool(env, id2, { name: 'a' })).rejects.toThrow(/already exists/);
 	});
 
 	it('updateCustomTool can rename to the same name (no-op)', async () => {
-		const id = await createCustomTool(env, { name: 'same', description: 'd', source: STUB_SOURCE, inputSchema: STUB_SCHEMA });
+		const id = await createCustomTool(env, { description: 'd', inputSchema: STUB_SCHEMA, name: 'same', source: STUB_SOURCE });
 		await updateCustomTool(env, id, { name: 'same' });
 		expect((await getCustomTool(env, id))?.name).toBe('same');
 	});
 
 	it('setCustomToolEnabled toggles the enabled flag', async () => {
-		const id = await createCustomTool(env, { name: 'x', description: 'd', source: STUB_SOURCE, inputSchema: STUB_SCHEMA });
+		const id = await createCustomTool(env, { description: 'd', inputSchema: STUB_SCHEMA, name: 'x', source: STUB_SOURCE });
 		await setCustomToolEnabled(env, id, false);
 		expect((await getCustomTool(env, id))?.enabled).toBe(false);
 		await setCustomToolEnabled(env, id, true);
@@ -226,14 +226,14 @@ describe('custom_tools CRUD', () => {
 	});
 
 	it('deleteCustomTool removes the row', async () => {
-		const id = await createCustomTool(env, { name: 'gone', description: 'd', source: STUB_SOURCE, inputSchema: STUB_SCHEMA });
+		const id = await createCustomTool(env, { description: 'd', inputSchema: STUB_SCHEMA, name: 'gone', source: STUB_SOURCE });
 		await deleteCustomTool(env, id);
 		expect(await getCustomTool(env, id)).toBeNull();
 	});
 
 	it('isolates rows per user_id', async () => {
-		await createCustomTool(env, { name: 'a', description: 'd', source: STUB_SOURCE, inputSchema: STUB_SCHEMA }, 1);
-		await createCustomTool(env, { name: 'a', description: 'd', source: STUB_SOURCE, inputSchema: STUB_SCHEMA }, 2);
+		await createCustomTool(env, { description: 'd', inputSchema: STUB_SCHEMA, name: 'a', source: STUB_SOURCE }, 1);
+		await createCustomTool(env, { description: 'd', inputSchema: STUB_SCHEMA, name: 'a', source: STUB_SOURCE }, 2);
 		expect((await listCustomTools(env, 1)).map((r) => r.name)).toEqual(['a']);
 		expect((await listCustomTools(env, 2)).map((r) => r.name)).toEqual(['a']);
 	});

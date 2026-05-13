@@ -1,18 +1,18 @@
 <script lang="ts">
+	import {
+		Circle,
+		CircleStop,
+		Headphones,
+		Headset,
+		MessageCircle,
+		PenLine,
+		Send,
+		Volume2,
+	} from 'lucide-svelte';
 	import type {
 		ConversationMode,
 		ConversationModeSnapshot,
 	} from '$lib/conversation-mode.client';
-	import {
-		Headphones,
-		Circle,
-		PenLine,
-		Send,
-		MessageCircle,
-		Volume2,
-		CircleStop,
-		Headset,
-	} from 'lucide-svelte';
 
 	let { mode, disabled = false }: { mode: ConversationMode; disabled?: boolean } = $props();
 

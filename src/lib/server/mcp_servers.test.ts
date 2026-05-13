@@ -20,7 +20,7 @@ describe('mcp_servers', () => {
 		expect(id).toBeGreaterThan(0);
 		const rows = await listMcpServers(env);
 		expect(rows).toHaveLength(1);
-		expect(rows[0]).toMatchObject({ name: 'test', transport: 'http', url: 'https://x.example', enabled: true });
+		expect(rows[0]).toMatchObject({ enabled: true, name: 'test', transport: 'http', url: 'https://x.example' });
 	});
 
 	it('listMcpServers returns rows ordered by name', async () => {
@@ -52,18 +52,18 @@ describe('mcp_servers', () => {
 
 	it('persists optional fields (auth_json, command, env_json)', async () => {
 		const id = await createMcpServer(env, {
+			authJson: '{"Authorization":"Bearer abc"}',
 			name: 'full',
 			transport: 'sse',
 			url: 'https://full.example/sse',
-			authJson: '{"Authorization":"Bearer abc"}',
 		});
 		const row = await getMcpServer(env, id);
 		expect(row).toMatchObject({
+			authJson: '{"Authorization":"Bearer abc"}',
+			enabled: true,
 			name: 'full',
 			transport: 'sse',
 			url: 'https://full.example/sse',
-			authJson: '{"Authorization":"Bearer abc"}',
-			enabled: true,
 		});
 	});
 
@@ -75,10 +75,10 @@ describe('mcp_servers', () => {
 		const id = await createMcpServer(env, { name: 'a', transport: 'http', url: 'https://a.example' }, 1);
 		// Wrong user — should not delete.
 		await deleteMcpServer(env, id, 2);
-		expect((await listMcpServers(env, 1))).toHaveLength(1);
+		expect(await listMcpServers(env, 1)).toHaveLength(1);
 		// Right user — gone.
 		await deleteMcpServer(env, id, 1);
-		expect((await listMcpServers(env, 1))).toHaveLength(0);
+		expect(await listMcpServers(env, 1)).toHaveLength(0);
 	});
 
 	it('setMcpServerEnabled is scoped by user_id', async () => {
@@ -99,26 +99,26 @@ describe('mcp_servers', () => {
 		it('setMcpServerOauthClient persists discovered endpoints + client', async () => {
 			const id = await createMcpServer(env, { name: 'a', transport: 'http', url: 'https://a.example' });
 			await setMcpServerOauthClient(env, id, {
-				authorizationServer: 'https://as.example',
 				authorizationEndpoint: 'https://as.example/authorize',
-				tokenEndpoint: 'https://as.example/token',
-				registrationEndpoint: 'https://as.example/register',
+				authorizationServer: 'https://as.example',
 				clientId: 'cid',
 				clientSecret: 'csec',
+				registrationEndpoint: 'https://as.example/register',
 				scopes: 'read write',
+				tokenEndpoint: 'https://as.example/token',
 			});
 			const row = await getMcpServer(env, id);
 			expect(row?.oauth).toMatchObject({
-				authorizationServer: 'https://as.example',
+				accessToken: null,
 				authorizationEndpoint: 'https://as.example/authorize',
-				tokenEndpoint: 'https://as.example/token',
-				registrationEndpoint: 'https://as.example/register',
+				authorizationServer: 'https://as.example',
 				clientId: 'cid',
 				clientSecret: 'csec',
-				scopes: 'read write',
-				accessToken: null,
-				refreshToken: null,
 				expiresAt: null,
+				refreshToken: null,
+				registrationEndpoint: 'https://as.example/register',
+				scopes: 'read write',
+				tokenEndpoint: 'https://as.example/token',
 			});
 		});
 
@@ -127,8 +127,8 @@ describe('mcp_servers', () => {
 			await setMcpServerEnabled(env, id, false);
 			await setMcpServerOauthTokens(env, id, {
 				accessToken: 'AT',
-				refreshToken: 'RT',
 				expiresAt: 1_777_000_000_000,
+				refreshToken: 'RT',
 			});
 			const row = await getMcpServer(env, id);
 			expect(row?.oauth?.accessToken).toBe('AT');
@@ -141,8 +141,8 @@ describe('mcp_servers', () => {
 			const id = await createMcpServer(env, { name: 'a', transport: 'http', url: 'https://a.example' });
 			await setMcpServerOauthTokens(env, id, {
 				accessToken: 'AT',
-				refreshToken: null,
 				expiresAt: null,
+				refreshToken: null,
 			});
 			const row = await getMcpServer(env, id);
 			expect(row?.oauth?.accessToken).toBe('AT');

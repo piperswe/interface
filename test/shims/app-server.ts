@@ -16,7 +16,12 @@ import { error } from '@sveltejs/kit';
 type AnyFn = (...args: unknown[]) => unknown;
 type StandardSchema = {
 	'~standard': {
-		validate: (value: unknown) => { value?: unknown; issues?: readonly { message: string; path?: ReadonlyArray<{ key: string | number } | string | number> }[] } | Promise<{ value?: unknown; issues?: readonly { message: string; path?: ReadonlyArray<{ key: string | number } | string | number> }[] }>;
+		validate: (value: unknown) =>
+			| { value?: unknown; issues?: readonly { message: string; path?: ReadonlyArray<{ key: string | number } | string | number> }[] }
+			| Promise<{
+					value?: unknown;
+					issues?: readonly { message: string; path?: ReadonlyArray<{ key: string | number } | string | number> }[];
+			  }>;
 	};
 };
 
@@ -24,15 +29,11 @@ function isStandardSchema(v: unknown): v is StandardSchema {
 	return typeof v === 'object' && v !== null && '~standard' in v;
 }
 
-function formatIssues(
-	issues: readonly { message: string; path?: ReadonlyArray<{ key: string | number } | string | number> }[],
-): string {
+function formatIssues(issues: readonly { message: string; path?: ReadonlyArray<{ key: string | number } | string | number> }[]): string {
 	return issues
 		.slice(0, 3)
 		.map((issue) => {
-			const path = (issue.path ?? [])
-				.map((p) => (typeof p === 'object' && p !== null ? p.key : p))
-				.join('.');
+			const path = (issue.path ?? []).map((p) => (typeof p === 'object' && p !== null ? p.key : p)).join('.');
 			return path ? `${path}: ${issue.message}` : issue.message;
 		})
 		.join('; ');

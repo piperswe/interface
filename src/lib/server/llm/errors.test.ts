@@ -55,9 +55,7 @@ describe('formatError', () => {
 	// did nothing. The function now strips Anthropic / OpenAI / OpenRouter
 	// key shapes plus Authorization / api-key header values before truncation.
 	it('redacts sk-ant- (Anthropic) keys', () => {
-		expect(formatError(new Error('401 from sk-ant-api03-AbCdEf1234567890XyZ'))).not.toMatch(
-			/sk-ant-api03-AbCdEf1234567890XyZ/,
-		);
+		expect(formatError(new Error('401 from sk-ant-api03-AbCdEf1234567890XyZ'))).not.toMatch(/sk-ant-api03-AbCdEf1234567890XyZ/);
 		expect(formatError(new Error('401 from sk-ant-api03-AbCdEf1234567890XyZ'))).toMatch(/REDACTED/);
 	});
 

@@ -24,10 +24,10 @@ type Row = {
 
 function rowToStyle(r: Row): StyleRow {
 	return {
+		createdAt: r.created_at,
 		id: r.id,
 		name: r.name,
 		systemPrompt: r.system_prompt,
-		createdAt: r.created_at,
 		updatedAt: r.updated_at,
 	};
 }
@@ -57,11 +57,7 @@ export type CreateStyleInput = {
 	systemPrompt: string;
 };
 
-export async function createStyle(
-	env: Env,
-	input: CreateStyleInput,
-	userId: number = SINGLE_USER_ID,
-): Promise<number> {
+export async function createStyle(env: Env, input: CreateStyleInput, userId: number = SINGLE_USER_ID): Promise<number> {
 	if (!input.name.trim()) throw new Error('Name is required');
 	if (!input.systemPrompt.trim()) throw new Error('System prompt is required');
 	const now = nowMs();
@@ -77,12 +73,7 @@ export async function createStyle(
 
 export type UpdateStyleInput = Partial<CreateStyleInput>;
 
-export async function updateStyle(
-	env: Env,
-	id: number,
-	input: UpdateStyleInput,
-	userId: number = SINGLE_USER_ID,
-): Promise<void> {
+export async function updateStyle(env: Env, id: number, input: UpdateStyleInput, userId: number = SINGLE_USER_ID): Promise<void> {
 	const sets: string[] = [];
 	const values: unknown[] = [];
 	if (input.name !== undefined) {

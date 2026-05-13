@@ -16,12 +16,12 @@ function rowToProvider(r: {
 	updated_at: number;
 }): Provider {
 	return {
-		id: r.id,
-		type: r.type as ProviderType,
 		apiKey: r.api_key,
+		createdAt: r.created_at,
 		endpoint: r.endpoint,
 		gatewayId: r.gateway_id,
-		createdAt: r.created_at,
+		id: r.id,
+		type: r.type as ProviderType,
 		updatedAt: r.updated_at,
 	};
 }
@@ -80,38 +80,20 @@ export function _assertValidEndpoint(endpoint: string): void {
 	assertPublicHttpsUrl(endpoint);
 }
 
-export async function createProvider(
-	env: Env,
-	input: CreateProviderInput,
-	userId: number = SINGLE_USER_ID,
-): Promise<void> {
+export async function createProvider(env: Env, input: CreateProviderInput, userId: number = SINGLE_USER_ID): Promise<void> {
 	if (input.endpoint) _assertValidEndpoint(input.endpoint);
 	const now = nowMs();
 	await env.DB.prepare(
 		`INSERT INTO providers (id, type, api_key, endpoint, gateway_id, created_at, updated_at, user_id)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 	)
-		.bind(
-			input.id,
-			input.type,
-			input.apiKey ?? null,
-			input.endpoint ?? null,
-			input.gatewayId ?? null,
-			now,
-			now,
-			userId,
-		)
+		.bind(input.id, input.type, input.apiKey ?? null, input.endpoint ?? null, input.gatewayId ?? null, now, now, userId)
 		.run();
 }
 
 export type UpdateProviderInput = Partial<Omit<CreateProviderInput, 'id' | 'type'>>;
 
-export async function updateProvider(
-	env: Env,
-	id: string,
-	input: UpdateProviderInput,
-	userId: number = SINGLE_USER_ID,
-): Promise<void> {
+export async function updateProvider(env: Env, id: string, input: UpdateProviderInput, userId: number = SINGLE_USER_ID): Promise<void> {
 	if (input.endpoint) _assertValidEndpoint(input.endpoint);
 	const now = nowMs();
 	const fields: string[] = [];

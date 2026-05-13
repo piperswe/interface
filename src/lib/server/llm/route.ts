@@ -1,10 +1,10 @@
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
-import type { Provider, ProviderModel } from '../providers/types';
 import { getResolvedModel } from '../providers/models';
+import type { Provider, ProviderModel } from '../providers/types';
 import { AnthropicLLM } from './AnthropicLLM';
-import { OpenAILLM, type OpenAILLMConfig } from './OpenAILLM';
 import type LLM from './LLM';
+import { OpenAILLM, type OpenAILLMConfig } from './OpenAILLM';
 
 // Module-scope SDK client cache. The `Anthropic` / `OpenAI` SDK clients
 // maintain a `fetch` agent and connection pool; reconstructing one per chat
@@ -26,7 +26,7 @@ function getAnthropicClient(provider: Provider): Anthropic {
 	const cached = anthropicClients.get(provider.id);
 	if (cached && cached.fingerprint === fp) return cached.client;
 	const client = new Anthropic({ apiKey: provider.apiKey });
-	anthropicClients.set(provider.id, { fingerprint: fp, client });
+	anthropicClients.set(provider.id, { client, fingerprint: fp });
 	return client;
 }
 
@@ -41,12 +41,12 @@ function getOpenAIClient(provider: Provider, baseURL: string): OpenAI {
 	const cached = openaiClients.get(provider.id);
 	if (cached && cached.fingerprint === fp) return cached.client;
 	const client = new OpenAI({
-		baseURL,
 		apiKey: provider.apiKey,
+		baseURL,
 		dangerouslyAllowBrowser: true,
 		defaultHeaders: OPENAI_EXTRA_HEADERS,
 	});
-	openaiClients.set(provider.id, { fingerprint: fp, client });
+	openaiClients.set(provider.id, { client, fingerprint: fp });
 	return client;
 }
 
@@ -84,6 +84,6 @@ export function _resetClientCache(): void {
 	openaiClients.clear();
 }
 
+export type { OpenAILLMConfig };
 // Convenience re-exports for consumers that already have a resolved model.
 export { AnthropicLLM, OpenAILLM };
-export type { OpenAILLMConfig };

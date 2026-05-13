@@ -1,7 +1,8 @@
 import { env, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createConversation } from '../conversations';
+import { assertDefined } from '../../../../test/assert-defined';
 import { textTurn } from '../../../../test/fakes/FakeLLM';
+import { createConversation } from '../conversations';
 import { pokeSubscribe, readLLMCalls, setOverride, stubFor, waitForState } from './conversation/_test-helpers';
 
 afterEach(async () => {
@@ -19,17 +20,15 @@ describe('ConversationDurableObject — resume', () => {
 			ctx.storage.sql.exec(
 				"INSERT INTO messages (id, role, content, model, status, created_at) VALUES ('a1', 'assistant', '', 'fake/model', 'streaming', 2)",
 			);
-			ctx.storage.sql.exec(
-				"INSERT OR REPLACE INTO _meta (key, value) VALUES ('conversation_id', ?)",
-				id,
-			);
+			ctx.storage.sql.exec("INSERT OR REPLACE INTO _meta (key, value) VALUES ('conversation_id', ?)", id);
 		});
 		await setOverride(stub, [textTurn('resumed answer').events]);
 
 		await pokeSubscribe(stub);
 
 		const state = await waitForState(stub, (s) => s.messages.find((m) => m.id === 'a1')?.status === 'complete');
-		const a1 = state.messages.find((m) => m.id === 'a1')!;
+		const a1 = state.messages.find((m) => m.id === 'a1');
+		assertDefined(a1);
 		expect(a1.content).toBe('resumed answer');
 		expect(a1.status).toBe('complete');
 	});
@@ -58,10 +57,7 @@ describe('ConversationDurableObject — resume', () => {
 			ctx.storage.sql.exec(
 				"INSERT INTO messages (id, role, content, model, status, created_at) VALUES ('a1', 'assistant', '', 'fake/model', 'streaming', 2)",
 			);
-			ctx.storage.sql.exec(
-				"INSERT OR REPLACE INTO _meta (key, value) VALUES ('conversation_id', ?)",
-				id,
-			);
+			ctx.storage.sql.exec("INSERT OR REPLACE INTO _meta (key, value) VALUES ('conversation_id', ?)", id);
 			await ctx.storage.setAlarm(Date.now() + 60_000);
 		});
 		await setOverride(stub, [textTurn('alarm-resumed').events]);
@@ -85,35 +81,33 @@ describe('ConversationDurableObject — resume', () => {
 				"INSERT INTO messages (id, role, content, model, status, created_at) VALUES ('u1', 'user', 'search for x', NULL, 'complete', 1)",
 			);
 			const partsJson = JSON.stringify([
-				{ type: 'tool_use', id: 't1', name: 'web_search', input: { q: 'x' } },
-				{ type: 'tool_result', toolUseId: 't1', content: 'result body', isError: false },
-				{ type: 'text', text: 'partial sente' },
+				{ id: 't1', input: { q: 'x' }, name: 'web_search', type: 'tool_use' },
+				{ content: 'result body', isError: false, toolUseId: 't1', type: 'tool_result' },
+				{ text: 'partial sente', type: 'text' },
 			]);
 			ctx.storage.sql.exec(
 				`INSERT INTO messages (id, role, content, thinking, model, status, created_at, parts)
 				 VALUES ('a1', 'assistant', 'partial sente', NULL, 'fake/model', 'streaming', 2, ?)`,
 				partsJson,
 			);
-			ctx.storage.sql.exec(
-				"INSERT OR REPLACE INTO _meta (key, value) VALUES ('conversation_id', ?)",
-				id,
-			);
+			ctx.storage.sql.exec("INSERT OR REPLACE INTO _meta (key, value) VALUES ('conversation_id', ?)", id);
 		});
 		await setOverride(stub, [textTurn('final answer based on result').events]);
 
 		await pokeSubscribe(stub);
 
 		const state = await waitForState(stub, (s) => s.messages.find((m) => m.id === 'a1')?.status === 'complete');
-		const a1 = state.messages.find((m) => m.id === 'a1')!;
+		const a1 = state.messages.find((m) => m.id === 'a1');
+		assertDefined(a1);
 		expect(a1.content).toBe('final answer based on result');
 		const partTypes = (a1.parts ?? []).map((p) => p.type);
 		expect(partTypes).toEqual(['tool_use', 'tool_result', 'text']);
 		// The recovered tool round survives in `parts` so future turns see
 		// consistent history.
 		const tu = (a1.parts ?? []).find((p) => p.type === 'tool_use');
-		expect(tu).toEqual({ type: 'tool_use', id: 't1', name: 'web_search', input: { q: 'x' } });
+		expect(tu).toEqual({ id: 't1', input: { q: 'x' }, name: 'web_search', type: 'tool_use' });
 		const tr = (a1.parts ?? []).find((p) => p.type === 'tool_result');
-		expect(tr).toEqual({ type: 'tool_result', toolUseId: 't1', content: 'result body', isError: false });
+		expect(tr).toEqual({ content: 'result body', isError: false, toolUseId: 't1', type: 'tool_result' });
 
 		// And the LLM was called with the recovered tool round in its
 		// `messages` array, so it had the context needed to continue.
@@ -121,16 +115,10 @@ describe('ConversationDurableObject — resume', () => {
 		expect(calls).toHaveLength(1);
 		const sent = calls[0].messages;
 		const sawToolUse = sent.some(
-			(m) =>
-				m.role === 'assistant' &&
-				Array.isArray(m.content) &&
-				m.content.some((c) => c.type === 'tool_use' && c.id === 't1'),
+			(m) => m.role === 'assistant' && Array.isArray(m.content) && m.content.some((c) => c.type === 'tool_use' && c.id === 't1'),
 		);
 		const sawToolResult = sent.some(
-			(m) =>
-				m.role === 'tool' &&
-				Array.isArray(m.content) &&
-				m.content.some((c) => c.type === 'tool_result' && c.toolUseId === 't1'),
+			(m) => m.role === 'tool' && Array.isArray(m.content) && m.content.some((c) => c.type === 'tool_result' && c.toolUseId === 't1'),
 		);
 		expect(sawToolUse).toBe(true);
 		expect(sawToolResult).toBe(true);
@@ -144,31 +132,29 @@ describe('ConversationDurableObject — resume', () => {
 				"INSERT INTO messages (id, role, content, model, status, created_at) VALUES ('u1', 'user', 'fetch a thing', NULL, 'complete', 1)",
 			);
 			const partsJson = JSON.stringify([
-				{ type: 'tool_use', id: 't1', name: 'fetch_url', input: { url: 'https://x' } },
+				{ id: 't1', input: { url: 'https://x' }, name: 'fetch_url', type: 'tool_use' },
 				// Streaming placeholder — never replaced because the DO died
 				// while the tool was executing.
-				{ type: 'tool_result', toolUseId: 't1', content: '', isError: false, streaming: true },
+				{ content: '', isError: false, streaming: true, toolUseId: 't1', type: 'tool_result' },
 			]);
 			ctx.storage.sql.exec(
 				`INSERT INTO messages (id, role, content, model, status, created_at, parts)
 				 VALUES ('a1', 'assistant', '', 'fake/model', 'streaming', 2, ?)`,
 				partsJson,
 			);
-			ctx.storage.sql.exec(
-				"INSERT OR REPLACE INTO _meta (key, value) VALUES ('conversation_id', ?)",
-				id,
-			);
+			ctx.storage.sql.exec("INSERT OR REPLACE INTO _meta (key, value) VALUES ('conversation_id', ?)", id);
 		});
 		await setOverride(stub, [textTurn('done despite the failure').events]);
 
 		await pokeSubscribe(stub);
 
 		const state = await waitForState(stub, (s) => s.messages.find((m) => m.id === 'a1')?.status === 'complete');
-		const a1 = state.messages.find((m) => m.id === 'a1')!;
+		const a1 = state.messages.find((m) => m.id === 'a1');
+		assertDefined(a1);
 		// The placeholder result was rewritten to a synthetic error result.
 		const trs = (a1.parts ?? []).filter((p) => p.type === 'tool_result');
 		expect(trs).toHaveLength(1);
-		expect(trs[0]).toMatchObject({ toolUseId: 't1', isError: true });
+		expect(trs[0]).toMatchObject({ isError: true, toolUseId: 't1' });
 		expect((trs[0] as { streaming?: boolean }).streaming).not.toBe(true);
 	});
 
@@ -182,10 +168,7 @@ describe('ConversationDurableObject — resume', () => {
 			ctx.storage.sql.exec(
 				"INSERT INTO messages (id, role, content, model, status, created_at) VALUES ('a1', 'assistant', '', 'fake/model', 'streaming', 2)",
 			);
-			ctx.storage.sql.exec(
-				"INSERT OR REPLACE INTO _meta (key, value) VALUES ('conversation_id', ?)",
-				id,
-			);
+			ctx.storage.sql.exec("INSERT OR REPLACE INTO _meta (key, value) VALUES ('conversation_id', ?)", id);
 		});
 		// Only one scripted turn; if resume kicks off twice the second call
 		// hits the "ran out of scripted turns" error.
@@ -195,7 +178,8 @@ describe('ConversationDurableObject — resume', () => {
 		await pokeSubscribe(stub);
 
 		const state = await waitForState(stub, (s) => s.messages.find((m) => m.id === 'a1')?.status === 'complete');
-		const a1 = state.messages.find((m) => m.id === 'a1')!;
+		const a1 = state.messages.find((m) => m.id === 'a1');
+		assertDefined(a1);
 		expect(a1.content).toBe('first');
 		expect(a1.status).toBe('complete');
 		const calls = await readLLMCalls(stub);
@@ -212,18 +196,17 @@ describe('ConversationDurableObject — resume', () => {
 			ctx.storage.sql.exec(
 				"INSERT INTO messages (id, role, content, model, status, created_at) VALUES ('a2', 'assistant', '', 'fake/model', 'streaming', 2)",
 			);
-			ctx.storage.sql.exec(
-				"INSERT OR REPLACE INTO _meta (key, value) VALUES ('conversation_id', ?)",
-				id,
-			);
+			ctx.storage.sql.exec("INSERT OR REPLACE INTO _meta (key, value) VALUES ('conversation_id', ?)", id);
 		});
 		await setOverride(stub, [textTurn('only the newest').events]);
 
 		await pokeSubscribe(stub);
 
 		const state = await waitForState(stub, (s) => s.messages.find((m) => m.id === 'a2')?.status === 'complete');
-		const a1 = state.messages.find((m) => m.id === 'a1')!;
-		const a2 = state.messages.find((m) => m.id === 'a2')!;
+		const a1 = state.messages.find((m) => m.id === 'a1');
+		assertDefined(a1);
+		const a2 = state.messages.find((m) => m.id === 'a2');
+		assertDefined(a2);
 		expect(a1.status).toBe('error');
 		expect(a1.error).toContain('Multiple streaming rows');
 		expect(a2.status).toBe('complete');
@@ -241,7 +224,8 @@ describe('ConversationDurableObject — resume', () => {
 		});
 		await pokeSubscribe(stub);
 		const state = await waitForState(stub, (s) => s.messages.find((m) => m.id === 'a1')?.status === 'error');
-		const a1 = state.messages.find((m) => m.id === 'a1')!;
+		const a1 = state.messages.find((m) => m.id === 'a1');
+		assertDefined(a1);
 		expect(a1.error).toContain('conversation id unknown');
 	});
 
@@ -255,10 +239,10 @@ describe('ConversationDurableObject — resume', () => {
 		const { createModel } = await import('../providers/models');
 		const { setSetting } = await import('../settings');
 		await createProvider(env, {
-			id: 'fallback-provider',
-			type: 'openai_compatible',
 			apiKey: 'sk-test',
 			endpoint: 'https://api.example.com/v1',
+			id: 'fallback-provider',
+			type: 'openai_compatible',
 		});
 		await createModel(env, 'fallback-provider', { id: 'fallback-model', name: 'Fallback' });
 		await setSetting(env, 'default_model', 'fallback-provider/fallback-model');
@@ -276,10 +260,7 @@ describe('ConversationDurableObject — resume', () => {
 			ctx.storage.sql.exec(
 				"INSERT INTO messages (id, role, content, model, status, created_at) VALUES ('a1', 'assistant', '', NULL, 'streaming', 2)",
 			);
-			ctx.storage.sql.exec(
-				"INSERT OR REPLACE INTO _meta (key, value) VALUES ('conversation_id', ?)",
-				id,
-			);
+			ctx.storage.sql.exec("INSERT OR REPLACE INTO _meta (key, value) VALUES ('conversation_id', ?)", id);
 		});
 		// Override the LLM so the fallback model's resume call doesn't try to
 		// hit the real network.
@@ -288,7 +269,8 @@ describe('ConversationDurableObject — resume', () => {
 		await pokeSubscribe(stub);
 
 		const state = await waitForState(stub, (s) => s.messages.find((m) => m.id === 'a1')?.status === 'complete');
-		const a1 = state.messages.find((m) => m.id === 'a1')!;
+		const a1 = state.messages.find((m) => m.id === 'a1');
+		assertDefined(a1);
 		expect(a1.status).toBe('complete');
 		// The row's model column was rewritten to the fallback.
 		expect(a1.model).toBe('fallback-provider/fallback-model');

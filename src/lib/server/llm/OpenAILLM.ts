@@ -1,8 +1,8 @@
 import OpenAI from 'openai';
 import type { ChatCompletionChunk, ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/chat/completions';
+import { formatError } from './errors';
 import type LLM from './LLM';
 import type { ChatRequest, ContentBlock, Message, ReasoningEffort, StreamEvent, ToolDefinition } from './LLM';
-import { formatError } from './errors';
 
 // OpenAI-format adapter. Handles any provider that speaks the OpenAI chat-
 // completions protocol, including direct OpenAI, OpenRouter, DeepSeek, and AI
@@ -33,8 +33,8 @@ export class OpenAILLM implements LLM {
 		} else {
 			const config = configOrClient;
 			this.#client = new OpenAI({
-				baseURL: config.baseURL,
 				apiKey: config.apiKey,
+				baseURL: config.baseURL,
 				dangerouslyAllowBrowser: true,
 				...(config.extraHeaders ? { defaultHeaders: config.extraHeaders } : {}),
 			});
@@ -54,16 +54,14 @@ export class OpenAILLM implements LLM {
 			const messages = toOpenAIMessages(request.systemPrompt, request.messages);
 			const tools = request.tools && request.tools.length > 0 ? toOpenAITools(request.tools) : undefined;
 			const body: Record<string, unknown> = {
-				model: this.model,
 				messages,
+				model: this.model,
 				stream: true,
 				stream_options: { include_usage: true },
 				...(tools ? { tools } : {}),
 				...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
 				...(request.maxTokens !== undefined ? { max_completion_tokens: request.maxTokens } : {}),
-				...(request.reasoning?.type === 'effort'
-					? { reasoning_effort: mapReasoningEffort(request.reasoning.effort) }
-					: {}),
+				...(request.reasoning?.type === 'effort' ? { reasoning_effort: mapReasoningEffort(request.reasoning.effort) } : {}),
 				// Pass through custom reasoning param (e.g. OpenRouter)
 				...(request.reasoning && request.reasoning.type !== 'effort' ? { reasoning: request.reasoning } : {}),
 				...this.#extraBody,
@@ -83,14 +81,14 @@ export class OpenAILLM implements LLM {
 						reasoning_content?: string | null;
 						reasoning?: string | null;
 					};
-					if (delta?.content) yield { type: 'text_delta', delta: delta.content };
+					if (delta?.content) yield { delta: delta.content, type: 'text_delta' };
 					const reasoningText = delta?.reasoning_content ?? delta?.reasoning ?? null;
-					if (reasoningText) yield { type: 'thinking_delta', delta: reasoningText };
+					if (reasoningText) yield { delta: reasoningText, type: 'thinking_delta' };
 
 					if (delta?.tool_calls) {
 						for (const tc of delta.tool_calls) {
 							const idx = tc.index ?? 0;
-							const existing = partialToolCalls.get(idx) ?? { id: '', name: '', args: '', thoughtSignature: '' };
+							const existing = partialToolCalls.get(idx) ?? { args: '', id: '', name: '', thoughtSignature: '' };
 							if (tc.id) existing.id = tc.id;
 							if (tc.function?.name) existing.name = tc.function.name;
 							if (tc.function?.arguments) existing.args += tc.function.arguments;
@@ -105,8 +103,8 @@ export class OpenAILLM implements LLM {
 							if (sig) existing.thoughtSignature = sig;
 							partialToolCalls.set(idx, existing);
 							yield {
-								type: 'tool_call_delta',
 								id: existing.id,
+								type: 'tool_call_delta',
 								...(tc.function?.name ? { name: tc.function.name } : {}),
 								...(tc.function?.arguments ? { argumentsDelta: tc.function.arguments } : {}),
 							};
@@ -136,9 +134,7 @@ export class OpenAILLM implements LLM {
 							...(u.prompt_tokens_details?.cache_write_tokens != null
 								? { cacheCreationInputTokens: u.prompt_tokens_details.cache_write_tokens }
 								: {}),
-							...(u.completion_tokens_details?.reasoning_tokens != null
-								? { thinkingTokens: u.completion_tokens_details.reasoning_tokens }
-								: {}),
+							...(u.completion_tokens_details?.reasoning_tokens != null ? { thinkingTokens: u.completion_tokens_details.reasoning_tokens } : {}),
 							...(typeof u.cost === 'number' && Number.isFinite(u.cost) ? { cost: u.cost } : {}),
 						},
 					};
@@ -150,7 +146,7 @@ export class OpenAILLM implements LLM {
 			yield { type: 'done', ...(stopReason ? { finishReason: stopReason } : {}), raw: lastChunk };
 		} catch (e) {
 			if (!emittedDone) {
-				yield { type: 'error', message: formatError(e) };
+				yield { message: formatError(e), type: 'error' };
 				return;
 			}
 			// Throw-after-done indicates a bug elsewhere — surface so it isn't silent.
@@ -171,10 +167,10 @@ function* finalizeToolCalls(
 			input = { _raw: tc.args };
 		}
 		yield {
-			type: 'tool_call',
 			id: tc.id,
-			name: tc.name,
 			input,
+			name: tc.name,
+			type: 'tool_call',
 			...(tc.thoughtSignature ? { thoughtSignature: tc.thoughtSignature } : {}),
 		};
 	}
@@ -204,16 +200,16 @@ function mapReasoningEffort(effort: ReasoningEffort): 'none' | 'minimal' | 'low'
 
 function toOpenAIMessages(systemPrompt: string | undefined, messages: Message[]): ChatCompletionMessageParam[] {
 	const out: ChatCompletionMessageParam[] = [];
-	if (systemPrompt) out.push({ role: 'system', content: systemPrompt });
+	if (systemPrompt) out.push({ content: systemPrompt, role: 'system' });
 	for (const m of messages) {
-		const blocks: ContentBlock[] = typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : m.content;
+		const blocks: ContentBlock[] = typeof m.content === 'string' ? [{ text: m.content, type: 'text' }] : m.content;
 
 		if (m.role === 'system') {
-			out.push({ role: 'system', content: flattenToText(blocks) });
+			out.push({ content: flattenToText(blocks), role: 'system' });
 			continue;
 		}
 		if (m.role === 'user') {
-			out.push({ role: 'user', content: flattenToText(blocks) });
+			out.push({ content: flattenToText(blocks), role: 'user' });
 			continue;
 		}
 		if (m.role === 'tool') {
@@ -228,23 +224,23 @@ function toOpenAIMessages(systemPrompt: string | undefined, messages: Message[])
 			// in history; OpenAI permits user messages between tool_result and
 			// the next assistant turn.
 			if (typeof result.content === 'string') {
-				out.push({ role: 'tool', tool_call_id: result.toolUseId, content: result.content });
+				out.push({ content: result.content, role: 'tool', tool_call_id: result.toolUseId });
 				continue;
 			}
 			const textPieces = result.content.filter((b): b is { type: 'text'; text: string } => b.type === 'text').map((b) => b.text);
 			const imagePieces = result.content.filter((b): b is { type: 'image'; mimeType: string; data: string } => b.type === 'image');
 			const stubText = textPieces.length > 0 ? textPieces.join('\n') : '[image returned — see following user message]';
-			out.push({ role: 'tool', tool_call_id: result.toolUseId, content: stubText });
+			out.push({ content: stubText, role: 'tool', tool_call_id: result.toolUseId });
 			if (imagePieces.length > 0) {
 				const userContent: Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }> = [];
-				if (textPieces.length > 0) userContent.push({ type: 'text', text: textPieces.join('\n') });
+				if (textPieces.length > 0) userContent.push({ text: textPieces.join('\n'), type: 'text' });
 				for (const img of imagePieces) {
 					userContent.push({
-						type: 'image_url',
 						image_url: { url: `data:${img.mimeType};base64,${img.data}` },
+						type: 'image_url',
 					});
 				}
-				out.push({ role: 'user', content: userContent } as ChatCompletionMessageParam);
+				out.push({ content: userContent, role: 'user' } as ChatCompletionMessageParam);
 			}
 			continue;
 		}
@@ -254,9 +250,9 @@ function toOpenAIMessages(systemPrompt: string | undefined, messages: Message[])
 			.filter((b): b is ContentBlock & { type: 'tool_use' } => b.type === 'tool_use')
 			.map((b) => {
 				const call: Record<string, unknown> = {
+					function: { arguments: JSON.stringify(b.input ?? {}), name: b.name },
 					id: b.id,
 					type: 'function',
-					function: { name: b.name, arguments: JSON.stringify(b.input ?? {}) },
 				};
 				// Gemini's OpenAI-compat surface requires the thought signature to
 				// round-trip on the assistant tool_call under
@@ -269,8 +265,8 @@ function toOpenAIMessages(systemPrompt: string | undefined, messages: Message[])
 				return call;
 			});
 		out.push({
-			role: 'assistant',
 			content: text || null,
+			role: 'assistant',
 			...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
 		} as ChatCompletionMessageParam);
 	}
@@ -309,12 +305,12 @@ function extractThoughtSignature(obj: Record<string, unknown> | undefined | null
 function toOpenAITools(tools: ToolDefinition[]): ChatCompletionTool[] {
 	return tools.map(
 		(t): ChatCompletionTool => ({
-			type: 'function',
 			function: {
-				name: t.name,
 				description: t.description,
+				name: t.name,
 				parameters: t.inputSchema as Record<string, unknown>,
 			},
+			type: 'function',
 		}),
 	);
 }

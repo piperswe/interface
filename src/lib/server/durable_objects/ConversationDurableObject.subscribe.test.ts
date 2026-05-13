@@ -90,10 +90,10 @@ describe('ConversationDurableObject — subscribe / destroy / parts', () => {
 		const stub = stubFor(id);
 		await runInDurableObject(stub, async (_instance, ctx) => {
 			const parts = JSON.stringify([
-				{ type: 'thinking', text: 'silently planning' },
-				{ type: 'text', text: 'final answer' },
-				{ type: 'tool_use', id: 't1', name: 'web_search', input: { q: 'x' } },
-				{ type: 'tool_result', toolUseId: 't1', content: 'result', isError: false },
+				{ text: 'silently planning', type: 'thinking' },
+				{ text: 'final answer', type: 'text' },
+				{ id: 't1', input: { q: 'x' }, name: 'web_search', type: 'tool_use' },
+				{ content: 'result', isError: false, toolUseId: 't1', type: 'tool_result' },
 			]);
 			ctx.storage.sql.exec(
 				`INSERT INTO messages (id, role, content, model, status, created_at, thinking, parts)

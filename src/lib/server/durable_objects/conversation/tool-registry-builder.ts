@@ -1,29 +1,29 @@
-import { ToolRegistry } from '../../tools/registry';
-import { fetchUrlTool } from '../../tools/fetch_url';
-import { createWebSearchTool } from '../../tools/web_search';
-import { createYnabTools } from '../../tools/ynab';
-import { createOpenWeatherMapTools } from '../../tools/openweathermap';
-import { KagiSearchBackend } from '../../search/kagi';
+import { now as nowMs } from '../../clock';
+import type { CustomToolRow } from '../../custom_tools';
 import { McpHttpClient } from '../../mcp/client';
-import { getMcpServer } from '../../mcp_servers';
 import { getValidAccessToken } from '../../mcp/oauth_store';
-import { createAgentTool } from '../../tools/agent';
-import { createGetModelsTool } from '../../tools/get_models';
-import { createSwitchModelTool } from '../../tools/switch_model';
-import { createRememberTool } from '../../tools/remember';
-import { registerSandboxTools } from '../../tools/sandbox';
+import type { McpServerRow, McpToolDescriptor } from '../../mcp/types';
+import { getMcpServer } from '../../mcp_servers';
+import type { MemoryRow } from '../../memories';
+import type { ProviderModel } from '../../providers/types';
+import { buildGlobalModelId } from '../../providers/types';
 import { getBackend } from '../../sandbox';
-import { runJsTool } from '../../tools/run_js';
+import { KagiSearchBackend } from '../../search/kagi';
+import type { StyleRow } from '../../styles';
+import type { SubAgentRow } from '../../sub_agents';
+import { createAgentTool } from '../../tools/agent';
 import { buildCustomTool } from '../../tools/custom_tool_runner';
 import { customToolMetaTools } from '../../tools/custom_tools_meta';
-import { buildGlobalModelId } from '../../providers/types';
-import type { McpServerRow, McpToolDescriptor } from '../../mcp/types';
-import type { ProviderModel } from '../../providers/types';
-import type { SubAgentRow } from '../../sub_agents';
-import type { MemoryRow } from '../../memories';
-import type { StyleRow } from '../../styles';
-import type { CustomToolRow } from '../../custom_tools';
-import { now as nowMs } from '../../clock';
+import { fetchUrlTool } from '../../tools/fetch_url';
+import { createGetModelsTool } from '../../tools/get_models';
+import { createOpenWeatherMapTools } from '../../tools/openweathermap';
+import { ToolRegistry } from '../../tools/registry';
+import { createRememberTool } from '../../tools/remember';
+import { runJsTool } from '../../tools/run_js';
+import { registerSandboxTools } from '../../tools/sandbox';
+import { createSwitchModelTool } from '../../tools/switch_model';
+import { createWebSearchTool } from '../../tools/web_search';
+import { createYnabTools } from '../../tools/ynab';
 
 export const MCP_TOOL_CACHE_TTL_MS = 60_000;
 
@@ -81,10 +81,7 @@ export async function buildBaseToolRegistry(
 				try {
 					await registerMcpServerTools(env, mcpCache, registry, s);
 				} catch (e) {
-					console.warn(
-						`MCP server ${s.id} (${s.name}) tool registration failed:`,
-						e instanceof Error ? e.message : String(e),
-					);
+					console.warn(`MCP server ${s.id} (${s.name}) tool registration failed:`, e instanceof Error ? e.message : String(e));
 					throw e;
 				}
 			}),
@@ -111,10 +108,7 @@ export async function buildBaseToolRegistry(
 			} catch (e) {
 				// One bad tool definition shouldn't take down the whole turn,
 				// but log so operators can diagnose a malformed schema.
-				console.warn(
-					`Custom tool ${row.id} (${row.name}) build failed:`,
-					e instanceof Error ? e.message : String(e),
-				);
+				console.warn(`Custom tool ${row.id} (${row.name}) build failed:`, e instanceof Error ? e.message : String(e));
 			}
 		}
 		for (const tool of customToolMetaTools) {
@@ -133,16 +127,15 @@ export async function buildToolRegistry(env: Env, mcpCache: McpCache, model: str
 		// first, so the two ship together. `get_models` is also used by the
 		// `agent` tool flow when sub-agents are enabled.
 		registry.register(createSwitchModelTool({ availableModelGlobalIds: globalIds }));
-		registry.register(createGetModelsTool({ currentModel: model, availableModels: context.allModels }));
+		registry.register(createGetModelsTool({ availableModels: context.allModels, currentModel: model }));
 	}
 	const enabledSubAgents = context.subAgents.filter((sa) => sa.enabled);
 	if (enabledSubAgents.length > 0) {
 		const agentTool = createAgentTool(
 			{
-				buildInnerToolRegistry: () =>
-					buildBaseToolRegistry(env, mcpCache, context.mcpServers, context.customTools, getModels),
-				defaultModel: model,
 				availableModelGlobalIds: globalIds,
+				buildInnerToolRegistry: () => buildBaseToolRegistry(env, mcpCache, context.mcpServers, context.customTools, getModels),
+				defaultModel: model,
 			},
 			context.subAgents,
 		);
@@ -154,7 +147,8 @@ export async function buildToolRegistry(env: Env, mcpCache: McpCache, model: str
 async function registerMcpServerTools(env: Env, mcpCache: McpCache, registry: ToolRegistry, server: McpServerRow): Promise<void> {
 	const serverId = server.id;
 	const serverName = server.name;
-	const url = server.url!;
+	const url = server.url;
+	if (!url) throw new Error(`MCP server ${serverId} (${serverName}) has no URL configured`);
 	const authJson = server.authJson;
 	// Token resolver: re-reads the OAuth row each call so a refresh from
 	// another tool turn is visible. `force` ignores the row's expiry by
@@ -174,9 +168,9 @@ async function registerMcpServerTools(env: Env, mcpCache: McpCache, registry: To
 		if (fresh && cached) {
 			entry = cached;
 		} else {
-			const client = new McpHttpClient({ url, authJson, getAccessToken });
+			const client = new McpHttpClient({ authJson, getAccessToken, url });
 			const tools = await client.listTools();
-			entry = { fetchedAt: nowMs(), client, tools };
+			entry = { client, fetchedAt: nowMs(), tools };
 			mcpCache.set(serverId, entry);
 		}
 		const callClient = entry.client;
@@ -184,9 +178,9 @@ async function registerMcpServerTools(env: Env, mcpCache: McpCache, registry: To
 			const namespacedName = `mcp_${serverId}_${tool.name}`;
 			registry.register({
 				definition: {
-					name: namespacedName,
 					description: tool.description ?? `${serverName}: ${tool.name}`,
 					inputSchema: tool.inputSchema ?? { type: 'object' },
+					name: namespacedName,
 				},
 				async execute(_ctx, input) {
 					try {

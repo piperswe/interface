@@ -1,13 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-	BARGE_IN_VAD_OPTS,
-	DEFAULT_VAD_OPTS,
-	computeRms,
-	dbFromRms,
-	initialVadState,
-	runVad,
-	stepVad,
-} from './vad';
+import { BARGE_IN_VAD_OPTS, computeRms, DEFAULT_VAD_OPTS, dbFromRms, initialVadState, runVad, stepVad } from './vad';
 
 describe('computeRms', () => {
 	it('returns 0 for a zero Float32 buffer', () => {
@@ -74,11 +66,7 @@ describe('stepVad', () => {
 		// After onset, sit at -48 dBFS (below speech, above silence) for
 		// 1s; the silence counter must stay at zero, so a real silence
 		// shorter than 1500ms can't end the turn yet.
-		const history = [
-			...new Array(30).fill(-30),
-			...new Array(50).fill(-48),
-			...new Array(50).fill(-70),
-		];
+		const history = [...new Array(30).fill(-30), ...new Array(50).fill(-48), ...new Array(50).fill(-70)];
 		const { events } = runVad(history, DEFAULT_VAD_OPTS);
 		expect(events).toEqual(['speech_onset']);
 	});

@@ -3,13 +3,7 @@
 // messages, artifacts, and tool calls. The renderer is fully async; one
 // scan per animation frame, one in-flight render per (target, revision).
 
-import type {
-	Artifact,
-	ConversationState,
-	JsonValue,
-	MessagePart,
-	MessageRow,
-} from '$lib/types/conversation';
+import type { Artifact, ConversationState, JsonValue, MessagePart, MessageRow } from '$lib/types/conversation';
 
 // Start the download immediately (separate chunk, but begins resolving on
 // module init so it's ready by the time the first render is needed).
@@ -49,10 +43,7 @@ function toolCallCode(name: string, input: JsonValue): { code: string; language:
 	return null;
 }
 
-export function createMarkdownRunner(
-	getState: () => ConversationState,
-	setState: (next: ConversationState) => void,
-): MarkdownRunner {
+export function createMarkdownRunner(getState: () => ConversationState, setState: (next: ConversationState) => void): MarkdownRunner {
 	const renderedRevByKey = new Map<CacheKey, string>();
 	const inFlight = new Set<CacheKey>();
 	let scheduled = 0;
@@ -92,9 +83,11 @@ export function createMarkdownRunner(
 
 	function scanMessage(m: MessageRow): void {
 		if (m.role === 'system') return;
-		const hasParts = (m.parts?.length ?? 0) > 0;
-		if (hasParts) {
-			m.parts!.forEach((part, i) => scanPart(m.id, i, part));
+		const parts = m.parts;
+		if (parts && parts.length > 0) {
+			parts.forEach((part, i) => {
+				scanPart(m.id, i, part);
+			});
 		} else if (m.content) {
 			const text = m.content;
 			scheduleRender(
@@ -163,9 +156,9 @@ export function createMarkdownRunner(
 				? () => _markdownMod.then((m) => m.renderArtifactCodeClient(a.content, a.language ?? 'text'))
 				: a.type === 'markdown'
 					? () => _markdownMod.then((m) => m.renderMarkdownClient(a.content))
-					// SVG artifacts are LLM-supplied and rendered with `{@html}`,
-					// so run them through DOMPurify's SVG profile first.
-					: () => _markdownMod.then((m) => m.sanitizeSvgClient(a.content));
+					: // SVG artifacts are LLM-supplied and rendered with `{@html}`,
+						// so run them through DOMPurify's SVG profile first.
+						() => _markdownMod.then((m) => m.sanitizeSvgClient(a.content));
 		scheduleRender(key, a.content, a.contentHtml, render, (html) => {
 			applyArtifactPatch(messageId, a.id, a.version, html);
 		});
@@ -254,10 +247,10 @@ export function createMarkdownRunner(
 	}
 
 	return {
-		pulse,
 		dispose() {
 			cancelled = true;
 			if (scheduled) cancelAnimationFrame(scheduled);
 		},
+		pulse,
 	};
 }

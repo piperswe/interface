@@ -1,5 +1,5 @@
-import { error, json } from '@sveltejs/kit';
 import { Buffer } from 'node:buffer';
+import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
 import { validateOrThrow } from '$lib/zod-utils';
 import type { RequestHandler } from './$types';
@@ -54,11 +54,7 @@ export const POST: RequestHandler = async ({ request, platform, url }) => {
 
 	let result: z.infer<typeof whisperResponseSchema>;
 	try {
-		result = validateOrThrow(
-			whisperResponseSchema,
-			await ai.run(WHISPER_MODEL, { audio: base64 }),
-			'Workers AI whisper response',
-		);
+		result = validateOrThrow(whisperResponseSchema, await ai.run(WHISPER_MODEL, { audio: base64 }), 'Workers AI whisper response');
 	} catch (err) {
 		// Don't echo the raw upstream error verbatim — Workers AI error bodies
 		// can include configuration details the operator may not want to leak.

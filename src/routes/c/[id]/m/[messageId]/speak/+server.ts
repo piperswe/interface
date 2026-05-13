@@ -36,8 +36,8 @@ export const GET: RequestHandler = async ({ params, platform }) => {
 
 	return new Response(audio.body, {
 		headers: {
-			'Content-Type': 'audio/mpeg',
 			'Cache-Control': 'private, max-age=3600',
+			'Content-Type': 'audio/mpeg',
 		},
 	});
 };

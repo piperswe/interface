@@ -1,7 +1,8 @@
 import { env } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ensureWorkspaceReady, flushWorkspaceToR2, sandboxExecTool, sandboxReadFileTool, sandboxWriteFileTool } from './sandbox';
+import { assertDefined } from '../../../../test/assert-defined';
 import type { ToolContext, ToolExecutionResult } from './registry';
+import { ensureWorkspaceReady, flushWorkspaceToR2, sandboxExecTool, sandboxReadFileTool, sandboxWriteFileTool } from './sandbox';
 
 // Regression: an earlier implementation mounted /workspace via s3fs-FUSE.
 // Every file syscall paid an S3 round-trip, so `git status`, `npm install`,
@@ -40,25 +41,25 @@ type MockSandbox = {
 function makeStubNamespace(mock: MockSandbox): unknown {
 	const id = { toString: () => 'stub-id' };
 	return {
+		get: () => mock,
 		idFromName: () => id,
 		idFromString: () => id,
-		newUniqueId: () => id,
-		get: () => mock,
 		jurisdiction: () => makeStubNamespace(mock),
+		newUniqueId: () => id,
 	};
 }
 
 function makeMockSandbox(overrides: Partial<MockSandbox> = {}): MockSandbox {
 	return {
-		mountBucket: vi.fn().mockResolvedValue(undefined),
-		exec: vi.fn().mockResolvedValue({ exitCode: 0, success: true, stdout: '', stderr: '' }),
-		execStream: vi.fn(),
-		runCode: vi.fn(),
-		readFile: vi.fn().mockRejectedValue(new Error('not found')),
-		writeFile: vi.fn().mockResolvedValue(undefined),
 		deleteFile: vi.fn().mockResolvedValue(undefined),
-		mkdir: vi.fn().mockResolvedValue(undefined),
+		exec: vi.fn().mockResolvedValue({ exitCode: 0, stderr: '', stdout: '', success: true }),
+		execStream: vi.fn(),
 		exists: vi.fn().mockResolvedValue({ exists: true }),
+		mkdir: vi.fn().mockResolvedValue(undefined),
+		mountBucket: vi.fn().mockResolvedValue(undefined),
+		readFile: vi.fn().mockRejectedValue(new Error('not found')),
+		runCode: vi.fn(),
+		writeFile: vi.fn().mockResolvedValue(undefined),
 		...overrides,
 	};
 }
@@ -86,16 +87,16 @@ function makeCtx(
 		baseEnv[k] = v;
 	}
 	return {
-		env: baseEnv as unknown as Env,
-		conversationId: CONV_ID,
 		assistantMessageId: 'm',
+		conversationId: CONV_ID,
+		env: baseEnv as unknown as Env,
 		modelId: 'fake/model',
 	};
 }
 
 const PROD_R2_OVERRIDES = {
-	R2_ACCOUNT_ID: 'abc123',
 	R2_ACCESS_KEY_ID: 'AKIA-TEST',
+	R2_ACCOUNT_ID: 'abc123',
 	R2_SECRET_ACCESS_KEY: 'secret-test',
 };
 
@@ -152,9 +153,10 @@ describe('ensureWorkspaceReady', () => {
 		// rclone config written with R2 credentials.
 		const configCall = sandbox.writeFile.mock.calls.find((c) => c[0] === '/root/.config/rclone/rclone.conf');
 		expect(configCall).toBeDefined();
-		expect(configCall![1]).toContain('access_key_id = AKIA-TEST');
-		expect(configCall![1]).toContain('secret_access_key = secret-test');
-		expect(configCall![1]).toContain('endpoint = https://abc123.r2.cloudflarestorage.com');
+		assertDefined(configCall);
+		expect(configCall[1]).toContain('access_key_id = AKIA-TEST');
+		expect(configCall[1]).toContain('secret_access_key = secret-test');
+		expect(configCall[1]).toContain('endpoint = https://abc123.r2.cloudflarestorage.com');
 
 		// `rclone copy` for hydration and a backgrounded sync daemon.
 		const execCommands = sandbox.exec.mock.calls.map((c) => c[0] as string);
@@ -242,8 +244,8 @@ describe('flushWorkspaceToR2', () => {
 		// returns the rclone error message as a warning that callers append to
 		// the tool result content.
 		const sandbox = makeMockSandbox({
+			exec: vi.fn().mockResolvedValue({ exitCode: 1, stderr: '', stdout: 'rclone: AccessDenied', success: false }),
 			readFile: vi.fn().mockResolvedValue({ content: 'snapshot', encoding: 'utf-8' }),
-			exec: vi.fn().mockResolvedValue({ exitCode: 1, success: false, stdout: 'rclone: AccessDenied', stderr: '' }),
 		});
 		const result = await flushWorkspaceToR2(makeCtx(sandbox, PROD_R2_OVERRIDES));
 		expect(result.warning).toBeDefined();
@@ -261,9 +263,9 @@ describe('execOrThrow diagnostic surface', () => {
 		const sandbox = makeMockSandbox({
 			exec: vi.fn().mockResolvedValue({
 				exitCode: 1,
-				success: false,
-				stdout: 'AccessDenied: invalid R2 access key',
 				stderr: '',
+				stdout: 'AccessDenied: invalid R2 access key',
+				success: false,
 			}),
 		});
 		await expect(ensureWorkspaceReady(makeCtx(sandbox, PROD_R2_OVERRIDES))).rejects.toThrow(/AccessDenied/);
@@ -281,13 +283,13 @@ describe('execOrThrow diagnostic surface', () => {
 			throw new Error('not found');
 		});
 		const sandbox = makeMockSandbox({
-			readFile,
 			exec: vi.fn().mockResolvedValue({
 				exitCode: 1,
-				success: false,
-				stdout: 'rclone mount did not become ready within 10s',
 				stderr: '',
+				stdout: 'rclone mount did not become ready within 10s',
+				success: false,
 			}),
+			readFile,
 		});
 		await setIoModeSetting('rclone-mount');
 		await expect(ensureWorkspaceReady(makeCtx(sandbox, PROD_R2_OVERRIDES))).rejects.toThrow(/connection refused/);
@@ -301,7 +303,7 @@ describe('tool wiring (modify vs read-only)', () => {
 			readFile: vi.fn().mockResolvedValue({ content: 'snapshot', encoding: 'utf-8' }),
 		});
 		const ctx = makeCtx(sandbox, PROD_R2_OVERRIDES);
-		const result = await sandboxWriteFileTool.execute(ctx, { path: '/workspace/x.txt', content: 'hi' });
+		const result = await sandboxWriteFileTool.execute(ctx, { content: 'hi', path: '/workspace/x.txt' });
 		expect(result.isError).not.toBe(true);
 		expect(sandbox.writeFile).toHaveBeenCalledWith('/workspace/x.txt', 'hi');
 		// flushWorkspaceToR2 should have been invoked => exec ran rclone sync.
@@ -352,22 +354,22 @@ describe('sandbox_exec — streaming hang regression', () => {
 	// function on `complete` without awaiting generator teardown.
 	it('returns promptly after `complete` even if the upstream stream cancel hangs', async () => {
 		const stream = new ReadableStream<Uint8Array>({
-			start(c) {
-				c.enqueue(sseFrame({ type: 'stdout', data: 'hello\n' }));
-				c.enqueue(sseFrame({ type: 'complete', exitCode: 0 }));
+			cancel() {
+				// Reproduces the actual symptom: cancel propagation hangs.
+				return new Promise<void>(() => {});
 			},
 			pull() {
 				// Reads after the initial buffered chunks block forever.
 				return new Promise<void>(() => {});
 			},
-			cancel() {
-				// Reproduces the actual symptom: cancel propagation hangs.
-				return new Promise<void>(() => {});
+			start(c) {
+				c.enqueue(sseFrame({ data: 'hello\n', type: 'stdout' }));
+				c.enqueue(sseFrame({ exitCode: 0, type: 'complete' }));
 			},
 		});
 		const sandbox = makeMockSandbox({
-			readFile: vi.fn().mockResolvedValue({ content: 'snapshot', encoding: 'utf-8' }),
 			execStream: vi.fn().mockResolvedValue(stream),
+			readFile: vi.fn().mockResolvedValue({ content: 'snapshot', encoding: 'utf-8' }),
 		});
 		const ctx = makeExecCtx(sandbox);
 
@@ -390,17 +392,17 @@ describe('sandbox_exec — streaming hang regression', () => {
 		vi.useFakeTimers();
 		try {
 			const stream = new ReadableStream<Uint8Array>({
-				pull() {
-					return new Promise<void>(() => {});
-				},
 				cancel() {
 					// Hanging cancel is fine — we don't await consume teardown.
 					return new Promise<void>(() => {});
 				},
+				pull() {
+					return new Promise<void>(() => {});
+				},
 			});
 			const sandbox = makeMockSandbox({
-				readFile: vi.fn().mockResolvedValue({ content: 'snapshot', encoding: 'utf-8' }),
 				execStream: vi.fn().mockResolvedValue(stream),
+				readFile: vi.fn().mockResolvedValue({ content: 'snapshot', encoding: 'utf-8' }),
 			});
 			const ctx = makeExecCtx(sandbox);
 
@@ -421,15 +423,15 @@ describe('sandbox_exec — streaming hang regression', () => {
 	it('streams stdout chunks to emitToolOutput before complete', async () => {
 		const stream = new ReadableStream<Uint8Array>({
 			start(c) {
-				c.enqueue(sseFrame({ type: 'stdout', data: 'one\n' }));
-				c.enqueue(sseFrame({ type: 'stdout', data: 'two\n' }));
-				c.enqueue(sseFrame({ type: 'complete', exitCode: 0 }));
+				c.enqueue(sseFrame({ data: 'one\n', type: 'stdout' }));
+				c.enqueue(sseFrame({ data: 'two\n', type: 'stdout' }));
+				c.enqueue(sseFrame({ exitCode: 0, type: 'complete' }));
 				c.close();
 			},
 		});
 		const sandbox = makeMockSandbox({
-			readFile: vi.fn().mockResolvedValue({ content: 'snapshot', encoding: 'utf-8' }),
 			execStream: vi.fn().mockResolvedValue(stream),
+			readFile: vi.fn().mockResolvedValue({ content: 'snapshot', encoding: 'utf-8' }),
 		});
 		const emit = vi.fn();
 		const ctx = makeExecCtx(sandbox, { emitToolOutput: emit });

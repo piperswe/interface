@@ -13,21 +13,21 @@ const REDACTED = '***REDACTED***';
 // generic 32+ char alphanumeric tokens after `Authorization: Bearer ` /
 // `api-key:` / `x-api-key:` / `api_key=`.
 const REDACT_PATTERNS: RegExp[] = [
-	/sk-ant-[A-Za-z0-9_\-]{20,}/g,
-	/sk-or-[A-Za-z0-9_\-]{20,}/g,
-	/sk-proj-[A-Za-z0-9_\-]{20,}/g,
-	/\bsk-[A-Za-z0-9_\-]{20,}/g,
+	/sk-ant-[A-Za-z0-9_-]{20,}/g,
+	/sk-or-[A-Za-z0-9_-]{20,}/g,
+	/sk-proj-[A-Za-z0-9_-]{20,}/g,
+	/\bsk-[A-Za-z0-9_-]{20,}/g,
 	// `Bearer <token>` anywhere — covers standalone Authorization-header
 	// strings echoed by providers.
-	/(\bbearer\s+)[A-Za-z0-9._\-]{12,}/gi,
+	/(\bbearer\s+)[A-Za-z0-9._-]{12,}/gi,
 	// Authorization: Bearer <token> (catches the prefix too, so the redacted
 	// output reads `authorization: Bearer ***REDACTED***`).
-	/(authorization\s*[:=]\s*['"]?bearer\s+)[A-Za-z0-9._\-]{12,}/gi,
+	/(authorization\s*[:=]\s*['"]?bearer\s+)[A-Za-z0-9._-]{12,}/gi,
 	// api[-_]?key: <token> / x-api-key: <token>
-	/((?:x-)?api[-_]?key\s*[:=]\s*['"]?)[A-Za-z0-9._\-]{12,}/gi,
+	/((?:x-)?api[-_]?key\s*[:=]\s*['"]?)[A-Za-z0-9._-]{12,}/gi,
 	// JSON-shaped: "authorization": "Bearer ..." / "api_key": "..."
-	/("?(?:authorization|api[-_]?key)"?\s*:\s*"bearer\s+)[A-Za-z0-9._\-]{12,}/gi,
-	/("?(?:authorization|api[-_]?key|api[-_]?token|access[-_]?token)"?\s*:\s*")[A-Za-z0-9._\-]{12,}/gi,
+	/("?(?:authorization|api[-_]?key)"?\s*:\s*"bearer\s+)[A-Za-z0-9._-]{12,}/gi,
+	/("?(?:authorization|api[-_]?key|api[-_]?token|access[-_]?token)"?\s*:\s*")[A-Za-z0-9._-]{12,}/gi,
 ];
 
 export function redactSecrets(s: string): string {

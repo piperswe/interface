@@ -1,24 +1,24 @@
 <script lang="ts">
+	import { Menu, RotateCcw } from 'lucide-svelte';
 	import { onMount, untrack } from 'svelte';
 	import { invalidateAll } from '$app/navigation';
-	import type { ConversationState } from '$lib/types/conversation';
-	import Message from '$lib/components/Message.svelte';
-	import ComposeForm from '$lib/components/ComposeForm.svelte';
-	import SidePanel from '$lib/components/SidePanel.svelte';
-	import { attachConversationStream } from '$lib/conversation-stream';
-	import { createMarkdownRunner } from '$lib/markdown-runner';
-	import { archive, destroy, regenerateTitle, setConversationStyle, setConversationSystemPrompt } from '$lib/conversations.remote';
-	import TagPicker from '$lib/components/TagPicker.svelte';
-	import { confirmToastSubmit, toastSubmit } from '$lib/form-actions';
 	import { clickOutside } from '$lib/click-outside';
-	import { pushToast } from '$lib/toasts';
-	import { computeConversationCost, type ModelPricing } from '$lib/cost';
-	import { fmtUsd } from '$lib/formatters';
-	import { RotateCcw, Menu } from 'lucide-svelte';
+	import ComposeForm from '$lib/components/ComposeForm.svelte';
+	import Message from '$lib/components/Message.svelte';
+	import SidePanel from '$lib/components/SidePanel.svelte';
+	import TagPicker from '$lib/components/TagPicker.svelte';
 	import {
 		ConversationMode,
 		isConversationModeSupported,
 	} from '$lib/conversation-mode.client';
+	import { attachConversationStream } from '$lib/conversation-stream';
+	import { archive, destroy, regenerateTitle, setConversationStyle, setConversationSystemPrompt } from '$lib/conversations.remote';
+	import { computeConversationCost, type ModelPricing } from '$lib/cost';
+	import { confirmToastSubmit, toastSubmit } from '$lib/form-actions';
+	import { fmtUsd } from '$lib/formatters';
+	import { createMarkdownRunner } from '$lib/markdown-runner';
+	import { pushToast } from '$lib/toasts';
+	import type { ConversationState } from '$lib/types/conversation';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -138,40 +138,40 @@
 		const userId = `optimistic-user-${now}`;
 		const asstId = `optimistic-asst-${now}`;
 		convState = {
+			inProgress: { content: '', messageId: asstId },
 			messages: [
 				...convState.messages,
 				{
-					id: userId,
-					role: 'user',
 					content,
-					model: null,
-					status: 'complete',
-					error: null,
 					createdAt: now,
+					error: null,
+					id: userId,
 					meta: null,
+					model: null,
+					role: 'user',
+					status: 'complete',
 				},
 				{
-					id: asstId,
-					role: 'assistant',
 					content: '',
-					model,
-					status: 'streaming',
-					error: null,
 					createdAt: now + 1,
+					error: null,
+					id: asstId,
 					meta: null,
+					model,
 					parts: [],
+					role: 'assistant',
+					status: 'streaming',
 				},
 			],
-			inProgress: { messageId: asstId, content: '' },
 		};
 	}
 
 	function revertOptimisticUserMessage() {
 		convState = {
-			messages: convState.messages.filter((m) => !m.id.startsWith('optimistic-')),
-			inProgress: convState.inProgress && convState.inProgress.messageId.startsWith('optimistic-')
+			inProgress: convState.inProgress?.messageId.startsWith('optimistic-')
 				? null
 				: convState.inProgress,
+			messages: convState.messages.filter((m) => !m.id.startsWith('optimistic-')),
 		};
 	}
 
@@ -213,8 +213,8 @@
 		const controller = new ConversationMode({
 			conversationId: id,
 			getModel: () => lastModel,
-			onOptimisticSubmit: (content, model) => pushOptimisticUserMessage(content, model),
 			onOptimisticRevert: () => revertOptimisticUserMessage(),
+			onOptimisticSubmit: (content, model) => pushOptimisticUserMessage(content, model),
 			onToast: (msg) => pushToast(msg, 'error'),
 		});
 		conversationMode = controller;
@@ -303,11 +303,11 @@
 	function scrollToHashTarget() {
 		if (typeof window === 'undefined') return;
 		const hash = window.location.hash;
-		if (!hash || !hash.startsWith('#m-')) return;
+		if (!hash?.startsWith('#m-')) return;
 		const target = document.getElementById(hash.slice(1));
 		if (!target) return;
 		stickToBottom = false;
-		target.scrollIntoView({ block: 'center', behavior: 'auto' });
+		target.scrollIntoView({ behavior: 'auto', block: 'center' });
 		target.classList.add('message-flash');
 		setTimeout(() => target.classList.remove('message-flash'), 1600);
 	}

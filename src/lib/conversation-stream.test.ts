@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Artifact, ConversationState, MessageRow, MessagePart, MetaSnapshot } from '$lib/types/conversation';
+import type { Artifact, ConversationState, MessagePart, MessageRow, MetaSnapshot } from '$lib/types/conversation';
+import { assertDefined } from '../../test/assert-defined';
 import {
 	appendDeltaPart,
 	applyArtifact,
@@ -15,21 +16,21 @@ import {
 } from './conversation-stream';
 
 const baseMessage: MessageRow = {
-	id: 'm1',
-	role: 'assistant',
-	content: '',
-	model: 'test/model',
-	status: 'streaming',
-	error: null,
-	createdAt: 0,
-	meta: null,
-	thinking: null,
-	parts: [],
 	artifacts: [],
+	content: '',
+	createdAt: 0,
+	error: null,
+	id: 'm1',
+	meta: null,
+	model: 'test/model',
+	parts: [],
+	role: 'assistant',
+	status: 'streaming',
+	thinking: null,
 };
 
 function state(...messages: MessageRow[]): ConversationState {
-	return { messages, inProgress: null };
+	return { inProgress: null, messages };
 }
 
 describe('patchMessage', () => {
@@ -48,161 +49,157 @@ describe('patchMessage', () => {
 
 describe('appendDeltaPart', () => {
 	it('appends to a trailing matching part', () => {
-		const out = appendDeltaPart([{ type: 'text', text: 'hi' }], 'text', '!');
-		expect(out).toEqual([{ type: 'text', text: 'hi!', textHtml: undefined }]);
+		const out = appendDeltaPart([{ text: 'hi', type: 'text' }], 'text', '!');
+		expect(out).toEqual([{ text: 'hi!', textHtml: undefined, type: 'text' }]);
 	});
 	it('preserves textHtml from the trailing part', () => {
-		const out = appendDeltaPart([{ type: 'text', text: 'hi', textHtml: '<p>hi</p>' }], 'text', '!');
-		expect(out).toEqual([{ type: 'text', text: 'hi!', textHtml: '<p>hi</p>' }]);
+		const out = appendDeltaPart([{ text: 'hi', textHtml: '<p>hi</p>', type: 'text' }], 'text', '!');
+		expect(out).toEqual([{ text: 'hi!', textHtml: '<p>hi</p>', type: 'text' }]);
 	});
 	it('starts a new part when types differ', () => {
-		const out = appendDeltaPart([{ type: 'thinking', text: 'reflecting' }], 'text', 'word');
+		const out = appendDeltaPart([{ text: 'reflecting', type: 'thinking' }], 'text', 'word');
 		expect(out).toHaveLength(2);
-		expect(out[1]).toEqual({ type: 'text', text: 'word' });
+		expect(out[1]).toEqual({ text: 'word', type: 'text' });
 	});
 	it('starts a new part when parts is empty', () => {
-		expect(appendDeltaPart([], 'text', 'A')).toEqual([{ type: 'text', text: 'A' }]);
+		expect(appendDeltaPart([], 'text', 'A')).toEqual([{ text: 'A', type: 'text' }]);
 	});
 });
 
 describe('applyDelta', () => {
 	it('extends content and the trailing text part', () => {
-		const s = state({ ...baseMessage, content: 'foo', parts: [{ type: 'text', text: 'foo' }] });
-		const next = applyDelta(s, { messageId: 'm1', content: 'bar' });
+		const s = state({ ...baseMessage, content: 'foo', parts: [{ text: 'foo', type: 'text' }] });
+		const next = applyDelta(s, { content: 'bar', messageId: 'm1' });
 		expect(next.messages[0].content).toBe('foobar');
-		expect(next.messages[0].parts).toEqual([{ type: 'text', text: 'foobar', textHtml: undefined }]);
+		expect(next.messages[0].parts).toEqual([{ text: 'foobar', textHtml: undefined, type: 'text' }]);
 	});
 	it('appends a new text part when the trailing part is non-text', () => {
 		const s = state({
 			...baseMessage,
 			content: '',
-			parts: [{ type: 'tool_use', id: 't1', name: 'x', input: {} }],
+			parts: [{ id: 't1', input: {}, name: 'x', type: 'tool_use' }],
 		});
-		const next = applyDelta(s, { messageId: 'm1', content: 'hello' });
+		const next = applyDelta(s, { content: 'hello', messageId: 'm1' });
 		expect(next.messages[0].parts).toEqual([
-			{ type: 'tool_use', id: 't1', name: 'x', input: {} },
-			{ type: 'text', text: 'hello' },
+			{ id: 't1', input: {}, name: 'x', type: 'tool_use' },
+			{ text: 'hello', type: 'text' },
 		]);
 	});
 	it('ignores unknown messageIds', () => {
 		const s = state({ ...baseMessage });
-		expect(applyDelta(s, { messageId: 'nope', content: 'x' })).toBe(s);
+		expect(applyDelta(s, { content: 'x', messageId: 'nope' })).toBe(s);
 	});
 });
 
 describe('applyThinkingDelta', () => {
 	it('extends thinking text and the trailing thinking part', () => {
-		const s = state({ ...baseMessage, thinking: 'Hmm', parts: [{ type: 'thinking', text: 'Hmm' }] });
-		const next = applyThinkingDelta(s, { messageId: 'm1', content: ', ok' });
+		const s = state({ ...baseMessage, parts: [{ text: 'Hmm', type: 'thinking' }], thinking: 'Hmm' });
+		const next = applyThinkingDelta(s, { content: ', ok', messageId: 'm1' });
 		expect(next.messages[0].thinking).toBe('Hmm, ok');
-		expect(next.messages[0].parts?.at(-1)).toEqual({ type: 'thinking', text: 'Hmm, ok', textHtml: undefined });
+		expect(next.messages[0].parts?.at(-1)).toEqual({ text: 'Hmm, ok', textHtml: undefined, type: 'thinking' });
 	});
 	it('starts a new thinking part when previous part is text', () => {
-		const s = state({ ...baseMessage, parts: [{ type: 'text', text: 'output' }] });
-		const next = applyThinkingDelta(s, { messageId: 'm1', content: 'reflecting' });
+		const s = state({ ...baseMessage, parts: [{ text: 'output', type: 'text' }] });
+		const next = applyThinkingDelta(s, { content: 'reflecting', messageId: 'm1' });
 		expect(next.messages[0].parts).toHaveLength(2);
-		expect(next.messages[0].parts?.[1]).toEqual({ type: 'thinking', text: 'reflecting' });
+		expect(next.messages[0].parts?.[1]).toEqual({ text: 'reflecting', type: 'thinking' });
 	});
 });
 
 describe('applyToolCall', () => {
 	it('appends a tool_use part', () => {
 		const s = state({ ...baseMessage });
-		const next = applyToolCall(s, { messageId: 'm1', id: 't1', name: 'web_search', input: { q: 'x' } });
-		expect(next.messages[0].parts).toEqual([{ type: 'tool_use', id: 't1', name: 'web_search', input: { q: 'x' }, startedAt: undefined }]);
+		const next = applyToolCall(s, { id: 't1', input: { q: 'x' }, messageId: 'm1', name: 'web_search' });
+		expect(next.messages[0].parts).toEqual([{ id: 't1', input: { q: 'x' }, name: 'web_search', startedAt: undefined, type: 'tool_use' }]);
 	});
 	it('is idempotent for duplicate ids', () => {
 		const s = state({
 			...baseMessage,
-			parts: [{ type: 'tool_use', id: 't1', name: 'x', input: {} }],
+			parts: [{ id: 't1', input: {}, name: 'x', type: 'tool_use' }],
 		});
-		const next = applyToolCall(s, { messageId: 'm1', id: 't1', name: 'x', input: {} });
+		const next = applyToolCall(s, { id: 't1', input: {}, messageId: 'm1', name: 'x' });
 		expect(next.messages[0].parts).toHaveLength(1);
 	});
 	it('preserves startedAt when present', () => {
 		const s = state({ ...baseMessage });
-		const next = applyToolCall(s, { messageId: 'm1', id: 't1', name: 'x', input: {}, startedAt: 12345 });
-		expect(next.messages[0].parts?.[0]).toMatchObject({ type: 'tool_use', startedAt: 12345 });
+		const next = applyToolCall(s, { id: 't1', input: {}, messageId: 'm1', name: 'x', startedAt: 12345 });
+		expect(next.messages[0].parts?.[0]).toMatchObject({ startedAt: 12345, type: 'tool_use' });
 	});
 });
 
 describe('applyToolResult', () => {
 	it('appends a tool_result part', () => {
 		const s = state({ ...baseMessage });
-		const next = applyToolResult(s, { messageId: 'm1', toolUseId: 't1', content: 'done', isError: false });
-		expect(next.messages[0].parts?.at(-1)).toEqual({ type: 'tool_result', toolUseId: 't1', content: 'done', isError: false });
+		const next = applyToolResult(s, { content: 'done', isError: false, messageId: 'm1', toolUseId: 't1' });
+		expect(next.messages[0].parts?.at(-1)).toEqual({ content: 'done', isError: false, toolUseId: 't1', type: 'tool_result' });
 	});
 	it('overwrites an existing tool_result part in place', () => {
 		const s = state({
 			...baseMessage,
-			parts: [{ type: 'tool_result', toolUseId: 't1', content: 'old', isError: false }],
+			parts: [{ content: 'old', isError: false, toolUseId: 't1', type: 'tool_result' }],
 		});
-		const next = applyToolResult(s, { messageId: 'm1', toolUseId: 't1', content: 'new', isError: true });
-		expect(next.messages[0].parts).toEqual([{ type: 'tool_result', toolUseId: 't1', content: 'new', isError: true }]);
+		const next = applyToolResult(s, { content: 'new', isError: true, messageId: 'm1', toolUseId: 't1' });
+		expect(next.messages[0].parts).toEqual([{ content: 'new', isError: true, toolUseId: 't1', type: 'tool_result' }]);
 	});
 	it('preserves startedAt and endedAt timing fields', () => {
 		const s = state({ ...baseMessage });
 		const next = applyToolResult(s, {
-			messageId: 'm1',
-			toolUseId: 't1',
 			content: 'done',
-			isError: false,
-			startedAt: 1000,
 			endedAt: 1500,
+			isError: false,
+			messageId: 'm1',
+			startedAt: 1000,
+			toolUseId: 't1',
 		});
 		expect(next.messages[0].parts?.at(-1)).toEqual({
-			type: 'tool_result',
-			toolUseId: 't1',
 			content: 'done',
+			endedAt: 1500,
 			isError: false,
 			startedAt: 1000,
-			endedAt: 1500,
+			toolUseId: 't1',
+			type: 'tool_result',
 		});
 	});
 	it('keeps streaming flag when set on the event', () => {
 		const s = state({ ...baseMessage });
 		const next = applyToolResult(s, {
-			messageId: 'm1',
-			toolUseId: 't1',
 			content: '',
 			isError: false,
-			streaming: true,
+			messageId: 'm1',
 			startedAt: 100,
+			streaming: true,
+			toolUseId: 't1',
 		});
-		expect(next.messages[0].parts?.at(-1)).toMatchObject({ streaming: true, startedAt: 100 });
+		expect(next.messages[0].parts?.at(-1)).toMatchObject({ startedAt: 100, streaming: true });
 	});
 });
 
 describe('applyToolOutput', () => {
 	it('appends a streaming tool_result part if none exists', () => {
 		const s = state({ ...baseMessage });
-		const next = applyToolOutput(s, { messageId: 'm1', toolUseId: 't1', chunk: 'hello' });
-		expect(next.messages[0].parts).toEqual([
-			{ type: 'tool_result', toolUseId: 't1', content: 'hello', isError: false, streaming: true },
-		]);
+		const next = applyToolOutput(s, { chunk: 'hello', messageId: 'm1', toolUseId: 't1' });
+		expect(next.messages[0].parts).toEqual([{ content: 'hello', isError: false, streaming: true, toolUseId: 't1', type: 'tool_result' }]);
 	});
 	it('extends an existing streaming result', () => {
 		const s = state({
 			...baseMessage,
-			parts: [{ type: 'tool_result', toolUseId: 't1', content: 'hel', isError: false, streaming: true }],
+			parts: [{ content: 'hel', isError: false, streaming: true, toolUseId: 't1', type: 'tool_result' }],
 		});
-		const next = applyToolOutput(s, { messageId: 'm1', toolUseId: 't1', chunk: 'lo' });
-		expect(next.messages[0].parts).toEqual([
-			{ type: 'tool_result', toolUseId: 't1', content: 'hello', isError: false, streaming: true },
-		]);
+		const next = applyToolOutput(s, { chunk: 'lo', messageId: 'm1', toolUseId: 't1' });
+		expect(next.messages[0].parts).toEqual([{ content: 'hello', isError: false, streaming: true, toolUseId: 't1', type: 'tool_result' }]);
 	});
 });
 
 describe('applyArtifact', () => {
 	const artifact: Artifact = {
-		id: 'a1',
-		messageId: 'm1',
-		type: 'code',
-		name: 'snippet.ts',
-		language: 'typescript',
-		version: 1,
 		content: 'export {};',
 		createdAt: 0,
+		id: 'a1',
+		language: 'typescript',
+		messageId: 'm1',
+		name: 'snippet.ts',
+		type: 'code',
+		version: 1,
 	};
 	it('appends a new artifact', () => {
 		const s = state({ ...baseMessage });
@@ -218,19 +215,19 @@ describe('applyArtifact', () => {
 
 describe('applySync', () => {
 	it('signals reload when the target message is missing', () => {
-		expect(applySync(state(), { lastMessageId: 'x', lastMessageStatus: 'streaming', lastMessageContent: '' })).toBe('reload');
+		expect(applySync(state(), { lastMessageContent: '', lastMessageId: 'x', lastMessageStatus: 'streaming' })).toBe('reload');
 	});
 	it('signals reload when the cached status no longer matches', () => {
 		const s = state({ ...baseMessage, status: 'complete' });
-		expect(applySync(s, { lastMessageId: 'm1', lastMessageStatus: 'streaming', lastMessageContent: 'x' })).toBe('reload');
+		expect(applySync(s, { lastMessageContent: 'x', lastMessageId: 'm1', lastMessageStatus: 'streaming' })).toBe('reload');
 	});
 	it('returns state unchanged for non-streaming sync (post-completion)', () => {
 		const s = state({ ...baseMessage, status: 'complete' });
-		expect(applySync(s, { lastMessageId: 'm1', lastMessageStatus: 'complete', lastMessageContent: 'x' })).toBe(s);
+		expect(applySync(s, { lastMessageContent: 'x', lastMessageId: 'm1', lastMessageStatus: 'complete' })).toBe(s);
 	});
 	it('replaces content for streaming sync', () => {
 		const s = state({ ...baseMessage, content: 'old' });
-		const next = applySync(s, { lastMessageId: 'm1', lastMessageStatus: 'streaming', lastMessageContent: 'fresh' });
+		const next = applySync(s, { lastMessageContent: 'fresh', lastMessageId: 'm1', lastMessageStatus: 'streaming' });
 		expect(next).not.toBe(s);
 		expect((next as ConversationState).messages[0].content).toBe('fresh');
 	});
@@ -238,14 +235,14 @@ describe('applySync', () => {
 		const s = state({
 			...baseMessage,
 			content: '',
-			parts: [{ type: 'text', text: 'stale' }],
+			parts: [{ text: 'stale', type: 'text' }],
 		});
-		const fresh: MessagePart[] = [{ type: 'text', text: 'fresh' }];
+		const fresh: MessagePart[] = [{ text: 'fresh', type: 'text' }];
 		const next = applySync(s, {
-			lastMessageId: 'm1',
-			lastMessageStatus: 'streaming',
 			lastMessageContent: 'fresh',
+			lastMessageId: 'm1',
 			lastMessageParts: fresh,
+			lastMessageStatus: 'streaming',
 			lastMessageThinking: 'reflection',
 		});
 		const m = (next as ConversationState).messages[0];
@@ -256,12 +253,12 @@ describe('applySync', () => {
 		const s = state({
 			...baseMessage,
 			content: '',
-			parts: [{ type: 'text', text: 'kept' }],
+			parts: [{ text: 'kept', type: 'text' }],
 			thinking: 'kept',
 		});
-		const next = applySync(s, { lastMessageId: 'm1', lastMessageStatus: 'streaming', lastMessageContent: 'x' });
+		const next = applySync(s, { lastMessageContent: 'x', lastMessageId: 'm1', lastMessageStatus: 'streaming' });
 		const m = (next as ConversationState).messages[0];
-		expect(m.parts).toEqual([{ type: 'text', text: 'kept' }]);
+		expect(m.parts).toEqual([{ text: 'kept', type: 'text' }]);
 		expect(m.thinking).toBe('kept');
 	});
 });
@@ -269,9 +266,9 @@ describe('applySync', () => {
 describe('applyMeta', () => {
 	it('attaches a meta snapshot', () => {
 		const snapshot: MetaSnapshot = {
-			startedAt: 1,
 			firstTokenAt: 2,
 			lastChunk: null,
+			startedAt: 1,
 			usage: null,
 		};
 		const next = applyMeta(state({ ...baseMessage }), { messageId: 'm1', snapshot });
@@ -283,9 +280,9 @@ describe('applyPart', () => {
 	it('appends a part to the message timeline', () => {
 		const next = applyPart(state({ ...baseMessage }), {
 			messageId: 'm1',
-			part: { type: 'info', text: 'compacted' },
+			part: { text: 'compacted', type: 'info' },
 		});
-		expect(next.messages[0].parts?.at(-1)).toEqual({ type: 'info', text: 'compacted' });
+		expect(next.messages[0].parts?.at(-1)).toEqual({ text: 'compacted', type: 'info' });
 	});
 
 	// Regression: the DO emits a final `citations` part via the standard
@@ -296,11 +293,11 @@ describe('applyPart', () => {
 		const next = applyPart(state({ ...baseMessage }), {
 			messageId: 'm1',
 			part: {
-				type: 'citations',
 				citations: [
-					{ url: 'https://example.com/a', title: 'A', snippet: 'aa' },
-					{ url: 'https://example.com/b', title: 'B' },
+					{ snippet: 'aa', title: 'A', url: 'https://example.com/a' },
+					{ title: 'B', url: 'https://example.com/b' },
 				],
+				type: 'citations',
 			},
 		});
 		const tail = next.messages[0].parts?.at(-1);
@@ -354,9 +351,15 @@ describe('attachConversationStream', () => {
 	it('attaches to /c/:id/events and routes events to apply functions', async () => {
 		const { attachConversationStream } = await import('./conversation-stream');
 		let s: ConversationState = state({ ...baseMessage, content: 'hi' });
-		const detach = attachConversationStream('cid', () => s, (next) => (s = next), () => {});
+		const detach = attachConversationStream(
+			'cid',
+			() => s,
+			(next) => (s = next),
+			() => {},
+		);
 		expect(lastEs?.url).toBe('/c/cid/events');
-		lastEs!.emit('delta', { messageId: 'm1', content: '!' });
+		assertDefined(lastEs);
+		lastEs.emit('delta', { content: '!', messageId: 'm1' });
 		expect(s.messages[0].content).toBe('hi!');
 		detach();
 		expect(lastEs?.closed).toBe(true);
@@ -366,8 +369,14 @@ describe('attachConversationStream', () => {
 		const { attachConversationStream } = await import('./conversation-stream');
 		let s: ConversationState = state({ ...baseMessage, status: 'complete' });
 		const onReload = vi.fn();
-		const detach = attachConversationStream('cid', () => s, (next) => (s = next), onReload);
-		lastEs!.emit('sync', { lastMessageId: 'm1', lastMessageStatus: 'streaming', lastMessageContent: '' });
+		const detach = attachConversationStream(
+			'cid',
+			() => s,
+			(next) => (s = next),
+			onReload,
+		);
+		assertDefined(lastEs);
+		lastEs.emit('sync', { lastMessageContent: '', lastMessageId: 'm1', lastMessageStatus: 'streaming' });
 		expect(onReload).toHaveBeenCalled();
 		detach();
 	});
@@ -376,8 +385,14 @@ describe('attachConversationStream', () => {
 		const { attachConversationStream } = await import('./conversation-stream');
 		const s = state({ ...baseMessage });
 		const onReload = vi.fn();
-		const detach = attachConversationStream('cid', () => s, () => {}, onReload);
-		lastEs!.emit('refresh', null);
+		const detach = attachConversationStream(
+			'cid',
+			() => s,
+			() => {},
+			onReload,
+		);
+		assertDefined(lastEs);
+		lastEs.emit('refresh', null);
 		expect(onReload).toHaveBeenCalled();
 		detach();
 	});
