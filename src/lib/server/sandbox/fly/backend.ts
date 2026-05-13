@@ -1,4 +1,4 @@
-// fly.io Machines backend. See `./machines-api.ts` for the REST client,
+// fly.io Machines backend. See `./client/` for the REST client,
 // `./lifecycle.ts` for the per-conversation machine bookkeeping, and
 // `./file-ops.ts` for the shell-mediated file I/O.
 
@@ -14,10 +14,10 @@ import type {
 	SandboxBackend,
 	SandboxInstance,
 } from '../backend';
+import { execMachine, type FlyConfig, flyConfigFromEnv } from './client';
 import { clearExposedPorts, listExposedPorts, recordExposedPort } from './d1';
 import { deleteFileShell, existsShell, mkdirShell, readFileShell, runCodeShell, writeFileShell } from './file-ops';
 import { destroyManagedMachine, ensureMachine, getCachedMachineId } from './lifecycle';
-import { execMachine, type FlyConfig, flyConfigFromEnv } from './machines-api';
 
 // POSIX env var name. Anything outside [A-Za-z_][A-Za-z0-9_]* would
 // otherwise be interpolated raw into a shell `export` and run as code
@@ -54,7 +54,7 @@ function buildShellCommand(cmd: string, opts: ExecOptions): string {
 async function execOnce(cfg: FlyConfig, machineId: string, cmd: string, opts: ExecOptions): Promise<ExecResult> {
 	const script = buildShellCommand(cmd, opts);
 	const resp = await execMachine(cfg, machineId, {
-		cmd: ['bash', '-lc', script],
+		command: ['bash', '-lc', script],
 		...(opts.stdin !== undefined ? { stdin: opts.stdin } : {}),
 		...(opts.timeout ? { timeout: Math.ceil(opts.timeout / 1000) } : {}),
 	});
