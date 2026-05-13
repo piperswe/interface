@@ -115,7 +115,9 @@ async function ensureMachineInner(env: Env, cfg: FlyConfig, conversationId: stri
 			forgetMachine(conversationId);
 			machineId = null;
 		} else if (machine.state === 'stopped' || machine.state === 'suspended' || machine.state === 'created') {
-			await startMachine(cfg, machineId);
+			if (machine.state !== 'created') {
+				await startMachine(cfg, machineId);
+			}
 			await waitForMachineState(cfg, machineId, 'started', 20);
 		} else if (machine.state === 'destroyed' || machine.state === 'destroying') {
 			await clearFlyMachineId(env, conversationId);
