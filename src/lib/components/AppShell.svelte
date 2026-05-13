@@ -317,6 +317,8 @@
 	.sidebar {
 		position: relative;
 		width: var(--sidebar-width);
+		min-height: 100vh;
+		/* biome-ignore lint/suspicious/noDuplicateProperties: progressive enhancement — `100vh` fallback for browsers without `dvh` support (Android WebViews / pre-2022 builds). */
 		min-height: 100dvh;
 	}
 
