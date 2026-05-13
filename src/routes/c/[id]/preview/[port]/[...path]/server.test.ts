@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-	_buildPreviewUrl,
-	_parsePreviewPort,
-	_buildSanitizedProxyRequest,
-} from './+server';
+import { _buildPreviewUrl, _buildSanitizedProxyRequest, _parsePreviewPort } from './+server';
 
 const CONV_ID = '12345678-1234-1234-1234-123456789abc';
 
@@ -14,10 +10,10 @@ describe('_buildPreviewUrl', () => {
 	// would break silently. The fix appends `url.search` to the path.
 	it('preserves the query string from the incoming request', () => {
 		const out = _buildPreviewUrl({
-			port: 3000,
 			conversationId: CONV_ID,
 			hostname: 'interface.example',
 			path: 'api/items',
+			port: 3000,
 			search: '?id=42&filter=active',
 		});
 		expect(out.search).toBe('?id=42&filter=active');
@@ -27,10 +23,10 @@ describe('_buildPreviewUrl', () => {
 
 	it('routes to the Sandbox preview hostname pattern', () => {
 		const out = _buildPreviewUrl({
-			port: 8080,
 			conversationId: CONV_ID,
 			hostname: 'app.example',
 			path: '',
+			port: 8080,
 			search: '',
 		});
 		expect(out.host).toBe(`8080-${CONV_ID}-preview.app.example`);
@@ -39,10 +35,10 @@ describe('_buildPreviewUrl', () => {
 
 	it('handles a missing path with no query string', () => {
 		const out = _buildPreviewUrl({
-			port: 3000,
 			conversationId: CONV_ID,
 			hostname: 'app.example',
 			path: undefined,
+			port: 3000,
 			search: '',
 		});
 		expect(out.pathname).toBe('/');
@@ -51,10 +47,10 @@ describe('_buildPreviewUrl', () => {
 
 	it('preserves nested paths joined by SvelteKit catch-all params', () => {
 		const out = _buildPreviewUrl({
-			port: 3000,
 			conversationId: CONV_ID,
 			hostname: 'app.example',
 			path: 'docs/intro/index.html',
+			port: 3000,
 			search: '?ref=home',
 		});
 		expect(out.pathname).toBe('/docs/intro/index.html');
@@ -97,12 +93,12 @@ describe('_buildSanitizedProxyRequest', () => {
 	it('strips Cookie and Authorization headers', () => {
 		const target = new URL('http://3000-id-preview.example/');
 		const inbound = new Request('http://app.example/c/x/preview/3000/', {
-			method: 'GET',
 			headers: {
-				Cookie: 'session=secret',
 				Authorization: 'Bearer leak',
+				Cookie: 'session=secret',
 				'User-Agent': 'browser/1',
 			},
+			method: 'GET',
 		});
 		const out = _buildSanitizedProxyRequest(target, inbound);
 		expect(out.headers.get('Cookie')).toBeNull();
@@ -113,16 +109,16 @@ describe('_buildSanitizedProxyRequest', () => {
 	it('strips X-Forwarded-* and CF-* fingerprinting headers', () => {
 		const target = new URL('http://3000-id-preview.example/');
 		const inbound = new Request('http://app.example/c/x/preview/3000/', {
-			method: 'GET',
 			headers: {
-				'X-Forwarded-For': '1.2.3.4',
-				'X-Forwarded-Proto': 'https',
+				'Accept-Language': 'en',
 				'CF-Connecting-IP': '1.2.3.4',
 				'CF-Ray': 'abc-IAD',
-				'X-Real-IP': '1.2.3.4',
 				Forwarded: 'for=1.2.3.4',
-				'Accept-Language': 'en',
+				'X-Forwarded-For': '1.2.3.4',
+				'X-Forwarded-Proto': 'https',
+				'X-Real-IP': '1.2.3.4',
 			},
+			method: 'GET',
 		});
 		const out = _buildSanitizedProxyRequest(target, inbound);
 		expect(out.headers.get('X-Forwarded-For')).toBeNull();
@@ -138,8 +134,8 @@ describe('_buildSanitizedProxyRequest', () => {
 	it('preserves the request method and target URL', () => {
 		const target = new URL('http://3000-id-preview.example/path?q=1');
 		const inbound = new Request('http://app.example/c/x/preview/3000/', {
-			method: 'GET',
 			headers: { 'X-Forwarded-For': '1.2.3.4' },
+			method: 'GET',
 		});
 		const out = _buildSanitizedProxyRequest(target, inbound);
 		expect(out.method).toBe('GET');

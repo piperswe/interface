@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import {
-	renderMarkdownClient,
-	renderArtifactCodeClient,
-	sanitizeSvgClient,
-	_isSafeUrl,
-} from './markdown.client';
+import { _isSafeUrl, renderArtifactCodeClient, renderMarkdownClient, sanitizeSvgClient } from './markdown.client';
+
 void renderArtifactCodeClient;
 
 describe('renderMarkdownClient', () => {
@@ -125,9 +121,7 @@ describe('sanitizeSvgClient', () => {
 	});
 
 	it('rejects <foreignObject> (HTML escape hatch)', () => {
-		const out = sanitizeSvgClient(
-			'<svg><foreignObject><script>alert(1)</script></foreignObject></svg>',
-		);
+		const out = sanitizeSvgClient('<svg><foreignObject><script>alert(1)</script></foreignObject></svg>');
 		expect(out).not.toContain('<script');
 		expect(out).not.toMatch(/foreignobject/i);
 	});

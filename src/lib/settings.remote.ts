@@ -1,24 +1,16 @@
-import { form, getRequestEvent } from '$app/server';
 import { error, redirect } from '@sveltejs/kit';
 import { z } from 'zod';
-import { setSetting } from '$lib/server/settings';
-import { isValidTtsVoice } from '$lib/server/tts';
-import { createMcpServer, deleteMcpServer } from '$lib/server/mcp_servers';
-import {
-	createSubAgent,
-	deleteSubAgent,
-	isValidSubAgentName,
-	setSubAgentEnabled,
-} from '$lib/server/sub_agents';
-import { createMemory, deleteMemory } from '$lib/server/memories';
-import { createStyle, deleteStyle, updateStyle } from '$lib/server/styles';
+import { form, getRequestEvent } from '$app/server';
 import { getMcpPreset } from '$lib/server/mcp/presets';
-import { invalidateThemeCache } from '../hooks.server';
+import { createMcpServer, deleteMcpServer } from '$lib/server/mcp_servers';
+import { createMemory, deleteMemory } from '$lib/server/memories';
+import { positiveIntFromString, trimmedNonEmpty } from '$lib/server/remote-schemas';
+import { setSetting } from '$lib/server/settings';
+import { createStyle, deleteStyle, updateStyle } from '$lib/server/styles';
+import { createSubAgent, deleteSubAgent, isValidSubAgentName, setSubAgentEnabled } from '$lib/server/sub_agents';
+import { isValidTtsVoice } from '$lib/server/tts';
 import { assertPublicHttpsUrl } from '$lib/server/url-guard';
-import {
-	positiveIntFromString,
-	trimmedNonEmpty,
-} from '$lib/server/remote-schemas';
+import { invalidateThemeCache } from '../hooks.server';
 
 function getEnv(): Env {
 	const event = getRequestEvent();
@@ -55,8 +47,7 @@ export const saveSetting = form(
 			value: z.string().default(''),
 		})
 		.superRefine((d, ctx) => {
-			const issue = (message: string) =>
-				ctx.addIssue({ code: 'custom', path: ['value'], message });
+			const issue = (message: string) => ctx.addIssue({ code: 'custom', message, path: ['value'] });
 			switch (d.key) {
 				case 'theme':
 					if (d.value !== 'system' && d.value !== 'light' && d.value !== 'dark') {
@@ -111,12 +102,12 @@ export const saveSetting = form(
 
 export const addMcpServer = form(
 	z.object({
+		auth_json: z.string().optional().default(''),
 		name: trimmedNonEmpty('Missing required fields (name, transport, url)'),
 		transport: z.enum(['http', 'sse'], {
 			errorMap: () => ({ message: 'Missing required fields (name, transport, url)' }),
 		}),
 		url: trimmedNonEmpty('Missing required fields (name, transport, url)'),
-		auth_json: z.string().optional().default(''),
 	}),
 	async ({ name, transport, url, auth_json }) => {
 		const authJson = auth_json.trim();
@@ -133,22 +124,19 @@ export const addMcpServer = form(
 			}
 		}
 		await createMcpServer(getEnv(), {
+			authJson: authJson || null,
 			name,
 			transport,
 			url,
-			authJson: authJson || null,
 		});
 		redirect(303, '/settings');
 	},
 );
 
-export const removeMcpServer = form(
-	z.object({ id: positiveIntFromString }),
-	async ({ id }) => {
-		await deleteMcpServer(getEnv(), id);
-		redirect(303, '/settings');
-	},
-);
+export const removeMcpServer = form(z.object({ id: positiveIntFromString }), async ({ id }) => {
+	await deleteMcpServer(getEnv(), id);
+	redirect(303, '/settings');
+});
 
 function parseAllowedTools(raw: string): string[] | null {
 	const trimmed = raw.trim();
@@ -163,15 +151,15 @@ function parseAllowedTools(raw: string): string[] | null {
 export const addSubAgent = form(
 	z
 		.object({
+			allowed_tools: z.string().optional().default(''),
+			description: trimmedNonEmpty('Description is required'),
+			max_iterations: z.string().optional().default(''),
+			model: z.string().optional().default(''),
 			name: z
 				.string()
 				.trim()
 				.refine((v) => v.length > 0 && isValidSubAgentName(v), SUB_AGENT_NAME_RULE),
-			description: trimmedNonEmpty('Description is required'),
 			system_prompt: z.string().refine((v) => v.trim().length > 0, 'System prompt is required'),
-			model: z.string().optional().default(''),
-			max_iterations: z.string().optional().default(''),
-			allowed_tools: z.string().optional().default(''),
 		})
 		.superRefine((d, ctx) => {
 			const raw = d.max_iterations.trim();
@@ -180,8 +168,8 @@ export const addSubAgent = form(
 			if (!Number.isFinite(n) || n < 1 || n > 50) {
 				ctx.addIssue({
 					code: 'custom',
-					path: ['max_iterations'],
 					message: 'max_iterations must be an integer between 1 and 50',
+					path: ['max_iterations'],
 				});
 			}
 		}),
@@ -191,12 +179,12 @@ export const addSubAgent = form(
 		const maxIterations = maxIterRaw ? Number.parseInt(maxIterRaw, 10) : null;
 		try {
 			await createSubAgent(getEnv(), {
-				name,
-				description,
-				systemPrompt: system_prompt,
-				model: modelRaw || null,
-				maxIterations,
 				allowedTools: parseAllowedTools(allowed_tools),
+				description,
+				maxIterations,
+				model: modelRaw || null,
+				name,
+				systemPrompt: system_prompt,
 			});
 		} catch (e) {
 			error(400, e instanceof Error ? e.message : String(e));
@@ -205,41 +193,29 @@ export const addSubAgent = form(
 	},
 );
 
-export const removeSubAgent = form(
-	z.object({ id: positiveIntFromString }),
-	async ({ id }) => {
-		await deleteSubAgent(getEnv(), id);
-		redirect(303, '/settings');
-	},
-);
+export const removeSubAgent = form(z.object({ id: positiveIntFromString }), async ({ id }) => {
+	await deleteSubAgent(getEnv(), id);
+	redirect(303, '/settings');
+});
 
-export const toggleSubAgent = form(
-	z.object({ id: positiveIntFromString, enabled: z.string().optional() }),
-	async ({ id, enabled }) => {
-		await setSubAgentEnabled(getEnv(), id, enabled === 'true');
-		redirect(303, '/settings');
-	},
-);
+export const toggleSubAgent = form(z.object({ enabled: z.string().optional(), id: positiveIntFromString }), async ({ id, enabled }) => {
+	await setSubAgentEnabled(getEnv(), id, enabled === 'true');
+	redirect(303, '/settings');
+});
 
-export const addMemory = form(
-	z.object({ content: trimmedNonEmpty('Memory content is required') }),
-	async ({ content }) => {
-		try {
-			await createMemory(getEnv(), { type: 'manual', content, source: 'user' });
-		} catch (e) {
-			error(400, e instanceof Error ? e.message : String(e));
-		}
-		redirect(303, '/settings');
-	},
-);
+export const addMemory = form(z.object({ content: trimmedNonEmpty('Memory content is required') }), async ({ content }) => {
+	try {
+		await createMemory(getEnv(), { content, source: 'user', type: 'manual' });
+	} catch (e) {
+		error(400, e instanceof Error ? e.message : String(e));
+	}
+	redirect(303, '/settings');
+});
 
-export const removeMemory = form(
-	z.object({ id: positiveIntFromString }),
-	async ({ id }) => {
-		await deleteMemory(getEnv(), id);
-		redirect(303, '/settings');
-	},
-);
+export const removeMemory = form(z.object({ id: positiveIntFromString }), async ({ id }) => {
+	await deleteMemory(getEnv(), id);
+	redirect(303, '/settings');
+});
 
 export const addStyle = form(
 	z.object({
@@ -272,54 +248,45 @@ export const saveStyle = form(
 	},
 );
 
-export const removeStyle = form(
-	z.object({ id: positiveIntFromString }),
-	async ({ id }) => {
-		await deleteStyle(getEnv(), id);
-		redirect(303, '/settings');
-	},
-);
+export const removeStyle = form(z.object({ id: positiveIntFromString }), async ({ id }) => {
+	await deleteStyle(getEnv(), id);
+	redirect(303, '/settings');
+});
 
 // Add an MCP server from the curated catalog. For OAuth-protected servers we
 // create the row with `enabled = 0` and immediately redirect into the OAuth
 // connect flow; for header-auth or no-auth servers we just create and return
 // to settings.
-export const addMcpFromPreset = form(
-	z.object({ preset_id: trimmedNonEmpty('Unknown MCP preset') }),
-	async ({ preset_id }) => {
-		const preset = getMcpPreset(preset_id);
-		if (!preset) error(400, `Unknown MCP preset: ${preset_id}`);
-		const env = getEnv();
-		const id = await createMcpServer(env, {
-			name: preset.label,
-			transport: preset.transport,
-			url: preset.url,
-			authJson: null,
-		});
-		if (preset.authMode === 'oauth') {
-			// Disable until OAuth completes — the server's tools require a valid
-			// access token.
-			await env.DB.prepare('UPDATE mcp_servers SET enabled = 0 WHERE id = ?').bind(id).run();
-			redirect(303, `/settings/mcp/${id}/connect`);
-		}
-		redirect(303, '/settings');
-	},
-);
+export const addMcpFromPreset = form(z.object({ preset_id: trimmedNonEmpty('Unknown MCP preset') }), async ({ preset_id }) => {
+	const preset = getMcpPreset(preset_id);
+	if (!preset) error(400, `Unknown MCP preset: ${preset_id}`);
+	const env = getEnv();
+	const id = await createMcpServer(env, {
+		authJson: null,
+		name: preset.label,
+		transport: preset.transport,
+		url: preset.url,
+	});
+	if (preset.authMode === 'oauth') {
+		// Disable until OAuth completes — the server's tools require a valid
+		// access token.
+		await env.DB.prepare('UPDATE mcp_servers SET enabled = 0 WHERE id = ?').bind(id).run();
+		redirect(303, `/settings/mcp/${id}/connect`);
+	}
+	redirect(303, '/settings');
+});
 
-export const disconnectMcpServer = form(
-	z.object({ id: positiveIntFromString }),
-	async ({ id }) => {
-		const env = getEnv();
-		await env.DB.prepare(
-			`UPDATE mcp_servers SET
+export const disconnectMcpServer = form(z.object({ id: positiveIntFromString }), async ({ id }) => {
+	const env = getEnv();
+	await env.DB.prepare(
+		`UPDATE mcp_servers SET
 				oauth_access_token = NULL,
 				oauth_refresh_token = NULL,
 				oauth_expires_at = NULL,
 				enabled = 0
 			 WHERE id = ?`,
-		)
-			.bind(id)
-			.run();
-		redirect(303, '/settings');
-	},
-);
+	)
+		.bind(id)
+		.run();
+	redirect(303, '/settings');
+});

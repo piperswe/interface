@@ -1,38 +1,45 @@
 import { DurableObject } from 'cloudflare:workers';
-import { routeLLM } from '../llm/route';
+import type {
+	AddMessageResult,
+	Artifact,
+	ArtifactType,
+	ConversationState,
+	JsonValue,
+	MessagePart,
+	MessageRow,
+	MetaSnapshot,
+	ToolCallRecord as RecordedToolCall,
+} from '$lib/types/conversation';
+import { now as nowMs, uuid } from '../clock';
+import { listCustomTools } from '../custom_tools';
 import { compactHistory } from '../llm/context';
 import { formatError } from '../llm/errors';
-import { sanitizeHistoryForModel } from '../llm/sanitize';
 import type LLM from '../llm/LLM';
 import type { ChatRequest, ContentBlock, Message, StreamEvent, ToolDefinition, Usage } from '../llm/LLM';
-import type { ToolCitation } from '../tools/registry';
+import { routeLLM } from '../llm/route';
+import { sanitizeHistoryForModel } from '../llm/sanitize';
 import { listMcpServers } from '../mcp_servers';
-import { listCustomTools } from '../custom_tools';
-import { listSubAgents } from '../sub_agents';
 import { listMemories } from '../memories';
-import { listStyles } from '../styles';
-import { getSetting, getSystemPrompt, getUserBio } from '../settings';
-import { indexMessage as indexSearchMessage } from '../search';
-import { now as nowMs, uuid } from '../clock';
-import type { AddMessageResult, Artifact, ArtifactType, ConversationState, MessageRow, MetaSnapshot } from '$lib/types/conversation';
 import { getResolvedModel, listAllModels } from '../providers/models';
 import type { ResolvedModel } from '../providers/types';
-
-import type { MessagePart, ToolCallRecord as RecordedToolCall } from '$lib/types/conversation';
-
-import { runMigrations } from './conversation/migrations';
-import { parseJson, normalizeParts, trimTrailingPartialOutput, partsToMessages, dedupeCitationsByUrl } from './conversation/parts';
-import { buildHistory, buildHistoryWithRowIds, hydrateRowParts } from './conversation/history';
-import { execRows } from './conversation/sql';
+import { indexMessage as indexSearchMessage } from '../search';
+import { getSetting, getSystemPrompt, getUserBio } from '../settings';
+import { listStyles } from '../styles';
+import { listSubAgents } from '../sub_agents';
+import type { ToolCitation } from '../tools/registry';
+import { type AddArtifactInput, insertArtifact } from './conversation/artifacts';
 import { partsFromJson, partsToJson } from './conversation/blob-store';
+import { buildHistory, buildHistoryWithRowIds, hydrateRowParts } from './conversation/history';
+import { runMigrations } from './conversation/migrations';
+import { dedupeCitationsByUrl, normalizeParts, parseJson, partsToMessages, trimTrailingPartialOutput } from './conversation/parts';
 import { resolveReasoningConfig } from './conversation/reasoning';
-import { composeSystemPrompt } from './conversation/system-prompt';
-import { SubscriberSet } from './conversation/subscribers';
-import { buildToolRegistry, type ConversationContext, type McpCache } from './conversation/tool-registry-builder';
+import { destroySandbox, getSandboxPreviewPorts } from './conversation/sandbox';
+import { execRows } from './conversation/sql';
 import { readMessages } from './conversation/state-readers';
-import { writeTitle, TITLE_GEN_SYSTEM_PROMPT, TITLE_REGEN_SYSTEM_PROMPT } from './conversation/title-generator';
-import { getSandboxPreviewPorts, destroySandbox } from './conversation/sandbox';
-import { insertArtifact, type AddArtifactInput } from './conversation/artifacts';
+import { SubscriberSet } from './conversation/subscribers';
+import { composeSystemPrompt } from './conversation/system-prompt';
+import { TITLE_GEN_SYSTEM_PROMPT, TITLE_REGEN_SYSTEM_PROMPT, writeTitle } from './conversation/title-generator';
+import { buildToolRegistry, type ConversationContext, type McpCache } from './conversation/tool-registry-builder';
 
 export type { AddMessageResult, Artifact, ArtifactType, ConversationState, MessageRow, MetaSnapshot };
 
@@ -166,10 +173,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			// Don't clobber a constructor-scheduled eviction-recovery alarm:
 			// if a streaming row still exists, leave the alarm in place so
 			// the no-traffic resume path can fire.
-			const interrupted = execRows<{ id: string }>(
-				this.#sql,
-				"SELECT id FROM messages WHERE status = 'streaming' LIMIT 1",
-			);
+			const interrupted = execRows<{ id: string }>(this.#sql, "SELECT id FROM messages WHERE status = 'streaming' LIMIT 1");
 			if (interrupted.length === 0) {
 				await this.ctx.storage.deleteAlarm();
 			}
@@ -190,10 +194,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 
 	#setConversationId(id: string): void {
 		if (this.#conversationId === id) return;
-		this.#sql.exec(
-			"INSERT INTO _meta (key, value) VALUES ('conversation_id', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-			id,
-		);
+		this.#sql.exec("INSERT INTO _meta (key, value) VALUES ('conversation_id', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", id);
 		this.#conversationId = id;
 	}
 
@@ -343,7 +344,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 				fellBackFrom === ''
 					? `Resumed with model: ${model} (no model was recorded for this turn)`
 					: `Original model "${fellBackFrom}" is no longer configured; resumed with ${model}.`;
-			trimmed.push({ type: 'info', text: infoText });
+			trimmed.push({ text: infoText, type: 'info' });
 		}
 
 		this.#sql.exec(
@@ -358,16 +359,16 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		}
 
 		this.#inProgress = {
-			messageId,
-			content: '',
-			thinking: '',
-			parts: trimmed,
 			abortController: new AbortController(),
-			startedAt: 0,
+			content: '',
 			firstTokenAt: 0,
 			lastChunk: null,
-			usage: null,
+			messageId,
+			parts: trimmed,
 			providerID: null,
+			startedAt: 0,
+			thinking: '',
+			usage: null,
 		};
 		this.#subscribers.broadcast('refresh', {});
 
@@ -392,14 +393,14 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 					? {
 							...m,
 							content: ip.content,
-							thinking: ip.thinking || m.thinking,
 							parts: ip.parts.length > 0 ? ip.parts.slice() : m.parts,
+							thinking: ip.thinking || m.thinking,
 						}
 					: m,
 			);
-			return { messages: merged, inProgress: { messageId: ip.messageId, content: ip.content } };
+			return { inProgress: { content: ip.content, messageId: ip.messageId }, messages: merged };
 		}
-		return { messages, inProgress: null };
+		return { inProgress: null, messages };
 	}
 
 	async addUserMessage(conversationId: string, content: string, model: string): Promise<AddMessageResult> {
@@ -412,8 +413,8 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		await this.#detectAndResume();
 		if (this.#inProgress || this.#resumePromise) return { status: 'busy' };
 		const trimmed = content.trim();
-		if (!trimmed) return { status: 'invalid', reason: 'empty' };
-		if (!model) return { status: 'invalid', reason: 'missing model' };
+		if (!trimmed) return { reason: 'empty', status: 'invalid' };
+		if (!model) return { reason: 'missing model', status: 'invalid' };
 
 		const now = nowMs();
 		const systemId = uuid();
@@ -442,16 +443,16 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		);
 
 		this.#inProgress = {
-			messageId: assistantId,
-			content: '',
-			thinking: '',
-			parts: [],
 			abortController: new AbortController(),
-			startedAt: 0,
+			content: '',
 			firstTokenAt: 0,
 			lastChunk: null,
-			usage: null,
+			messageId: assistantId,
+			parts: [],
 			providerID: null,
+			startedAt: 0,
+			thinking: '',
+			usage: null,
 		};
 
 		await this.#touchConversation(conversationId, trimmed);
@@ -460,10 +461,10 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		this.ctx.waitUntil(
 			indexSearchMessage(this.env, {
 				conversationId,
+				createdAt: now + 1,
 				messageId: userId,
 				role: 'user',
 				text: trimmed,
-				createdAt: now + 1,
 			}).catch(() => {}),
 		);
 		this.#subscribers.broadcast('refresh', {});
@@ -485,8 +486,8 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 				this.env,
 				conversationId,
 				transcript.slice(0, 4000),
-				{ systemPrompt: TITLE_REGEN_SYSTEM_PROMPT, onlyIfDefault: false },
-				{ routeLLM: (id, opts) => this.#routeLLM(id, opts), getContext: () => this.#getContext() },
+				{ onlyIfDefault: false, systemPrompt: TITLE_REGEN_SYSTEM_PROMPT },
+				{ getContext: () => this.#getContext(), routeLLM: (id, opts) => this.#routeLLM(id, opts) },
 			);
 			this.#subscribers.broadcast('refresh', {});
 		} finally {
@@ -597,8 +598,8 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			// Insert a visible info message summarising what was compacted.
 			const summaryId = uuid();
 			const infoPart: MessagePart = {
-				type: 'info',
 				text: `Context compacted: summarized ${rowsToDelete.size} earlier messages. Summary: ${compaction.summary}`,
+				type: 'info',
 			};
 			this.#sql.exec(
 				"INSERT INTO messages (id, role, content, model, status, parts, created_at) VALUES (?, 'assistant', ?, ?, 'complete', ?, ?)",
@@ -666,6 +667,9 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		const self = this;
 
 		const stream = new ReadableStream<Uint8Array>({
+			cancel() {
+				if (storedSub) self.#subscribers.delete(storedSub);
+			},
 			start(controller) {
 				storedSub = { controller, nextId: 1 };
 				self.#subscribers.add(storedSub);
@@ -674,9 +678,6 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 				// resume without a full page reload.
 				controller.enqueue(self.#subscribers.encode('retry: 3000\n\n'));
 				void self.#sendSync(storedSub);
-			},
-			cancel() {
-				if (storedSub) self.#subscribers.delete(storedSub);
 			},
 		});
 
@@ -692,20 +693,21 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		const messages = await readMessages(this.#sql, this.env);
 		const last = messages[messages.length - 1];
 		if (!last) return;
-		const isInProgress = this.#inProgress?.messageId === last.id;
-		const content = isInProgress ? this.#inProgress!.content : last.content;
+		const inProgress = this.#inProgress;
+		const isInProgress = inProgress?.messageId === last.id;
+		const content = isInProgress && inProgress ? inProgress.content : last.content;
 		// Send the live timeline along with content so a subscriber that
 		// reconnects mid-stream can replace its (possibly empty) parts list
 		// with the server-side truth before any subsequent deltas arrive.
 		// Without this, the first delta after reconnect would seed `parts`
 		// from scratch and the renderer would drop the SSR'd content.
-		const parts = isInProgress ? this.#inProgress!.parts.slice() : (last.parts ?? null);
-		const thinking = isInProgress ? this.#inProgress!.thinking : (last.thinking ?? null);
+		const parts = isInProgress && inProgress ? inProgress.parts.slice() : (last.parts ?? null);
+		const thinking = isInProgress && inProgress ? inProgress.thinking : (last.thinking ?? null);
 		this.#subscribers.enqueueTo(sub, 'sync', {
-			lastMessageId: last.id,
-			lastMessageStatus: last.status,
 			lastMessageContent: content,
+			lastMessageId: last.id,
 			lastMessageParts: parts,
+			lastMessageStatus: last.status,
 			lastMessageThinking: thinking,
 		});
 	}
@@ -749,7 +751,9 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 
 	async __armToolExecBarrier(): Promise<number> {
 		let release!: () => void;
-		const promise = new Promise<void>((r) => { release = r; });
+		const promise = new Promise<void>((r) => {
+			release = r;
+		});
 		this.__toolExecHolds.push(promise);
 		this.#toolExecReleases.push(release);
 		return this.#toolExecReleases.length - 1;
@@ -776,22 +780,22 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		// `stored` still falls through to the resolve-or-fallback path so
 		// the bug "model column was never set" stays covered.
 		if (this.__llmOverrideScript && stored) {
-			return { model: stored, fellBackFrom: null };
+			return { fellBackFrom: null, model: stored };
 		}
 		if (stored) {
 			const direct = await getResolvedModel(this.env, stored).catch(() => null);
-			if (direct) return { model: stored, fellBackFrom: null };
+			if (direct) return { fellBackFrom: null, model: stored };
 		}
 		const fallbackOriginal = stored ?? '';
 		const defaultModel = await getSetting(this.env, 'default_model').catch(() => null);
 		if (defaultModel) {
 			const resolvedDefault = await getResolvedModel(this.env, defaultModel).catch(() => null);
-			if (resolvedDefault) return { model: defaultModel, fellBackFrom: fallbackOriginal };
+			if (resolvedDefault) return { fellBackFrom: fallbackOriginal, model: defaultModel };
 		}
 		const all = await listAllModels(this.env).catch(() => []);
 		if (all.length > 0) {
 			const first = `${all[0].providerId}/${all[0].id}`;
-			return { model: first, fellBackFrom: fallbackOriginal };
+			return { fellBackFrom: fallbackOriginal, model: first };
 		}
 		return null;
 	}
@@ -802,31 +806,32 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 		if (script) {
 			const calls = isTitle ? this.__titleLLMOverrideCalls : this.__llmOverrideCalls;
 			return {
-				model: globalId,
-				providerID: 'fake',
 				async *chat(req: ChatRequest): AsyncIterable<StreamEvent> {
 					calls.push(req);
 					const turn = script.shift();
 					if (!turn) {
-						yield { type: 'error', message: 'FakeLLM: ran out of scripted turns' };
+						yield { message: 'FakeLLM: ran out of scripted turns', type: 'error' };
 						return;
 					}
 					for (const ev of turn) yield ev;
 				},
+				model: globalId,
+				providerID: 'fake',
 			};
 		}
 		const resolved = await getResolvedModel(this.env, globalId);
 		if (!resolved) throw new Error(`Unknown model: ${globalId}`);
 		const llm = routeLLM(resolved.provider, resolved.model);
 		return {
+			chat: (req) => llm.chat(req),
 			model: globalId,
 			providerID: resolved.provider.id,
-			chat: (req) => llm.chat(req),
 		};
 	}
 
 	async #generate(conversationId: string, assistantId: string, model: string): Promise<void> {
-		const ip = this.#inProgress!;
+		const ip = this.#inProgress;
+		if (!ip) throw new Error('#generate called without an in-progress message');
 		ip.startedAt = nowMs();
 		// Heartbeat: while #generate is running, keep an alarm scheduled so
 		// Cloudflare can't evict the DO mid-stream. All exit paths below
@@ -866,7 +871,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			if (last && last.type === 'text') {
 				last.text += delta;
 			} else {
-				parts.push({ type: 'text', text: delta });
+				parts.push({ text: delta, type: 'text' });
 			}
 		};
 		const appendThinking = (delta: string) => {
@@ -874,7 +879,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			if (last && last.type === 'thinking') {
 				last.text += delta;
 			} else {
-				parts.push({ type: 'thinking', text: delta });
+				parts.push({ text: delta, type: 'thinking' });
 			}
 		};
 		const attachThinkingSignature = (signature: string) => {
@@ -935,8 +940,8 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 				: null;
 			const usageForCompaction = lastUsage
 				? {
-						inputTokens: lastUsage.inputTokens ?? lastUsage.promptTokens ?? 0,
 						cacheReadInputTokens: lastUsage.cacheReadInputTokens ?? lastUsage.promptTokensDetails?.cachedTokens,
+						inputTokens: lastUsage.inputTokens ?? lastUsage.promptTokens ?? 0,
 					}
 				: null;
 			const compaction = await compactHistory(messages, model, this.env, usageForCompaction, {
@@ -944,15 +949,11 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			});
 			if (compaction.wasCompacted) {
 				const infoPart: MessagePart = {
-					type: 'info',
 					text: `Context compacted: summarized ${compaction.droppedCount} earlier messages to stay within the model's limit.`,
+					type: 'info',
 				};
 				parts.push(infoPart);
-				this.#sql.exec(
-					'UPDATE messages SET parts = ? WHERE id = ?',
-					await partsToJson(parts, this.env, this.#uploadedBlobHashes),
-					assistantId,
-				);
+				this.#sql.exec('UPDATE messages SET parts = ? WHERE id = ?', await partsToJson(parts, this.env, this.#uploadedBlobHashes), assistantId);
 				this.#subscribers.broadcast('part', { messageId: assistantId, part: infoPart });
 				messages = compaction.messages;
 			}
@@ -973,18 +974,18 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			// in flight.
 			const resolved: ResolvedModel | null = await getResolvedModel(this.env, model);
 			const { reasoning, thinking } = resolveReasoningConfig({
-				thinkingBudget,
-				reasoningType: resolved?.model.reasoningType ?? null,
 				providerType: resolved?.provider.type ?? null,
+				reasoningType: resolved?.model.reasoningType ?? null,
+				thinkingBudget,
 			});
 
 			const systemPrompt = composeSystemPrompt({
 				conversationOverride: conversationSystemPromptOverride,
+				conversationStyleId,
 				globalSystemPrompt: context.systemPrompt,
-				userBio: context.userBio,
 				memories: context.memories,
 				styles: context.styles,
-				conversationStyleId,
+				userBio: context.userBio,
 			});
 
 			const registry = await buildToolRegistry(this.env, this.#mcpCache, model, context);
@@ -1008,8 +1009,8 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 
 				for await (const ev of llm.chat({
 					messages: sanitizeHistoryForModel(messages, resolvedForRoute),
-					systemPrompt,
 					signal,
+					systemPrompt,
 					...(tools ? { tools } : {}),
 					...(thinking ? { thinking } : {}),
 					...(reasoning ? { reasoning } : {}),
@@ -1020,18 +1021,18 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 						turnText += ev.delta;
 						appendText(ev.delta);
 						ip.content += ev.delta;
-						this.#subscribers.broadcast('delta', { messageId: assistantId, content: ev.delta });
+						this.#subscribers.broadcast('delta', { content: ev.delta, messageId: assistantId });
 						this.#scheduleFlush();
 					} else if (ev.type === 'thinking_delta') {
 						ip.thinking += ev.delta;
 						appendThinking(ev.delta);
-						this.#subscribers.broadcast('thinking_delta', { messageId: assistantId, content: ev.delta });
+						this.#subscribers.broadcast('thinking_delta', { content: ev.delta, messageId: assistantId });
 						this.#scheduleFlush();
 					} else if (ev.type === 'thinking_signature') {
 						attachThinkingSignature(ev.signature);
 						this.#scheduleFlush();
 					} else if (ev.type === 'tool_call') {
-						turnToolCalls.push({ id: ev.id, name: ev.name, input: ev.input, thoughtSignature: ev.thoughtSignature });
+						turnToolCalls.push({ id: ev.id, input: ev.input as JsonValue, name: ev.name, thoughtSignature: ev.thoughtSignature });
 					} else if (ev.type === 'usage') {
 						ip.usage = ev.usage;
 					} else if (ev.type === 'done') {
@@ -1051,11 +1052,11 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 
 				// Build the assistant message that triggered these tool calls.
 				const assistantBlocks: ContentBlock[] = [];
-				if (turnText) assistantBlocks.push({ type: 'text', text: turnText });
+				if (turnText) assistantBlocks.push({ text: turnText, type: 'text' });
 				for (const tc of turnToolCalls) {
-					assistantBlocks.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.input, thoughtSignature: tc.thoughtSignature });
+					assistantBlocks.push({ id: tc.id, input: tc.input, name: tc.name, thoughtSignature: tc.thoughtSignature, type: 'tool_use' });
 				}
-				messages.push({ role: 'assistant', content: assistantBlocks });
+				messages.push({ content: assistantBlocks, role: 'assistant' });
 
 				// Execute each tool, broadcast call+result events, append result to history.
 				// We push the `tool_use` and a preliminary streaming `tool_result`
@@ -1068,66 +1069,66 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 					if (!this.#inProgress || this.#inProgress.messageId !== assistantId) break;
 					const callStartedAt = nowMs();
 					parts.push({
-						type: 'tool_use',
 						id: call.id,
-						name: call.name,
 						input: call.input,
-						thoughtSignature: call.thoughtSignature,
+						name: call.name,
 						startedAt: callStartedAt,
+						thoughtSignature: call.thoughtSignature,
+						type: 'tool_use',
 					});
 					this.#subscribers.broadcast('tool_call', {
-						messageId: assistantId,
 						id: call.id,
-						name: call.name,
 						input: call.input,
-						thoughtSignature: call.thoughtSignature,
+						messageId: assistantId,
+						name: call.name,
 						startedAt: callStartedAt,
+						thoughtSignature: call.thoughtSignature,
 					});
 					// Seed a preliminary streaming tool_result so the UI shows the
 					// call as active while output arrives. Replaced with the final
 					// result once execution completes.
 					parts.push({
-						type: 'tool_result',
-						toolUseId: call.id,
 						content: '',
 						isError: false,
-						streaming: true,
 						startedAt: callStartedAt,
+						streaming: true,
+						toolUseId: call.id,
+						type: 'tool_result',
 					});
 					this.#subscribers.broadcast('tool_result', {
-						messageId: assistantId,
-						toolUseId: call.id,
 						content: '',
 						isError: false,
-						streaming: true,
+						messageId: assistantId,
 						startedAt: callStartedAt,
+						streaming: true,
+						toolUseId: call.id,
 					});
 					// Test-only synchronization point: lets tests pause the loop
 					// after the preliminary tool_result is published but before the
 					// real tool runs, so abortGeneration can fire while the tool is
 					// "in flight." A no-op outside of tests.
-					if (this.__toolExecHolds.length > 0) {
-						const hold = this.__toolExecHolds.shift()!;
+					const hold = this.__toolExecHolds.shift();
+					if (hold) {
 						await hold;
 					}
 					const result = await registry.execute(
 						{
-							env: this.env,
-							conversationId,
 							assistantMessageId: assistantId,
-							modelId: currentModel,
-							signal,
+							conversationId,
 							emitToolOutput: (chunk: string) => {
 								this.#subscribers.broadcast('tool_output', {
+									chunk,
 									messageId: assistantId,
 									toolUseId: call.id,
-									chunk,
 								});
 							},
+							env: this.env,
+							modelId: currentModel,
+							registerCitation,
+							signal,
 							switchModel: (newModelId: string) => {
 								pendingModelSwitch = newModelId;
 							},
-							registerCitation,
 						},
 						call.name,
 						call.input,
@@ -1149,21 +1150,21 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 					const partsIdx = parts.findIndex((p) => p.type === 'tool_result' && p.toolUseId === call.id);
 					if (partsIdx >= 0) {
 						parts[partsIdx] = {
-							type: 'tool_result',
-							toolUseId: call.id,
 							content: result.content,
+							endedAt: callEndedAt,
 							isError: result.isError ?? false,
 							startedAt: callStartedAt,
-							endedAt: callEndedAt,
+							toolUseId: call.id,
+							type: 'tool_result',
 						};
 					} else {
 						parts.push({
-							type: 'tool_result',
-							toolUseId: call.id,
 							content: result.content,
+							endedAt: callEndedAt,
 							isError: result.isError ?? false,
 							startedAt: callStartedAt,
-							endedAt: callEndedAt,
+							toolUseId: call.id,
+							type: 'tool_result',
 						});
 					}
 					// Persist the running parts column each step so stream death
@@ -1173,8 +1174,8 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 					await this.#cancelFlush();
 					this.#sql.exec(
 						'UPDATE messages SET content = ?, thinking = ?, parts = ? WHERE id = ?',
-						this.#inProgress!.content,
-						this.#inProgress!.thinking || null,
+						ip.content,
+						ip.thinking || null,
 						await partsToJson(parts, this.env, this.#uploadedBlobHashes),
 						assistantId,
 					);
@@ -1187,33 +1188,33 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 					if (result.artifacts) {
 						for (const a of result.artifacts) {
 							this.addArtifact({
-								messageId: assistantId,
-								type: a.type,
-								name: a.name ?? null,
-								language: a.language ?? null,
 								content: a.content,
+								language: a.language ?? null,
+								messageId: assistantId,
+								name: a.name ?? null,
+								type: a.type,
 							});
 						}
 					}
 					this.#subscribers.broadcast('tool_result', {
-						messageId: assistantId,
-						toolUseId: call.id,
 						content: result.content,
-						isError: result.isError ?? false,
-						startedAt: callStartedAt,
 						endedAt: callEndedAt,
+						isError: result.isError ?? false,
+						messageId: assistantId,
+						startedAt: callStartedAt,
+						toolUseId: call.id,
 					});
 
 					messages.push({
-						role: 'tool',
 						content: [
 							{
-								type: 'tool_result',
-								toolUseId: call.id,
 								content: result.content,
+								toolUseId: call.id,
+								type: 'tool_result',
 								...(result.isError ? { isError: true } : {}),
 							},
 						],
+						role: 'tool',
 					});
 				}
 
@@ -1226,7 +1227,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 					// switch from a vision model to a text-only one strips
 					// images from history before the next chat call).
 					resolvedForRoute = await getResolvedModel(this.env, currentModel);
-					const infoPart: MessagePart = { type: 'info', text: `Switched to model: ${currentModel}` };
+					const infoPart: MessagePart = { text: `Switched to model: ${currentModel}`, type: 'info' };
 					parts.push(infoPart);
 					this.#sql.exec(
 						'UPDATE messages SET model = ?, parts = ? WHERE id = ?',
@@ -1245,8 +1246,8 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 					// stops mid-flow.
 					hitIterationCap = true;
 					const infoPart: MessagePart = {
-						type: 'info',
 						text: `Tool iteration budget exhausted (${MAX_TOOL_ITERATIONS} rounds). The model did not produce a final answer; ask a follow-up to continue.`,
+						type: 'info',
 					};
 					parts.push(infoPart);
 					this.#subscribers.broadcast('part', { messageId: assistantId, part: infoPart });
@@ -1269,7 +1270,7 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			let citationsPart: MessagePart | null = null;
 			if (accumulatedCitations.length > 0) {
 				const deduped = dedupeCitationsByUrl(accumulatedCitations);
-				citationsPart = { type: 'citations', citations: deduped };
+				citationsPart = { citations: deduped, type: 'citations' };
 				parts.push(citationsPart);
 			}
 			const finalText = this.#inProgress.content;
@@ -1291,15 +1292,15 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			this.ctx.waitUntil(
 				indexSearchMessage(this.env, {
 					conversationId,
+					createdAt: ip.startedAt || nowMs(),
 					messageId: assistantId,
 					role: 'assistant',
 					text: finalText,
-					createdAt: ip.startedAt || nowMs(),
 				}).catch(() => {}),
 			);
 			this.#subscribers.broadcast('meta', {
 				messageId: assistantId,
-				snapshot: { startedAt: ip.startedAt, firstTokenAt: ip.firstTokenAt, lastChunk: ip.lastChunk, usage: ip.usage },
+				snapshot: { firstTokenAt: ip.firstTokenAt, lastChunk: ip.lastChunk, startedAt: ip.startedAt, usage: ip.usage },
 			});
 			if (citationsPart) {
 				this.#subscribers.broadcast('part', { messageId: assistantId, part: citationsPart });
@@ -1348,16 +1349,16 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 			listCustomTools(this.env),
 		]);
 		const context: ConversationContext = {
-			systemPrompt,
-			userBio,
 			allModels,
-			subAgents,
+			customTools,
 			mcpServers,
 			memories,
 			styles,
-			customTools,
+			subAgents,
+			systemPrompt,
+			userBio,
 		};
-		this.#contextCache = { fetchedAt: nowMs(), context };
+		this.#contextCache = { context, fetchedAt: nowMs() };
 		return context;
 	}
 
@@ -1385,8 +1386,8 @@ export default class ConversationDurableObject extends DurableObject<Env> {
 				this.env,
 				conversationId,
 				firstMessageContent,
-				{ systemPrompt: TITLE_GEN_SYSTEM_PROMPT, onlyIfDefault: true },
-				{ routeLLM: (id, opts) => this.#routeLLM(id, opts), getContext: () => this.#getContext() },
+				{ onlyIfDefault: true, systemPrompt: TITLE_GEN_SYSTEM_PROMPT },
+				{ getContext: () => this.#getContext(), routeLLM: (id, opts) => this.#routeLLM(id, opts) },
 			),
 		);
 	}

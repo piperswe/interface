@@ -22,6 +22,9 @@ if (content.includes('SchedulerDurableObject')) {
 }
 // Drop the legacy single-DO append (if present from a previous build) and
 // rewrite. Idempotent across re-builds.
-const stripped = content.replace(/\nexport \{ default as ConversationDurableObject \}.*\nexport \{ Sandbox \} from '@cloudflare\/sandbox';\n$/s, '');
+const stripped = content.replace(
+	/\nexport \{ default as ConversationDurableObject \}.*\nexport \{ Sandbox \} from '@cloudflare\/sandbox';\n$/s,
+	'',
+);
 writeFileSync(WORKER_PATH, stripped + DO_EXPORT);
 console.log('postbuild: appended Conversation + Scheduler DO and Sandbox exports to _worker.js');

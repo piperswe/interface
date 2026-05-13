@@ -23,7 +23,7 @@ type TagRow = {
 };
 
 function rowToTag(r: TagRow): Tag {
-	return { id: r.id, name: r.name, color: r.color, createdAt: r.created_at };
+	return { color: r.color, createdAt: r.created_at, id: r.id, name: r.name };
 }
 
 const ALLOWED_COLORS = new Set(['gray', 'red', 'orange', 'amber', 'green', 'teal', 'blue', 'indigo', 'purple', 'pink']);
@@ -35,9 +35,7 @@ export function isValidColor(c: string | null | undefined): c is string {
 export const TAG_COLORS = [...ALLOWED_COLORS];
 
 export async function listTags(env: Env, userId: number = SINGLE_USER_ID): Promise<Tag[]> {
-	const result = await env.DB.prepare(
-		`SELECT id, name, color, created_at FROM tags WHERE user_id = ? ORDER BY name`,
-	)
+	const result = await env.DB.prepare(`SELECT id, name, color, created_at FROM tags WHERE user_id = ? ORDER BY name`)
 		.bind(userId)
 		.all<TagRow>();
 	return (result.results ?? []).map(rowToTag);
@@ -51,7 +49,7 @@ export async function createTag(
 	const name = input.name.trim();
 	if (!name) throw new Error('Tag name is required');
 	if (name.length > 64) throw new Error('Tag name too long');
-	const color = isValidColor(input.color ?? null) ? input.color! : null;
+	const color = isValidColor(input.color ?? null) ? (input.color ?? null) : null;
 	const result = await env.DB.prepare(
 		`INSERT INTO tags (user_id, name, color, created_at)
 		 VALUES (?, ?, ?, ?)
@@ -140,9 +138,5 @@ export async function addTagToConversation(env: Env, conversationId: string, tag
 }
 
 export async function removeTagFromConversation(env: Env, conversationId: string, tagId: number): Promise<void> {
-	await env.DB.prepare(
-		`DELETE FROM conversation_tags WHERE conversation_id = ? AND tag_id = ?`,
-	)
-		.bind(conversationId, tagId)
-		.run();
+	await env.DB.prepare(`DELETE FROM conversation_tags WHERE conversation_id = ? AND tag_id = ?`).bind(conversationId, tagId).run();
 }

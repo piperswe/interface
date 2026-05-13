@@ -6,30 +6,10 @@
 // over the assistant) flips back to recording promptly.
 
 import { sendMessageRpc } from './conversations.remote';
-import {
-	explainMicError,
-	pickMimeType,
-	transcribe,
-} from './speech-recognition.client';
-import {
-	BARGE_IN_VAD_OPTS,
-	DEFAULT_VAD_OPTS,
-	computeRms,
-	dbFromRms,
-	initialVadState,
-	stepVad,
-	type VadState,
-} from './vad';
+import { explainMicError, pickMimeType, transcribe } from './speech-recognition.client';
+import { BARGE_IN_VAD_OPTS, computeRms, DEFAULT_VAD_OPTS, dbFromRms, initialVadState, stepVad, type VadState } from './vad';
 
-export type ConversationModePhase =
-	| 'idle'
-	| 'listening'
-	| 'recording'
-	| 'transcribing'
-	| 'sending'
-	| 'thinking'
-	| 'speaking'
-	| 'error';
+export type ConversationModePhase = 'idle' | 'listening' | 'recording' | 'transcribing' | 'sending' | 'thinking' | 'speaking' | 'error';
 
 export type ConversationModeSnapshot = {
 	active: boolean;
@@ -52,10 +32,7 @@ export type ConversationModeEvent =
  * Pure reducer driving the phase state machine. Exported so the
  * transition table can be unit-tested without touching DOM resources.
  */
-export function nextPhase(
-	current: ConversationModePhase,
-	event: ConversationModeEvent,
-): ConversationModePhase {
+export function nextPhase(current: ConversationModePhase, event: ConversationModeEvent): ConversationModePhase {
 	switch (event.type) {
 		case 'toggle_on':
 			return current === 'idle' ? 'listening' : current;
@@ -92,8 +69,8 @@ type Listener = (snapshot: ConversationModeSnapshot) => void;
 export class ConversationMode {
 	private snapshot: ConversationModeSnapshot = {
 		active: false,
-		phase: 'idle',
 		errorMessage: null,
+		phase: 'idle',
 	};
 	private listeners = new Set<Listener>();
 
@@ -171,11 +148,7 @@ export class ConversationMode {
 
 	private setSnapshot(patch: Partial<ConversationModeSnapshot>): void {
 		const next = { ...this.snapshot, ...patch };
-		if (
-			next.active === this.snapshot.active &&
-			next.phase === this.snapshot.phase &&
-			next.errorMessage === this.snapshot.errorMessage
-		) {
+		if (next.active === this.snapshot.active && next.phase === this.snapshot.phase && next.errorMessage === this.snapshot.errorMessage) {
 			return;
 		}
 		this.snapshot = next;
@@ -191,11 +164,7 @@ export class ConversationMode {
 		this.runSideEffect(prev, next, event);
 	}
 
-	private runSideEffect(
-		prev: ConversationModePhase,
-		next: ConversationModePhase,
-		event: ConversationModeEvent,
-	): void {
+	private runSideEffect(prev: ConversationModePhase, next: ConversationModePhase, event: ConversationModeEvent): void {
 		if (event.type === 'toggle_off') {
 			this.teardown();
 			return;
@@ -239,9 +208,9 @@ export class ConversationMode {
 		try {
 			requestedStream = await navigator.mediaDevices.getUserMedia({
 				audio: {
+					autoGainControl: true,
 					echoCancellation: true,
 					noiseSuppression: true,
-					autoGainControl: true,
 				},
 			});
 		} catch (err) {
@@ -271,7 +240,11 @@ export class ConversationMode {
 					/* ignore */
 				}
 				for (const t of requestedStream.getTracks()) {
-					try { t.stop(); } catch { /* ignore */ }
+					try {
+						t.stop();
+					} catch {
+						/* ignore */
+					}
 				}
 				return;
 			}
@@ -341,9 +314,7 @@ export class ConversationMode {
 			return;
 		}
 		try {
-			const rec = mime
-				? new MediaRecorder(stream, { mimeType: mime })
-				: new MediaRecorder(stream);
+			const rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
 			this.recorderChunks = [];
 			rec.addEventListener('dataavailable', (e) => {
 				if (e.data && e.data.size > 0) this.recorderChunks.push(e.data);
@@ -359,16 +330,12 @@ export class ConversationMode {
 		const rec = this.recorder;
 		this.recorder = null;
 		if (!rec) {
-			this.dispatch({ type: 'transcribed', text: '' });
+			this.dispatch({ text: '', type: 'transcribed' });
 			return;
 		}
 		const stopped = new Promise<void>((resolve, reject) => {
 			rec.addEventListener('stop', () => resolve(), { once: true });
-			rec.addEventListener(
-				'error',
-				(e) => reject((e as ErrorEvent).error ?? new Error('Recorder error')),
-				{ once: true },
-			);
+			rec.addEventListener('error', (e) => reject((e as ErrorEvent).error ?? new Error('Recorder error')), { once: true });
 		});
 		try {
 			if (rec.state !== 'inactive') rec.stop();
@@ -384,14 +351,14 @@ export class ConversationMode {
 		const blob = new Blob(this.recorderChunks, { type: rec.mimeType || 'audio/webm' });
 		this.recorderChunks = [];
 		if (blob.size === 0) {
-			this.dispatch({ type: 'transcribed', text: '' });
+			this.dispatch({ text: '', type: 'transcribed' });
 			return;
 		}
 
 		try {
 			const text = await transcribe(blob);
 			if (!this.snapshot.active) return;
-			this.dispatch({ type: 'transcribed', text });
+			this.dispatch({ text, type: 'transcribed' });
 			if (text.trim()) {
 				this.failureCount = 0;
 				void this.sendUserMessage(text.trim());
@@ -409,7 +376,7 @@ export class ConversationMode {
 		}
 		this.deps.onToast(message);
 		// Try again — drop back to listening.
-		this.dispatch({ type: 'transcribed', text: '' });
+		this.dispatch({ text: '', type: 'transcribed' });
 	}
 
 	private async sendUserMessage(content: string): Promise<void> {
@@ -417,8 +384,8 @@ export class ConversationMode {
 		this.deps.onOptimisticSubmit(content, model);
 		try {
 			await sendMessageRpc({
-				conversationId: this.deps.conversationId,
 				content,
+				conversationId: this.deps.conversationId,
 				model,
 			});
 			if (!this.snapshot.active) return;
@@ -499,8 +466,7 @@ export function isConversationModeSupported(): boolean {
 	if (!window.MediaRecorder) return false;
 	if (!navigator.mediaDevices?.getUserMedia) return false;
 	const Ctx =
-		(window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext })
-			.AudioContext ??
+		(window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext ??
 		(window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
 	return typeof Ctx === 'function';
 }

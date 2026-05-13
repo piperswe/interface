@@ -4,9 +4,9 @@
 // the user's preferred one is unconfigured, or `null` if none are.
 
 import { getSandboxBackendId } from '$lib/server/settings';
+import type { SandboxBackend, SandboxBackendId, SandboxInstance } from './backend';
 import { cloudflareBackend } from './cloudflare';
 import { flyBackend } from './fly/backend';
-import type { SandboxBackend, SandboxBackendId, SandboxInstance } from './backend';
 
 export type { SandboxBackend, SandboxBackendId, SandboxInstance } from './backend';
 
@@ -69,11 +69,7 @@ export async function getBackend(env: Env, userId?: number): Promise<SandboxBack
 	return backend;
 }
 
-export async function getSandboxInstance(
-	env: Env,
-	conversationId: string,
-	userId?: number,
-): Promise<SandboxInstance | null> {
+export async function getSandboxInstance(env: Env, conversationId: string, userId?: number): Promise<SandboxInstance | null> {
 	const backend = await getBackend(env, userId);
 	if (!backend) return null;
 	return backend.get(env, conversationId);

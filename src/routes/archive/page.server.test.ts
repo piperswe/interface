@@ -26,12 +26,11 @@ async function expectError(promise: Promise<unknown>, status: number): Promise<v
 	}
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function loadOk(event: LoadEvent): Promise<Record<string, any>> {
+async function loadOk(event: LoadEvent): Promise<Record<string, unknown>> {
 	const result = await load(event);
 	if (!result) throw new Error('load returned void');
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	return result as Record<string, any>;
+
+	return result as Record<string, unknown>;
 }
 
 describe('archive/+page.server.ts — load', () => {

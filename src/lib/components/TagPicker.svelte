@@ -1,10 +1,10 @@
 <script lang="ts">
-	import type { Tag } from '$lib/server/tags';
-	import { invalidateAll } from '$app/navigation';
-	import { tagConversation, createAndTagConversation } from '$lib/tags.remote';
-	import { clickOutside } from '$lib/click-outside';
-	import { pushToast } from '$lib/toasts';
 	import { Check } from 'lucide-svelte';
+	import { invalidateAll } from '$app/navigation';
+	import { clickOutside } from '$lib/click-outside';
+	import type { Tag } from '$lib/server/tags';
+	import { createAndTagConversation, tagConversation } from '$lib/tags.remote';
+	import { pushToast } from '$lib/toasts';
 
 	let {
 		conversationId,
@@ -32,9 +32,9 @@
 		busy = true;
 		try {
 			await tagConversation({
+				attached: !attached.has(tag.id),
 				conversationId,
 				tagId: tag.id,
-				attached: !attached.has(tag.id),
 			});
 			await invalidateAll();
 		} catch (err) {

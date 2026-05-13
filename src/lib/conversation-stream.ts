@@ -4,7 +4,6 @@
 // Svelte 5 runes.
 
 import { z } from 'zod';
-import { parseJsonWith } from '$lib/zod-utils';
 import type {
 	Artifact,
 	ConversationState,
@@ -14,6 +13,7 @@ import type {
 	MetaSnapshot,
 	ToolResultRecord,
 } from '$lib/types/conversation';
+import { parseJsonWith } from '$lib/zod-utils';
 
 // SSE frames are JSON over the wire — parse defensively. We only check the
 // outermost shape (presence of fields the apply* reducers rely on), since
@@ -22,9 +22,9 @@ import type {
 const messageIdEventSchema = z.object({ messageId: z.string() }).passthrough();
 const syncEventSchema = z
 	.object({
+		lastMessageContent: z.string(),
 		lastMessageId: z.string(),
 		lastMessageStatus: z.enum(['complete', 'streaming', 'error']),
-		lastMessageContent: z.string(),
 	})
 	.passthrough();
 
@@ -51,11 +51,7 @@ export type MetaEvent = { messageId: string; snapshot: MetaSnapshot };
 export type PartEvent = { messageId: string; part: MessagePart };
 export type ModelSwitchEvent = { messageId: string; model: string };
 
-export function patchMessage(
-	state: ConversationState,
-	id: string,
-	patch: (m: MessageRow) => MessageRow,
-): ConversationState {
+export function patchMessage(state: ConversationState, id: string, patch: (m: MessageRow) => MessageRow): ConversationState {
 	let touched = false;
 	const messages = state.messages.map((m) => {
 		if (m.id !== id) return m;
@@ -76,10 +72,10 @@ export function appendDeltaPart(parts: MessagePart[], kind: 'text' | 'thinking',
 		// while the streaming-markdown renderer picks up the new revision.
 		const next = parts.slice();
 		const prev = next[next.length - 1] as { type: 'text' | 'thinking'; text: string; textHtml?: string };
-		next[next.length - 1] = { type: kind, text: prev.text + delta, textHtml: prev.textHtml };
+		next[next.length - 1] = { text: prev.text + delta, textHtml: prev.textHtml, type: kind };
 		return next;
 	}
-	return [...parts, { type: kind, text: delta }];
+	return [...parts, { text: delta, type: kind }];
 }
 
 export function applyDelta(state: ConversationState, ev: DeltaEvent): ConversationState {
@@ -93,8 +89,8 @@ export function applyDelta(state: ConversationState, ev: DeltaEvent): Conversati
 export function applyThinkingDelta(state: ConversationState, ev: ThinkingDeltaEvent): ConversationState {
 	return patchMessage(state, ev.messageId, (m) => ({
 		...m,
-		thinking: (m.thinking ?? '') + ev.content,
 		parts: appendDeltaPart(m.parts ?? [], 'thinking', ev.content),
+		thinking: (m.thinking ?? '') + ev.content,
 	}));
 }
 
@@ -104,10 +100,7 @@ export function applyToolCall(state: ConversationState, ev: ToolCallEvent): Conv
 		if (parts.some((p) => p.type === 'tool_use' && p.id === ev.id)) return m;
 		return {
 			...m,
-			parts: [
-				...parts,
-				{ type: 'tool_use', id: ev.id, name: ev.name, input: ev.input, startedAt: ev.startedAt },
-			],
+			parts: [...parts, { id: ev.id, input: ev.input, name: ev.name, startedAt: ev.startedAt, type: 'tool_use' }],
 		};
 	});
 }
@@ -117,19 +110,17 @@ export function applyToolResult(state: ConversationState, ev: ToolResultEvent): 
 		const parts = m.parts ?? [];
 		const partsHasIt = parts.some((p) => p.type === 'tool_result' && p.toolUseId === ev.toolUseId);
 		const next = {
-			type: 'tool_result' as const,
-			toolUseId: ev.toolUseId,
 			content: ev.content,
 			isError: ev.isError,
+			toolUseId: ev.toolUseId,
+			type: 'tool_result' as const,
 			...(ev.streaming ? { streaming: true as const } : {}),
 			...(ev.startedAt !== undefined ? { startedAt: ev.startedAt } : {}),
 			...(ev.endedAt !== undefined ? { endedAt: ev.endedAt } : {}),
 		};
 		return {
 			...m,
-			parts: partsHasIt
-				? parts.map((p) => (p.type === 'tool_result' && p.toolUseId === ev.toolUseId ? next : p))
-				: [...parts, next],
+			parts: partsHasIt ? parts.map((p) => (p.type === 'tool_result' && p.toolUseId === ev.toolUseId ? next : p)) : [...parts, next],
 		};
 	});
 }
@@ -161,7 +152,7 @@ export function applyToolOutput(state: ConversationState, ev: ToolOutputEvent): 
 							streaming: true as const,
 						};
 					})
-				: [...parts, { type: 'tool_result', toolUseId: ev.toolUseId, content: ev.chunk, isError: false, streaming: true as const }],
+				: [...parts, { content: ev.chunk, isError: false, streaming: true as const, toolUseId: ev.toolUseId, type: 'tool_result' }],
 		};
 	});
 }

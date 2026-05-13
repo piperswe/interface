@@ -44,7 +44,7 @@ export interface ResolvedModel {
 export function parseGlobalModelId(globalId: string): { providerId: string; modelId: string } {
 	const i = globalId.indexOf('/');
 	if (i === -1) throw new Error(`Invalid global model ID: ${globalId}`);
-	return { providerId: globalId.slice(0, i), modelId: globalId.slice(i + 1) };
+	return { modelId: globalId.slice(i + 1), providerId: globalId.slice(0, i) };
 }
 
 export function buildGlobalModelId(providerId: string, modelId: string): string {

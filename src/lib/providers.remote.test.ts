@@ -3,8 +3,8 @@ import { isHttpError, isRedirect } from '@sveltejs/kit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearMockRequestEvent, setMockRequestEvent } from '../../test/shims/app-server';
 import * as remote from './providers.remote';
-import { createProvider, getProvider, listProviders } from './server/providers/store';
 import { createModel, getModel, listAllModels, listModelsForProvider } from './server/providers/models';
+import { createProvider, getProvider } from './server/providers/store';
 
 type AnyArgs = (...args: unknown[]) => Promise<unknown>;
 const saveProvider = remote.saveProvider as unknown as AnyArgs;
@@ -60,27 +60,27 @@ describe('providers.remote — saveProvider', () => {
 	it('creates a new provider with valid id and type', async () => {
 		await expectRedirect(
 			saveProvider({
-				id: 'my-anthropic',
-				type: 'anthropic',
 				api_key: 'sk-test',
 				endpoint: '',
 				gateway_id: '',
+				id: 'my-anthropic',
+				type: 'anthropic',
 			}) as Promise<unknown>,
 			'/settings',
 		);
 		const row = await getProvider(env, 'my-anthropic');
-		expect(row).toMatchObject({ id: 'my-anthropic', type: 'anthropic', apiKey: 'sk-test' });
+		expect(row).toMatchObject({ apiKey: 'sk-test', id: 'my-anthropic', type: 'anthropic' });
 	});
 
 	it('updates an existing provider in place (does not change type)', async () => {
-		await createProvider(env, { id: 'p1', type: 'anthropic', apiKey: 'old' });
+		await createProvider(env, { apiKey: 'old', id: 'p1', type: 'anthropic' });
 		await expectRedirect(
 			saveProvider({
-				id: 'p1',
-				type: 'anthropic',
 				api_key: 'new',
 				endpoint: 'https://example.com',
 				gateway_id: '',
+				id: 'p1',
+				type: 'anthropic',
 			}) as Promise<unknown>,
 			'/settings',
 		);
@@ -117,27 +117,27 @@ describe('providers.remote — saveProviderModel', () => {
 		await createProvider(env, { id: 'p1', type: 'anthropic' });
 		await expectRedirect(
 			saveProviderModel({
-				provider_id: 'p1',
+				description: 'desc',
+				input_cost_per_million_tokens: '3.5',
+				max_context_length: '200000',
 				model_id: 'm1',
 				name: 'Model 1',
-				description: 'desc',
-				max_context_length: '200000',
-				reasoning_type: 'max_tokens',
-				input_cost_per_million_tokens: '3.5',
 				output_cost_per_million_tokens: '15',
+				provider_id: 'p1',
+				reasoning_type: 'max_tokens',
 			}) as Promise<unknown>,
 			'/settings',
 		);
 		const row = await getModel(env, 'p1', 'm1');
 		expect(row).toMatchObject({
-			id: 'm1',
-			providerId: 'p1',
-			name: 'Model 1',
 			description: 'desc',
-			maxContextLength: 200000,
-			reasoningType: 'max_tokens',
+			id: 'm1',
 			inputCostPerMillionTokens: 3.5,
+			maxContextLength: 200000,
+			name: 'Model 1',
 			outputCostPerMillionTokens: 15,
+			providerId: 'p1',
+			reasoningType: 'max_tokens',
 		});
 	});
 
@@ -146,10 +146,10 @@ describe('providers.remote — saveProviderModel', () => {
 		await createModel(env, 'p1', { id: 'm1', name: 'old name' });
 		await runForm(
 			saveProviderModel({
-				provider_id: 'p1',
+				max_context_length: '128000',
 				model_id: 'm1',
 				name: 'new name',
-				max_context_length: '128000',
+				provider_id: 'p1',
 				reasoning_type: '',
 			}),
 		);
@@ -162,10 +162,10 @@ describe('providers.remote — saveProviderModel', () => {
 		await createProvider(env, { id: 'p1', type: 'anthropic' });
 		await runForm(
 			saveProviderModel({
-				provider_id: 'p1',
+				max_context_length: '',
 				model_id: 'm1',
 				name: 'm',
-				max_context_length: '',
+				provider_id: 'p1',
 			}),
 		);
 		const row = await getModel(env, 'p1', 'm1');
@@ -176,10 +176,10 @@ describe('providers.remote — saveProviderModel', () => {
 		await createProvider(env, { id: 'p1', type: 'anthropic' });
 		await expectError(
 			saveProviderModel({
-				provider_id: 'p1',
+				input_cost_per_million_tokens: '-1',
 				model_id: 'm1',
 				name: 'm',
-				input_cost_per_million_tokens: '-1',
+				provider_id: 'p1',
 			}) as Promise<unknown>,
 			400,
 			/non-negative/,
@@ -190,9 +190,9 @@ describe('providers.remote — saveProviderModel', () => {
 		await createProvider(env, { id: 'p1', type: 'anthropic' });
 		await expectError(
 			saveProviderModel({
-				provider_id: 'p1',
 				model_id: 'm1',
 				name: 'm',
+				provider_id: 'p1',
 				reasoning_type: 'bogus',
 			}) as Promise<unknown>,
 			400,
@@ -201,18 +201,18 @@ describe('providers.remote — saveProviderModel', () => {
 	});
 
 	it('requires non-empty name / provider_id / model_id', async () => {
-		await expectError(saveProviderModel({ provider_id: '', model_id: 'm', name: 'n' }) as Promise<unknown>, 400);
-		await expectError(saveProviderModel({ provider_id: 'p', model_id: '', name: 'n' }) as Promise<unknown>, 400);
-		await expectError(saveProviderModel({ provider_id: 'p', model_id: 'm', name: '' }) as Promise<unknown>, 400);
+		await expectError(saveProviderModel({ model_id: 'm', name: 'n', provider_id: '' }) as Promise<unknown>, 400);
+		await expectError(saveProviderModel({ model_id: '', name: 'n', provider_id: 'p' }) as Promise<unknown>, 400);
+		await expectError(saveProviderModel({ model_id: 'm', name: '', provider_id: 'p' }) as Promise<unknown>, 400);
 	});
 
 	it('round-trips supports_image_input through create + update', async () => {
 		await createProvider(env, { id: 'p1', type: 'anthropic' });
 		await runForm(
 			saveProviderModel({
-				provider_id: 'p1',
 				model_id: 'm1',
 				name: 'vision-capable',
+				provider_id: 'p1',
 				supports_image_input: 'on',
 			}),
 		);
@@ -221,9 +221,9 @@ describe('providers.remote — saveProviderModel', () => {
 		// checkboxes omit the field when unchecked).
 		await runForm(
 			saveProviderModel({
-				provider_id: 'p1',
 				model_id: 'm1',
 				name: 'vision-capable',
+				provider_id: 'p1',
 			}),
 		);
 		expect((await getModel(env, 'p1', 'm1'))?.supportsImageInput).toBe(false);
@@ -234,7 +234,7 @@ describe('providers.remote — deleteProviderModel', () => {
 	it('removes the row', async () => {
 		await createProvider(env, { id: 'p1', type: 'anthropic' });
 		await createModel(env, 'p1', { id: 'm1', name: 'm' });
-		await expectRedirect(deleteProviderModel({ provider_id: 'p1', model_id: 'm1' }) as Promise<unknown>, '/settings');
+		await expectRedirect(deleteProviderModel({ model_id: 'm1', provider_id: 'p1' }) as Promise<unknown>, '/settings');
 		expect(await getModel(env, 'p1', 'm1')).toBeNull();
 	});
 });
@@ -245,7 +245,7 @@ describe('providers.remote — reorderProviderModel', () => {
 		await createModel(env, 'p1', { id: 'a', name: 'A', sortOrder: 0 });
 		await createModel(env, 'p1', { id: 'b', name: 'B', sortOrder: 10 });
 		await createModel(env, 'p1', { id: 'c', name: 'C', sortOrder: 20 });
-		await expectRedirect(reorderProviderModel({ provider_id: 'p1', model_id: 'a', direction: 'down' }) as Promise<unknown>, '/settings');
+		await expectRedirect(reorderProviderModel({ direction: 'down', model_id: 'a', provider_id: 'p1' }) as Promise<unknown>, '/settings');
 		const list = await listModelsForProvider(env, 'p1');
 		expect(list.map((m) => m.id)).toEqual(['b', 'a', 'c']);
 	});
@@ -254,7 +254,7 @@ describe('providers.remote — reorderProviderModel', () => {
 		await createProvider(env, { id: 'p1', type: 'anthropic' });
 		await createModel(env, 'p1', { id: 'a', name: 'A', sortOrder: 0 });
 		await createModel(env, 'p1', { id: 'b', name: 'B', sortOrder: 10 });
-		await expectRedirect(reorderProviderModel({ provider_id: 'p1', model_id: 'a', direction: 'up' }) as Promise<unknown>, '/settings');
+		await expectRedirect(reorderProviderModel({ direction: 'up', model_id: 'a', provider_id: 'p1' }) as Promise<unknown>, '/settings');
 		const list = await listModelsForProvider(env, 'p1');
 		expect(list.map((m) => m.id)).toEqual(['a', 'b']);
 	});
@@ -262,14 +262,14 @@ describe('providers.remote — reorderProviderModel', () => {
 	it('rejects an unknown model', async () => {
 		await createProvider(env, { id: 'p1', type: 'anthropic' });
 		await expectError(
-			reorderProviderModel({ provider_id: 'p1', model_id: 'missing', direction: 'down' }) as Promise<unknown>,
+			reorderProviderModel({ direction: 'down', model_id: 'missing', provider_id: 'p1' }) as Promise<unknown>,
 			400,
 			/not found/,
 		);
 	});
 
 	it('rejects an invalid direction', async () => {
-		await expectError(reorderProviderModel({ provider_id: 'p1', model_id: 'a', direction: 'sideways' }) as Promise<unknown>, 400);
+		await expectError(reorderProviderModel({ direction: 'sideways', model_id: 'a', provider_id: 'p1' }) as Promise<unknown>, 400);
 	});
 });
 
@@ -278,9 +278,9 @@ describe('providers.remote — addPresetProvider', () => {
 		// `ai-gateway` has 8 default models (see providers/presets.ts).
 		await expectRedirect(
 			addPresetProvider({
+				api_key: 'k',
 				id: 'ai-gateway',
 				provider_id: 'cf-gateway',
-				api_key: 'k',
 			}) as Promise<unknown>,
 			'/settings',
 		);
@@ -296,10 +296,10 @@ describe('providers.remote — addPresetProvider', () => {
 	it('respects an explicit model_ids subset', async () => {
 		await expectRedirect(
 			addPresetProvider({
-				id: 'ai-gateway',
-				provider_id: 'cf2',
 				api_key: 'k',
+				id: 'ai-gateway',
 				model_ids: 'openai/gpt-5.5,anthropic/claude-sonnet-4-6',
+				provider_id: 'cf2',
 			}) as Promise<unknown>,
 			'/settings',
 		);
@@ -310,10 +310,10 @@ describe('providers.remote — addPresetProvider', () => {
 	it('falls back to preset.defaultEndpoint when endpoint is blank', async () => {
 		await runForm(
 			addPresetProvider({
-				id: 'ai-gateway',
-				provider_id: 'cf3',
 				api_key: 'k',
 				endpoint: '',
+				id: 'ai-gateway',
+				provider_id: 'cf3',
 			}),
 		);
 		const provider = await getProvider(env, 'cf3');
@@ -321,7 +321,7 @@ describe('providers.remote — addPresetProvider', () => {
 	});
 
 	it('rejects an unknown preset', async () => {
-		await expectError(addPresetProvider({ id: 'mystery', provider_id: 'p', api_key: 'k' }) as Promise<unknown>, 400, /preset/);
+		await expectError(addPresetProvider({ api_key: 'k', id: 'mystery', provider_id: 'p' }) as Promise<unknown>, 400, /preset/);
 	});
 
 	it('rejects a duplicate provider id with 400 instead of 500', async () => {
@@ -336,11 +336,11 @@ describe('providers.remote — fetchPresetModels', () => {
 			new Response(
 				JSON.stringify({
 					data: [
-						{ id: 'anthropic/claude-sonnet-4-6', name: 'Claude', context_length: 200_000 },
-						{ id: 'openai/gpt-5.5', name: 'GPT-5.5', context_length: 1_000_000 },
+						{ context_length: 200_000, id: 'anthropic/claude-sonnet-4-6', name: 'Claude' },
+						{ context_length: 1_000_000, id: 'openai/gpt-5.5', name: 'GPT-5.5' },
 					],
 				}),
-				{ status: 200, headers: { 'content-type': 'application/json' } },
+				{ headers: { 'content-type': 'application/json' }, status: 200 },
 			),
 		);
 		const models = (await fetchPresetModels({ preset_id: 'openrouter' })) as Array<{
@@ -356,7 +356,7 @@ describe('providers.remote — fetchPresetModels', () => {
 
 	it('forwards the apiKey as a Bearer token when provided', async () => {
 		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({ data: [] }), { status: 200 }));
-		await fetchPresetModels({ preset_id: 'openrouter', api_key: 'sk-or' });
+		await fetchPresetModels({ api_key: 'sk-or', preset_id: 'openrouter' });
 		const init = fetchSpy.mock.calls[0][1] as RequestInit;
 		const headers = init.headers as Record<string, string>;
 		expect(headers.Authorization).toBe('Bearer sk-or');
@@ -377,40 +377,38 @@ describe('providers.remote — fetchPresetModels', () => {
 
 describe('providers.remote — importModelsFromDev', () => {
 	function mockModelsDevOnce(body: unknown) {
-		return vi
-			.spyOn(globalThis, 'fetch')
-			.mockResolvedValueOnce(new Response(JSON.stringify(body), { status: 200 }));
+		return vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify(body), { status: 200 }));
 	}
 
 	const ANTHROPIC_CATALOG = {
 		anthropic: {
-			name: 'Anthropic',
 			models: {
 				'claude-opus-4-6': {
-					id: 'claude-opus-4-6',
-					name: 'Claude Opus 4',
 					attachment: true,
-					reasoning: true,
-					tool_call: true,
-					open_weights: false,
-					release_date: '2025-05-22',
 					cost: { input: 3, output: 15 },
+					id: 'claude-opus-4-6',
 					limit: { context: 200_000, output: 64_000 },
 					modalities: { input: ['text', 'image'], output: ['text'] },
+					name: 'Claude Opus 4',
+					open_weights: false,
+					reasoning: true,
+					release_date: '2025-05-22',
+					tool_call: true,
 				},
 				'claude-sonnet-4-6': {
-					id: 'claude-sonnet-4-6',
-					name: 'Claude Sonnet 4',
 					attachment: true,
-					reasoning: true,
-					tool_call: true,
-					open_weights: false,
-					release_date: '2025-05-22',
 					cost: { input: 3, output: 15 },
+					id: 'claude-sonnet-4-6',
 					limit: { context: 200_000, output: 64_000 },
 					modalities: { input: ['text', 'image'], output: ['text'] },
+					name: 'Claude Sonnet 4',
+					open_weights: false,
+					reasoning: true,
+					release_date: '2025-05-22',
+					tool_call: true,
 				},
 			},
+			name: 'Anthropic',
 		},
 	};
 
@@ -419,9 +417,9 @@ describe('providers.remote — importModelsFromDev', () => {
 		mockModelsDevOnce(ANTHROPIC_CATALOG);
 		await expectRedirect(
 			importModelsFromDev({
-				provider_id: 'p1',
-				model_keys: 'anthropic:claude-opus-4-6',
 				id_prefix: '',
+				model_keys: 'anthropic:claude-opus-4-6',
+				provider_id: 'p1',
 			}) as Promise<unknown>,
 			'/settings',
 		);
@@ -435,13 +433,13 @@ describe('providers.remote — importModelsFromDev', () => {
 	});
 
 	it('honors id_prefix when constructing the imported model id', async () => {
-		await createProvider(env, { id: 'or', type: 'openai_compatible', endpoint: 'https://x.example/v1' });
+		await createProvider(env, { endpoint: 'https://x.example/v1', id: 'or', type: 'openai_compatible' });
 		mockModelsDevOnce(ANTHROPIC_CATALOG);
 		await expectRedirect(
 			importModelsFromDev({
-				provider_id: 'or',
-				model_keys: 'anthropic:claude-opus-4-6',
 				id_prefix: 'anthropic/',
+				model_keys: 'anthropic:claude-opus-4-6',
+				provider_id: 'or',
 			}) as Promise<unknown>,
 			'/settings',
 		);
@@ -453,13 +451,13 @@ describe('providers.remote — importModelsFromDev', () => {
 	// space and broke inference calls. providerId and model_keys already
 	// trim; id_prefix must too.
 	it('trims whitespace from id_prefix before constructing the model id', async () => {
-		await createProvider(env, { id: 'or', type: 'openai_compatible', endpoint: 'https://x.example/v1' });
+		await createProvider(env, { endpoint: 'https://x.example/v1', id: 'or', type: 'openai_compatible' });
 		mockModelsDevOnce(ANTHROPIC_CATALOG);
 		await expectRedirect(
 			importModelsFromDev({
-				provider_id: 'or',
-				model_keys: 'anthropic:claude-opus-4-6',
 				id_prefix: '  anthropic/  ',
+				model_keys: 'anthropic:claude-opus-4-6',
+				provider_id: 'or',
 			}) as Promise<unknown>,
 			'/settings',
 		);
@@ -473,9 +471,9 @@ describe('providers.remote — importModelsFromDev', () => {
 		mockModelsDevOnce(ANTHROPIC_CATALOG);
 		await expectRedirect(
 			importModelsFromDev({
-				provider_id: 'p1',
-				model_keys: 'anthropic:claude-opus-4-6,anthropic:claude-sonnet-4-6',
 				id_prefix: '',
+				model_keys: 'anthropic:claude-opus-4-6,anthropic:claude-sonnet-4-6',
+				provider_id: 'p1',
 			}) as Promise<unknown>,
 			'/settings',
 		);
@@ -497,9 +495,9 @@ describe('providers.remote — importModelsFromDev', () => {
 		mockModelsDevOnce(ANTHROPIC_CATALOG);
 		await expectRedirect(
 			importModelsFromDev({
-				provider_id: 'p1',
-				model_keys: 'anthropic:claude-opus-4-6',
 				id_prefix: '',
+				model_keys: 'anthropic:claude-opus-4-6',
+				provider_id: 'p1',
 			}) as Promise<unknown>,
 			'/settings',
 		);
@@ -511,8 +509,8 @@ describe('providers.remote — importModelsFromDev', () => {
 		mockModelsDevOnce(ANTHROPIC_CATALOG);
 		await expectError(
 			importModelsFromDev({
-				provider_id: 'missing',
 				model_keys: 'anthropic:claude-opus-4-6',
+				provider_id: 'missing',
 			}) as Promise<unknown>,
 			400,
 			/not found/,
@@ -521,10 +519,6 @@ describe('providers.remote — importModelsFromDev', () => {
 
 	it('rejects when no model_keys are provided', async () => {
 		await createProvider(env, { id: 'p1', type: 'anthropic' });
-		await expectError(
-			importModelsFromDev({ provider_id: 'p1', model_keys: '' }) as Promise<unknown>,
-			400,
-			/at least one/,
-		);
+		await expectError(importModelsFromDev({ model_keys: '', provider_id: 'p1' }) as Promise<unknown>, 400, /at least one/);
 	});
 });

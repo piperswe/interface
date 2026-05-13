@@ -1,6 +1,6 @@
 <script lang="ts">
-	import type { ToolCallRecord, ToolResultRecord } from '$lib/types/conversation';
 	import { ChevronRight } from 'lucide-svelte';
+	import type { ToolCallRecord, ToolResultRecord } from '$lib/types/conversation';
 	import { safeExternalUrl, safeImageUrl } from './url-guard';
 
 	let {
@@ -97,7 +97,7 @@
 				stderrLines.push(line);
 			}
 		}
-		return { exitCode, success, stdout: stdoutLines.join('\n'), stderr: stderrLines.join('\n') };
+		return { exitCode, stderr: stderrLines.join('\n'), stdout: stdoutLines.join('\n'), success };
 	}
 
 	const execParsed = $derived(
@@ -139,9 +139,9 @@
 		while (errorLines.length && errorLines[0] === '') errorLines.shift();
 		while (errorLines.length && errorLines[errorLines.length - 1] === '') errorLines.pop();
 		return {
+			error: errorLines.length ? errorLines.join('\n') : null,
 			logs,
 			result: resultLines.length ? resultLines.join('\n') : null,
-			error: errorLines.length ? errorLines.join('\n') : null,
 		};
 	}
 
@@ -155,9 +155,10 @@
 		const results: SearchResult[] = [];
 		// Each result block: `\n[N] Title\n  url\n  snippet`
 		const blockRe = /\[(\d+)\] (.+?)\n {2}(\S+)\n {2}(.+?)(?=\n\n|\n\[|\s*$)/gs;
-		let m: RegExpExecArray | null;
-		while ((m = blockRe.exec(content)) !== null) {
-			results.push({ index: parseInt(m[1], 10), title: m[2], url: m[3], snippet: m[4] });
+		while (true) {
+			const m = blockRe.exec(content);
+			if (m === null) break;
+			results.push({ index: parseInt(m[1], 10), snippet: m[4], title: m[2], url: m[3] });
 		}
 		return results;
 	}
@@ -175,7 +176,7 @@
 		const images: { mimeType: string; data: string }[] = [];
 		const texts: string[] = [];
 		for (const b of c) {
-			if (b.type === 'image') images.push({ mimeType: b.mimeType, data: b.data });
+			if (b.type === 'image') images.push({ data: b.data, mimeType: b.mimeType });
 			else if (b.type === 'text') texts.push(b.text);
 		}
 		return { images, text: texts.join('\n') };
@@ -190,14 +191,14 @@
 	function firstLine(s: string, max = 80): string {
 		const line = s.split('\n').find((l) => l.trim().length > 0) ?? '';
 		const trimmed = line.trim();
-		return trimmed.length > max ? trimmed.slice(0, max - 1) + '…' : trimmed;
+		return trimmed.length > max ? `${trimmed.slice(0, max - 1)}…` : trimmed;
 	}
 
 	// Summary headline: the key "what is this doing" per tool
 	const headline = $derived(
 		execInput?.command
 			? execInput.command.length > 80
-				? execInput.command.slice(0, 78) + '…'
+				? `${execInput.command.slice(0, 78)}…`
 				: execInput.command
 			: runJsInput?.code
 				? firstLine(runJsInput.code)
@@ -276,8 +277,8 @@
 		{:else}
 			<span class="status done ms-auto">done</span>
 		{/if}
-		{#if latencyMs != null}
-			<span class="latency" title={`Started ${fmtTimestamp(startedAt!)} · ended ${fmtTimestamp(endedAt!)}`}>{fmtLatency(latencyMs)}</span>
+		{#if latencyMs != null && startedAt != null && endedAt != null}
+			<span class="latency" title={`Started ${fmtTimestamp(startedAt)} · ended ${fmtTimestamp(endedAt)}`}>{fmtLatency(latencyMs)}</span>
 		{/if}
 	</summary>
 
@@ -729,7 +730,7 @@
 		word-break: break-all;
 	}
 
-	.terminal-output pre code {
+	.terminal-output code {
 		background: none;
 		padding: 0;
 		font-size: inherit;

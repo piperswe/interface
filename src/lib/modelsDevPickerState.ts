@@ -26,15 +26,15 @@ export type AutoPrefixOutput = {
 export function computeAutoPrefixUpdate(input: AutoPrefixInput): AutoPrefixOutput {
 	const { providerType, filter, previousAutoFilter, currentPrefix } = input;
 	if (providerType === 'anthropic') {
-		return { prefix: currentPrefix, autoFilter: previousAutoFilter };
+		return { autoFilter: previousAutoFilter, prefix: currentPrefix };
 	}
 	if (filter === previousAutoFilter) {
-		return { prefix: currentPrefix, autoFilter: previousAutoFilter };
+		return { autoFilter: previousAutoFilter, prefix: currentPrefix };
 	}
 	const previousAuto = previousAutoFilter ? `${previousAutoFilter}/` : '';
 	const looksAutoSet = currentPrefix === previousAuto;
 	return {
-		prefix: looksAutoSet ? (filter ? `${filter}/` : '') : currentPrefix,
 		autoFilter: filter,
+		prefix: looksAutoSet ? (filter ? `${filter}/` : '') : currentPrefix,
 	};
 }

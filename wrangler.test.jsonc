@@ -5,72 +5,72 @@
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "interface-test",
-	"main": "test/worker-entry.ts",
 	"compatibility_date": "2026-04-22",
 	"compatibility_flags": ["nodejs_compat"],
-	"migrations": [
-		{
-			"new_sqlite_classes": ["ConversationDurableObject"],
-			"tag": "v1",
-		},
-		{
-			"new_sqlite_classes": ["Sandbox"],
-			"tag": "v2",
-		},
-		{
-			"new_sqlite_classes": ["SchedulerDurableObject"],
-			"tag": "v3",
-		},
-	],
 	"containers": [
 		{
 			"class_name": "Sandbox",
 			"image": "./Dockerfile",
 			"instance_type": "lite",
-			"max_instances": 10,
-		},
+			"max_instances": 10
+		}
+	],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_id": "00000000-0000-0000-0000-000000000000",
+			"database_name": "interface-test",
+			"migrations_dir": "migrations"
+		}
 	],
 	"durable_objects": {
 		"bindings": [
 			{
 				"class_name": "ConversationDurableObject",
-				"name": "CONVERSATION_DURABLE_OBJECT",
+				"name": "CONVERSATION_DURABLE_OBJECT"
 			},
 			{
 				"class_name": "SchedulerDurableObject",
-				"name": "SCHEDULER_DURABLE_OBJECT",
+				"name": "SCHEDULER_DURABLE_OBJECT"
 			},
 			{
 				"class_name": "Sandbox",
-				"name": "SANDBOX",
-			},
-		],
+				"name": "SANDBOX"
+			}
+		]
 	},
-	"d1_databases": [
+	"main": "test/worker-entry.ts",
+	"migrations": [
 		{
-			"binding": "DB",
-			"database_name": "interface-test",
-			"database_id": "00000000-0000-0000-0000-000000000000",
-			"migrations_dir": "migrations",
+			"new_sqlite_classes": ["ConversationDurableObject"],
+			"tag": "v1"
 		},
+		{
+			"new_sqlite_classes": ["Sandbox"],
+			"tag": "v2"
+		},
+		{
+			"new_sqlite_classes": ["SchedulerDurableObject"],
+			"tag": "v3"
+		}
 	],
+	"name": "interface-test",
 	"r2_buckets": [
 		{
 			"binding": "WORKSPACE_BUCKET",
-			"bucket_name": "interface-workspace-test",
-		},
-	],
-	"worker_loaders": [
-		{
-			"binding": "RUN_JS_LOADER",
-		},
+			"bucket_name": "interface-workspace-test"
+		}
 	],
 	// Seed an OPENROUTER_KEY so `describeProviderKeys` reports it as
 	// configured. Tests that hit OpenRouter mock the SDK; the value is never
 	// sent over the wire.
 	"vars": {
-		"OPENROUTER_KEY": "test-key",
 		"KAGI_KEY": "test-kagi-key",
+		"OPENROUTER_KEY": "test-key"
 	},
+	"worker_loaders": [
+		{
+			"binding": "RUN_JS_LOADER"
+		}
+	]
 }

@@ -1,7 +1,7 @@
 import { env, runInDurableObject } from 'cloudflare:test';
-import { getConversationStub, type ConversationStub } from '../index';
 import type { ConversationState } from '$lib/types/conversation';
 import type { ChatRequest } from '../../llm/LLM';
+import { type ConversationStub, getConversationStub } from '../index';
 
 type WithLLMOverride = {
 	__setLLMOverride(script: unknown[] | null): Promise<void>;
@@ -55,5 +55,5 @@ export function stubFor(conversationId: string): ConversationStub {
 // Reading getState through this typed view keeps tests readable without
 // triggering the depth limit.
 export async function readState(stub: ConversationStub): Promise<ConversationState> {
-	return (await (stub as unknown as { getState(): Promise<ConversationState> }).getState());
+	return await (stub as unknown as { getState(): Promise<ConversationState> }).getState();
 }

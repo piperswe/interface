@@ -18,10 +18,11 @@ const saveStyle = remote.saveStyle as unknown as AnyArgs;
 const removeStyle = remote.removeStyle as unknown as AnyArgs;
 const addMcpFromPreset = remote.addMcpFromPreset as unknown as AnyArgs;
 const disconnectMcpServer = remote.disconnectMcpServer as unknown as AnyArgs;
-import { getSetting } from './server/settings';
+
 import { listMcpServers, setMcpServerOauthClient, setMcpServerOauthTokens } from './server/mcp_servers';
 import { listMemories } from './server/memories';
-import { listStyles, getStyle } from './server/styles';
+import { getSetting } from './server/settings';
+import { getStyle, listStyles } from './server/styles';
 
 beforeEach(() => {
 	setMockRequestEvent({ platform: { env } });
@@ -78,62 +79,42 @@ describe('saveSetting', () => {
 	});
 
 	it('rejects out-of-range thresholds', async () => {
-		await expectError(
-			saveSetting({ key: 'context_compaction_threshold', value: '200' }) as Promise<unknown>,
-			400,
-			/0 and 100/,
-		);
+		await expectError(saveSetting({ key: 'context_compaction_threshold', value: '200' }) as Promise<unknown>, 400, /0 and 100/);
 	});
 
 	it('rejects negative thresholds', async () => {
-		await expectError(
-			saveSetting({ key: 'context_compaction_threshold', value: '-1' }) as Promise<unknown>,
-			400,
-		);
+		await expectError(saveSetting({ key: 'context_compaction_threshold', value: '-1' }) as Promise<unknown>, 400);
 	});
 
 	it('accepts valid thresholds', async () => {
-		await expectRedirect(
-			saveSetting({ key: 'context_compaction_threshold', value: '70' }) as Promise<unknown>,
-			'/settings',
-		);
+		await expectRedirect(saveSetting({ key: 'context_compaction_threshold', value: '70' }) as Promise<unknown>, '/settings');
 		expect(await getSetting(env, 'context_compaction_threshold')).toBe('70');
 	});
 
 	it('rejects too-small summary token budgets', async () => {
-		await expectError(
-			saveSetting({ key: 'context_compaction_summary_tokens', value: '100' }) as Promise<unknown>,
-			400,
-			/256/,
-		);
+		await expectError(saveSetting({ key: 'context_compaction_summary_tokens', value: '100' }) as Promise<unknown>, 400, /256/);
 	});
 
 	it('accepts valid summary token budgets', async () => {
-		await expectRedirect(
-			saveSetting({ key: 'context_compaction_summary_tokens', value: '8192' }) as Promise<unknown>,
-			'/settings',
-		);
+		await expectRedirect(saveSetting({ key: 'context_compaction_summary_tokens', value: '8192' }) as Promise<unknown>, '/settings');
 	});
 });
 
 describe('addMcpServer', () => {
 	it('inserts an http server', async () => {
-		await expectRedirect(
-			addMcpServer({ name: 'foo', transport: 'http', url: 'https://foo.example' }) as Promise<unknown>,
-			'/settings',
-		);
+		await expectRedirect(addMcpServer({ name: 'foo', transport: 'http', url: 'https://foo.example' }) as Promise<unknown>, '/settings');
 		const rows = await listMcpServers(env);
 		expect(rows).toHaveLength(1);
-		expect(rows[0]).toMatchObject({ name: 'foo', transport: 'http', url: 'https://foo.example', enabled: true });
+		expect(rows[0]).toMatchObject({ enabled: true, name: 'foo', transport: 'http', url: 'https://foo.example' });
 	});
 
 	it('inserts an sse server with auth_json', async () => {
 		await expectRedirect(
 			addMcpServer({
+				auth_json: '{"Authorization":"Bearer abc"}',
 				name: 'sse',
 				transport: 'sse',
 				url: 'https://sse.example/sse',
-				auth_json: '{"Authorization":"Bearer abc"}',
 			}) as Promise<unknown>,
 			'/settings',
 		);
@@ -143,26 +124,15 @@ describe('addMcpServer', () => {
 	});
 
 	it('rejects empty fields', async () => {
-		await expectError(
-			addMcpServer({ name: '', transport: 'http', url: 'https://x' }) as Promise<unknown>,
-			400,
-			/Missing/,
-		);
+		await expectError(addMcpServer({ name: '', transport: 'http', url: 'https://x' }) as Promise<unknown>, 400, /Missing/);
 	});
 
 	it('rejects bad transport values', async () => {
-		await expectError(
-			addMcpServer({ name: 'x', transport: 'tcp', url: 'https://x' }) as Promise<unknown>,
-			400,
-		);
+		await expectError(addMcpServer({ name: 'x', transport: 'tcp', url: 'https://x' }) as Promise<unknown>, 400);
 	});
 
 	it('rejects malformed urls', async () => {
-		await expectError(
-			addMcpServer({ name: 'x', transport: 'http', url: 'not-a-url' }) as Promise<unknown>,
-			400,
-			/Invalid URL/,
-		);
+		await expectError(addMcpServer({ name: 'x', transport: 'http', url: 'not-a-url' }) as Promise<unknown>, 400, /Invalid URL/);
 	});
 
 	// Regression (F3): operator-supplied URL was only checked with `new URL()`,
@@ -170,16 +140,8 @@ describe('addMcpServer', () => {
 	// .well-known discovery chain then fetches these server-side, turning the
 	// addMcpServer form into an SSRF surface.
 	it('rejects non-HTTPS schemes (SSRF guard)', async () => {
-		await expectError(
-			addMcpServer({ name: 'x', transport: 'http', url: 'http://example.com' }) as Promise<unknown>,
-			400,
-			/https/i,
-		);
-		await expectError(
-			addMcpServer({ name: 'x', transport: 'http', url: 'file:///etc/passwd' }) as Promise<unknown>,
-			400,
-			/https/i,
-		);
+		await expectError(addMcpServer({ name: 'x', transport: 'http', url: 'http://example.com' }) as Promise<unknown>, 400, /https/i);
+		await expectError(addMcpServer({ name: 'x', transport: 'http', url: 'file:///etc/passwd' }) as Promise<unknown>, 400, /https/i);
 	});
 
 	it('rejects localhost and loopback IPs (SSRF guard)', async () => {
@@ -201,11 +163,7 @@ describe('addMcpServer', () => {
 			400,
 			/private|reserved/i,
 		);
-		await expectError(
-			addMcpServer({ name: 'x', transport: 'http', url: 'https://10.0.0.1/' }) as Promise<unknown>,
-			400,
-			/private|reserved/i,
-		);
+		await expectError(addMcpServer({ name: 'x', transport: 'http', url: 'https://10.0.0.1/' }) as Promise<unknown>, 400, /private|reserved/i);
 		await expectError(
 			addMcpServer({ name: 'x', transport: 'http', url: 'https://192.168.1.1/' }) as Promise<unknown>,
 			400,
@@ -224,10 +182,10 @@ describe('addMcpServer', () => {
 	it('rejects malformed auth_json', async () => {
 		await expectError(
 			addMcpServer({
+				auth_json: '{"oops"}',
 				name: 'x',
 				transport: 'http',
 				url: 'https://x.example',
-				auth_json: '{"oops"}',
 			}) as Promise<unknown>,
 			400,
 			/auth_json/,
@@ -260,7 +218,7 @@ describe('addMemory / removeMemory', () => {
 		await expectRedirect(addMemory({ content: 'I like terse responses.' }) as Promise<unknown>, '/settings');
 		const rows = await listMemories(env);
 		expect(rows).toHaveLength(1);
-		expect(rows[0]).toMatchObject({ content: 'I like terse responses.', type: 'manual', source: 'user' });
+		expect(rows[0]).toMatchObject({ content: 'I like terse responses.', source: 'user', type: 'manual' });
 	});
 
 	it('rejects empty content', async () => {
@@ -284,25 +242,14 @@ describe('addMemory / removeMemory', () => {
 
 describe('addStyle / saveStyle / removeStyle', () => {
 	it('inserts and lists a style', async () => {
-		await expectRedirect(
-			addStyle({ name: 'Concise', system_prompt: 'Be brief.' }) as Promise<unknown>,
-			'/settings',
-		);
+		await expectRedirect(addStyle({ name: 'Concise', system_prompt: 'Be brief.' }) as Promise<unknown>, '/settings');
 		const rows = await listStyles(env);
 		expect(rows).toMatchObject([{ name: 'Concise', systemPrompt: 'Be brief.' }]);
 	});
 
 	it('rejects empty name or prompt', async () => {
-		await expectError(
-			addStyle({ name: '   ', system_prompt: 'p' }) as Promise<unknown>,
-			400,
-			/Name/,
-		);
-		await expectError(
-			addStyle({ name: 'x', system_prompt: '   ' }) as Promise<unknown>,
-			400,
-			/System prompt/,
-		);
+		await expectError(addStyle({ name: '   ', system_prompt: 'p' }) as Promise<unknown>, 400, /Name/);
+		await expectError(addStyle({ name: 'x', system_prompt: '   ' }) as Promise<unknown>, 400, /System prompt/);
 	});
 
 	it('saveStyle updates name + prompt', async () => {
@@ -310,10 +257,7 @@ describe('addStyle / saveStyle / removeStyle', () => {
 			if (!isRedirect(e)) throw e;
 		});
 		const [s] = await listStyles(env);
-		await expectRedirect(
-			saveStyle({ id: String(s.id), name: 'B', system_prompt: 'q' }) as Promise<unknown>,
-			'/settings',
-		);
+		await expectRedirect(saveStyle({ id: String(s.id), name: 'B', system_prompt: 'q' }) as Promise<unknown>, '/settings');
 		const after = await getStyle(env, s.id);
 		expect(after).toMatchObject({ name: 'B', systemPrompt: 'q' });
 	});
@@ -325,11 +269,7 @@ describe('addStyle / saveStyle / removeStyle', () => {
 			if (!isRedirect(e)) throw e;
 		});
 		const [s] = await listStyles(env);
-		await expectError(
-			saveStyle({ id: String(s.id), name: '', system_prompt: 'y' }) as Promise<unknown>,
-			400,
-			/Name/,
-		);
+		await expectError(saveStyle({ id: String(s.id), name: '', system_prompt: 'y' }) as Promise<unknown>, 400, /Name/);
 	});
 
 	it('removeStyle clears the row and any conversation references', async () => {
@@ -337,9 +277,7 @@ describe('addStyle / saveStyle / removeStyle', () => {
 			if (!isRedirect(e)) throw e;
 		});
 		const [s] = await listStyles(env);
-		await env.DB.prepare(
-			"INSERT INTO conversations (id, title, created_at, updated_at, style_id) VALUES (?, 'c', 1, 1, ?)",
-		)
+		await env.DB.prepare("INSERT INTO conversations (id, title, created_at, updated_at, style_id) VALUES (?, 'c', 1, 1, ?)")
 			.bind('test-style-conv', s.id)
 			.run();
 		await expectRedirect(removeStyle({ id: String(s.id) }) as Promise<unknown>, '/settings');
@@ -375,25 +313,23 @@ describe('addMcpFromPreset', () => {
 describe('disconnectMcpServer', () => {
 	it('clears OAuth tokens and disables the row', async () => {
 		// Seed a server with OAuth client + access token.
-		await addMcpServer({ name: 'gh', transport: 'http', url: 'https://api.github.example/mcp' }).catch(
-			(e) => {
-				if (!isRedirect(e)) throw e;
-			},
-		);
+		await addMcpServer({ name: 'gh', transport: 'http', url: 'https://api.github.example/mcp' }).catch((e) => {
+			if (!isRedirect(e)) throw e;
+		});
 		const [row] = await listMcpServers(env);
 		await setMcpServerOauthClient(env, row.id, {
-			authorizationServer: 'https://as.example',
 			authorizationEndpoint: 'https://as.example/authorize',
-			tokenEndpoint: 'https://as.example/token',
-			registrationEndpoint: null,
+			authorizationServer: 'https://as.example',
 			clientId: 'cid',
 			clientSecret: null,
+			registrationEndpoint: null,
 			scopes: null,
+			tokenEndpoint: 'https://as.example/token',
 		});
 		await setMcpServerOauthTokens(env, row.id, {
 			accessToken: 'AT',
-			refreshToken: 'RT',
 			expiresAt: Date.now() + 60_000,
+			refreshToken: 'RT',
 		});
 
 		await expectRedirect(disconnectMcpServer({ id: String(row.id) }) as Promise<unknown>, '/settings');

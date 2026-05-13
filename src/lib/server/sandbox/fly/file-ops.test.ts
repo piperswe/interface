@@ -3,8 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 afterEach(() => {
 	vi.restoreAllMocks();
 });
-import { shellQuote } from './file-ops';
-import { existsShell, mkdirShell, deleteFileShell, readFileShell, runCodeShell, writeFileShell } from './file-ops';
+
+import { deleteFileShell, existsShell, mkdirShell, readFileShell, runCodeShell, shellQuote, writeFileShell } from './file-ops';
 import type { FlyConfig } from './machines-api';
 
 // Shell quoting must survive every adversarial path we throw at it: a
@@ -43,15 +43,15 @@ describe('shellQuote', () => {
 // File-ops integration: drive against a mocked Machines API to verify the
 // shell scripts are well-formed and route the right exit code back.
 
-const CFG: FlyConfig = { token: 't', appName: 'a', appHostname: 'a.fly.dev' };
+const CFG: FlyConfig = { appHostname: 'a.fly.dev', appName: 'a', token: 't' };
 
 function mockMachineExec(handler: (req: unknown) => unknown) {
 	return vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
 		const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
 		const out = handler(body);
 		return new Response(JSON.stringify(out), {
-			status: 200,
 			headers: { 'content-type': 'application/json' },
+			status: 200,
 		});
 	});
 }
@@ -62,7 +62,7 @@ describe('file-ops shell scripts', () => {
 		mockMachineExec((req) => {
 			const r = req as { cmd: string[] };
 			seenScript = r.cmd.join(' ');
-			return { exit_code: 0, stdout: '', stderr: '' };
+			return { exit_code: 0, stderr: '', stdout: '' };
 		});
 		// A path beginning with `-` could otherwise be parsed as a flag by mkdir.
 		await mkdirShell(CFG, 'machine-1', '-rf', false);
@@ -75,20 +75,20 @@ describe('file-ops shell scripts', () => {
 		let seenScript = '';
 		mockMachineExec((req) => {
 			seenScript = (req as { cmd: string[] }).cmd.join(' ');
-			return { exit_code: 0, stdout: '', stderr: '' };
+			return { exit_code: 0, stderr: '', stdout: '' };
 		});
 		await mkdirShell(CFG, 'machine-1', '/a/b/c', true);
 		expect(seenScript).toMatch(/mkdir\s+-p\s+--/);
 	});
 
 	it('existsShell reports false when the test command prints 0', async () => {
-		mockMachineExec(() => ({ exit_code: 0, stdout: '0\n', stderr: '' }));
+		mockMachineExec(() => ({ exit_code: 0, stderr: '', stdout: '0\n' }));
 		const result = await existsShell(CFG, 'machine-1', '/missing');
 		expect(result).toEqual({ exists: false });
 	});
 
 	it('existsShell reports true when the test command prints 1', async () => {
-		mockMachineExec(() => ({ exit_code: 0, stdout: '1\n', stderr: '' }));
+		mockMachineExec(() => ({ exit_code: 0, stderr: '', stdout: '1\n' }));
 		const result = await existsShell(CFG, 'machine-1', '/present');
 		expect(result).toEqual({ exists: true });
 	});
@@ -102,7 +102,7 @@ describe('file-ops shell scripts', () => {
 		let seenScript = '';
 		mockMachineExec((req) => {
 			seenScript = (req as { cmd: string[] }).cmd[2] ?? '';
-			return { exit_code: 0, stdout: '1\n', stderr: '' };
+			return { exit_code: 0, stderr: '', stdout: '1\n' };
 		});
 		await existsShell(CFG, 'machine-1', '/some/path');
 		expect(seenScript).toContain('test -e');
@@ -110,7 +110,7 @@ describe('file-ops shell scripts', () => {
 	});
 
 	it('deleteFileShell surfaces stderr on non-zero exit', async () => {
-		mockMachineExec(() => ({ exit_code: 1, stdout: '', stderr: 'permission denied' }));
+		mockMachineExec(() => ({ exit_code: 1, stderr: 'permission denied', stdout: '' }));
 		await expect(deleteFileShell(CFG, 'machine-1', '/root/file')).rejects.toThrow(/permission denied/);
 	});
 
@@ -124,7 +124,7 @@ describe('file-ops shell scripts', () => {
 		let seenScript = '';
 		mockMachineExec((req) => {
 			seenScript = (req as { cmd: string[] }).cmd[2] ?? '';
-			return { exit_code: 0, stdout: `ENC:us-ascii\n${btoa('x')}`, stderr: '' };
+			return { exit_code: 0, stderr: '', stdout: `ENC:us-ascii\n${btoa('x')}` };
 		});
 		await readFileShell(CFG, 'machine-1', '/tmp/$(whoami)');
 		expect(seenScript).not.toContain('$(whoami)"'); // not inside a "...$()..."
@@ -138,7 +138,7 @@ describe('file-ops shell scripts', () => {
 		mockMachineExec((req) => {
 			seenScript = (req as { cmd: string[] }).cmd[2] ?? '';
 			// Emit a fake ENC: line + base64 payload so the parser succeeds.
-			return { exit_code: 0, stdout: `ENC:us-ascii\n${btoa('hello')}`, stderr: '' };
+			return { exit_code: 0, stderr: '', stdout: `ENC:us-ascii\n${btoa('hello')}` };
 		});
 		const result = await readFileShell(CFG, 'machine-1', '/some/path');
 		expect(seenScript).toContain('test -e');
@@ -155,7 +155,7 @@ describe('file-ops shell scripts', () => {
 		let seenScript = '';
 		mockMachineExec((req) => {
 			seenScript = (req as { cmd: string[] }).cmd[2] ?? '';
-			return { exit_code: 1, stdout: '', stderr: 'boom' };
+			return { exit_code: 1, stderr: 'boom', stdout: '' };
 		});
 		await runCodeShell(CFG, 'machine-1', 'print(1/0)', 'python');
 		expect(seenScript).toContain('set +e');
@@ -167,7 +167,7 @@ describe('file-ops shell scripts', () => {
 		let seenBody: unknown = null;
 		mockMachineExec((req) => {
 			seenBody = req;
-			return { exit_code: 0, stdout: '', stderr: '' };
+			return { exit_code: 0, stderr: '', stdout: '' };
 		});
 		await writeFileShell(CFG, 'machine-1', '/tmp/x', 'hello world');
 		const body = seenBody as { cmd: string[]; stdin?: string };

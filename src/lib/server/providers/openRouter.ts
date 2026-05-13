@@ -8,9 +8,9 @@
 
 import { z } from 'zod';
 import { validateOrThrow } from '$lib/zod-utils';
+import { inferReasoningType } from './fetch';
 import type { CreateModelInput } from './models';
 import type { ReasoningType } from './types';
-import { inferReasoningType } from './fetch';
 
 const OPENROUTER_MODELS_URL = 'https://openrouter.ai/api/v1/models';
 const CACHE_TTL_SECONDS = 3600;
@@ -26,8 +26,8 @@ const openRouterArchitectureSchema = z
 
 const openRouterPricingSchema = z
 	.object({
-		prompt: z.string().optional(),
 		completion: z.string().optional(),
+		prompt: z.string().optional(),
 	})
 	.passthrough();
 
@@ -39,15 +39,15 @@ const openRouterTopProviderSchema = z
 
 const openRouterModelSchema = z
 	.object({
-		id: z.string(),
-		name: z.string().optional(),
-		description: z.string().optional(),
-		context_length: z.number().nullable().optional(),
 		architecture: openRouterArchitectureSchema.optional(),
-		pricing: openRouterPricingSchema.optional(),
-		top_provider: openRouterTopProviderSchema.nullable().optional(),
-		supported_parameters: z.array(z.string()).optional(),
+		context_length: z.number().nullable().optional(),
+		description: z.string().optional(),
+		id: z.string(),
 		knowledge_cutoff: z.string().nullable().optional(),
+		name: z.string().optional(),
+		pricing: openRouterPricingSchema.optional(),
+		supported_parameters: z.array(z.string()).optional(),
+		top_provider: openRouterTopProviderSchema.nullable().optional(),
 	})
 	.passthrough();
 
@@ -75,8 +75,8 @@ type FetchInitWithCf = RequestInit & { cf?: { cacheTtl?: number; cacheEverything
 
 export async function fetchOpenRouterCatalog(): Promise<OpenRouterEntry[]> {
 	const init: FetchInitWithCf = {
+		cf: { cacheEverything: true, cacheTtl: CACHE_TTL_SECONDS },
 		headers: { Accept: 'application/json' },
-		cf: { cacheTtl: CACHE_TTL_SECONDS, cacheEverything: true },
 	};
 	const res = await fetch(OPENROUTER_MODELS_URL, init as RequestInit);
 	if (!res.ok) throw new Error(`OpenRouter API error: ${res.status}`);
@@ -88,36 +88,33 @@ export async function fetchOpenRouterCatalog(): Promise<OpenRouterEntry[]> {
 		const { vendor } = splitId(model.id);
 		const reasoningType = resolveReasoningFromSupported(model.supported_parameters) ?? inferReasoningType(model.id) ?? null;
 		entries.push({
-			vendor,
-			fullId: model.id,
-			name: model.name ?? model.id,
-			description: buildDescription(model.description, model.knowledge_cutoff),
 			contextLength: model.context_length ?? model.top_provider?.context_length ?? DEFAULT_CONTEXT_LENGTH,
+			description: buildDescription(model.description, model.knowledge_cutoff),
+			fullId: model.id,
 			inputCostPerMillionTokens: parsePerTokenCost(model.pricing?.prompt),
+			knowledgeCutoff: model.knowledge_cutoff ?? null,
+			name: model.name ?? model.id,
 			outputCostPerMillionTokens: parsePerTokenCost(model.pricing?.completion),
+			reasoningType,
 			supportsImageInput: (model.architecture?.input_modalities ?? []).includes('image'),
 			supportsReasoning: reasoningType !== null,
-			reasoningType,
-			knowledgeCutoff: model.knowledge_cutoff ?? null,
+			vendor,
 		});
 	}
 	return entries;
 }
 
-export function mapOpenRouterToCreateModelInput(
-	entry: OpenRouterEntry,
-	opts: { sortOrder?: number } = {},
-): CreateModelInput {
+export function mapOpenRouterToCreateModelInput(entry: OpenRouterEntry, opts: { sortOrder?: number } = {}): CreateModelInput {
 	return {
-		id: entry.fullId,
-		name: entry.name,
 		description: entry.description,
-		maxContextLength: entry.contextLength,
-		reasoningType: entry.reasoningType,
+		id: entry.fullId,
 		inputCostPerMillionTokens: entry.inputCostPerMillionTokens,
+		maxContextLength: entry.contextLength,
+		name: entry.name,
 		outputCostPerMillionTokens: entry.outputCostPerMillionTokens,
-		supportsImageInput: entry.supportsImageInput,
+		reasoningType: entry.reasoningType,
 		sortOrder: opts.sortOrder ?? 0,
+		supportsImageInput: entry.supportsImageInput,
 	};
 }
 
@@ -158,5 +155,5 @@ function buildDescription(description: string | undefined, knowledge: string | n
 	if (parts.length === 0) return null;
 	const joined = parts.join(' · ');
 	if (joined.length <= MAX_DESCRIPTION_LENGTH) return joined;
-	return joined.slice(0, MAX_DESCRIPTION_LENGTH - 1).trimEnd() + '…';
+	return `${joined.slice(0, MAX_DESCRIPTION_LENGTH - 1).trimEnd()}…`;
 }

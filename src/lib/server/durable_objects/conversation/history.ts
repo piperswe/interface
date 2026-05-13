@@ -1,7 +1,7 @@
-import type { Message } from '../../llm/LLM';
 import type { MessagePart } from '$lib/types/conversation';
+import type { Message } from '../../llm/LLM';
+import { type BlobEnv, partsFromJson } from './blob-store';
 import { partsToMessages } from './parts';
-import { partsFromJson, type BlobEnv } from './blob-store';
 
 type HistoryRow = { role: string; content: string; parts: MessagePart[] | null };
 type HistoryRowRaw = { role: string; content: string; parts: string | null };
@@ -31,7 +31,7 @@ export async function hydrateRowParts<T extends HistoryRowRaw>(
 function assistantRowToMessages(parts: MessagePart[] | null, content: string): Message[] {
 	const list = parts ?? [];
 	const hasToolParts = list.some((p) => p.type === 'tool_use' || p.type === 'tool_result');
-	return hasToolParts ? partsToMessages(list) : [{ role: 'assistant', content }];
+	return hasToolParts ? partsToMessages(list) : [{ content, role: 'assistant' }];
 }
 
 // Convert a sequence of persisted message rows into the LLM `Message[]` shape.
@@ -53,7 +53,7 @@ export function buildHistory(rows: HistoryRow[]): Message[] {
 		}
 		const prefix = pendingSystemContent ? `[${pendingSystemContent}]\n\n` : '';
 		pendingSystemContent = null;
-		messages.push({ role: 'user', content: prefix + m.content });
+		messages.push({ content: prefix + m.content, role: 'user' });
 	}
 	return messages;
 }
@@ -63,9 +63,10 @@ export function buildHistory(rows: HistoryRow[]): Message[] {
 // messages" back to soft-deletes by row id. `system` rows are intentionally
 // skipped (compaction can't drop them and they're inlined into the next
 // user message anyway).
-export function buildHistoryWithRowIds(
-	rows: Array<{ id: string; role: string; content: string; parts: MessagePart[] | null }>,
-): { messages: Message[]; rowIdAtIndex: string[] } {
+export function buildHistoryWithRowIds(rows: Array<{ id: string; role: string; content: string; parts: MessagePart[] | null }>): {
+	messages: Message[];
+	rowIdAtIndex: string[];
+} {
 	const rowIdAtIndex: string[] = [];
 	const messages: Message[] = [];
 	for (const row of rows) {
@@ -75,7 +76,7 @@ export function buildHistoryWithRowIds(
 			messages.push(...converted);
 		} else if (row.role === 'user') {
 			rowIdAtIndex.push(row.id);
-			messages.push({ role: 'user', content: row.content });
+			messages.push({ content: row.content, role: 'user' });
 		}
 	}
 	return { messages, rowIdAtIndex };

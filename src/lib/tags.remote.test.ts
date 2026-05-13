@@ -1,10 +1,11 @@
 import { env } from 'cloudflare:test';
 import { isHttpError, isRedirect } from '@sveltejs/kit';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { assertDefined } from '../../test/assert-defined';
 import { clearMockRequestEvent, setMockRequestEvent } from '../../test/shims/app-server';
-import * as remote from './tags.remote';
 import { createConversation } from './server/conversations';
 import { listTags, tagsForConversation } from './server/tags';
+import * as remote from './tags.remote';
 
 type AnyArgs = (...args: unknown[]) => Promise<unknown>;
 const addTag = remote.addTag as unknown as AnyArgs;
@@ -70,9 +71,10 @@ describe('tags.remote — addTag', () => {
 	});
 
 	it('persists a recognised color', async () => {
-		await expectRedirect(addTag({ name: 'work', color: 'blue' }) as Promise<unknown>, '/settings');
+		await expectRedirect(addTag({ color: 'blue', name: 'work' }) as Promise<unknown>, '/settings');
 		const tags = await listTags(env);
-		const work = tags.find((t) => t.name === 'work')!;
+		const work = tags.find((t) => t.name === 'work');
+		assertDefined(work);
 		expect(work.color).toBe('blue');
 	});
 
@@ -85,7 +87,7 @@ describe('tags.remote — renameTagForm', () => {
 	it('renames a tag and updates its color', async () => {
 		await runForm(addTag({ name: 'old' }));
 		const id = (await listTags(env))[0].id;
-		await expectRedirect(renameTagForm({ id, name: 'new', color: 'red' }) as Promise<unknown>, '/settings');
+		await expectRedirect(renameTagForm({ color: 'red', id, name: 'new' }) as Promise<unknown>, '/settings');
 		const updated = (await listTags(env))[0];
 		expect(updated.name).toBe('new');
 		expect(updated.color).toBe('red');
@@ -102,7 +104,7 @@ describe('tags.remote — removeTag', () => {
 		const conversationId = await createConversation(env);
 		await runForm(addTag({ name: 'project' }));
 		const tagId = (await listTags(env))[0].id;
-		await tagConversation({ conversationId, tagId, attached: true });
+		await tagConversation({ attached: true, conversationId, tagId });
 		expect((await tagsForConversation(env, conversationId)).map((t) => t.id)).toEqual([tagId]);
 		await expectRedirect(removeTag({ id: tagId }) as Promise<unknown>, '/settings');
 		expect(await listTags(env)).toEqual([]);
@@ -120,35 +122,29 @@ describe('tags.remote — tagConversation', () => {
 		await runForm(addTag({ name: 'project' }));
 		const tagId = (await listTags(env))[0].id;
 
-		await tagConversation({ conversationId, tagId, attached: true });
-		await tagConversation({ conversationId, tagId, attached: true }); // idempotent
+		await tagConversation({ attached: true, conversationId, tagId });
+		await tagConversation({ attached: true, conversationId, tagId }); // idempotent
 		expect((await tagsForConversation(env, conversationId)).length).toBe(1);
 
-		await tagConversation({ conversationId, tagId, attached: false });
-		await tagConversation({ conversationId, tagId, attached: false }); // idempotent
+		await tagConversation({ attached: false, conversationId, tagId });
+		await tagConversation({ attached: false, conversationId, tagId }); // idempotent
 		expect(await tagsForConversation(env, conversationId)).toEqual([]);
 	});
 
 	it('rejects malformed conversation ids', async () => {
-		await expectError(
-			tagConversation({ conversationId: 'bad', tagId: 1, attached: true }) as Promise<unknown>,
-			400,
-		);
+		await expectError(tagConversation({ attached: true, conversationId: 'bad', tagId: 1 }) as Promise<unknown>, 400);
 	});
 
 	it('rejects non-positive tag ids', async () => {
 		const conversationId = await createConversation(env);
-		await expectError(
-			tagConversation({ conversationId, tagId: 0, attached: true }) as Promise<unknown>,
-			400,
-		);
+		await expectError(tagConversation({ attached: true, conversationId, tagId: 0 }) as Promise<unknown>, 400);
 	});
 });
 
 describe('tags.remote — createAndTagConversation', () => {
 	it('creates a tag and attaches it in a single call', async () => {
 		const conversationId = await createConversation(env);
-		const result = (await createAndTagConversation({ conversationId, name: 'urgent', color: 'red' })) as {
+		const result = (await createAndTagConversation({ color: 'red', conversationId, name: 'urgent' })) as {
 			id: number;
 		};
 		expect(typeof result.id).toBe('number');
@@ -173,17 +169,11 @@ describe('tags.remote — createAndTagConversation', () => {
 	});
 
 	it('rejects a malformed conversation id', async () => {
-		await expectError(
-			createAndTagConversation({ conversationId: 'bad', name: 'tag' }) as Promise<unknown>,
-			400,
-		);
+		await expectError(createAndTagConversation({ conversationId: 'bad', name: 'tag' }) as Promise<unknown>, 400);
 	});
 
 	it('rejects an empty name', async () => {
 		const conversationId = await createConversation(env);
-		await expectError(
-			createAndTagConversation({ conversationId, name: '   ' }) as Promise<unknown>,
-			400,
-		);
+		await expectError(createAndTagConversation({ conversationId, name: '   ' }) as Promise<unknown>, 400);
 	});
 });

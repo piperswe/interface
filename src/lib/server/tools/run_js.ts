@@ -13,21 +13,21 @@ const MAX_CPU_MS = 30_000;
 const DEFAULT_SUBREQUESTS = 50;
 
 const inputSchema = {
-	type: 'object',
 	properties: {
 		code: {
-			type: 'string',
 			description:
 				'JavaScript executed as the body of an async function — use `await` and `return` freely. `console.log` / `warn` / `error` are captured. The return value is JSON-serialized when possible.',
+			type: 'string',
 		},
 		timeout: {
-			type: 'integer',
-			minimum: 100,
-			maximum: MAX_CPU_MS,
 			description: `CPU time limit in milliseconds (default ${DEFAULT_CPU_MS}, max ${MAX_CPU_MS}).`,
+			maximum: MAX_CPU_MS,
+			minimum: 100,
+			type: 'integer',
 		},
 	},
 	required: ['code'],
+	type: 'object',
 } as const;
 
 // Host module that loads a separate `user.js` module from the loader's
@@ -82,29 +82,27 @@ function buildUserModule(userCode: string): string {
 }
 
 type RunLog = { level: string; msg: string };
-type RunResult =
-	| { ok: true; result: unknown; logs: RunLog[] }
-	| { ok: false; error: string; logs: RunLog[] };
+type RunResult = { ok: true; result: unknown; logs: RunLog[] } | { ok: false; error: string; logs: RunLog[] };
 
 export const runJsTool: Tool = {
 	definition: {
-		name: 'run_js',
 		description:
-			"Run JavaScript in a fresh, isolated Cloudflare Worker (v8 isolate). The code is executed as the body of an async function — use `await` and `return` freely; the returned value is reported back JSON-serialized when possible, and `console.log` / `warn` / `error` are captured. The isolate has network access (`fetch`) but no project bindings or secrets, and no state is preserved across calls. Prefer this over `sandbox_run_code` for most computation, parsing, transforms, or hitting public HTTP APIs — it spins up much faster. Only use `sandbox_run_code` if you need a filesystem.",
+			'Run JavaScript in a fresh, isolated Cloudflare Worker (v8 isolate). The code is executed as the body of an async function — use `await` and `return` freely; the returned value is reported back JSON-serialized when possible, and `console.log` / `warn` / `error` are captured. The isolate has network access (`fetch`) but no project bindings or secrets, and no state is preserved across calls. Prefer this over `sandbox_run_code` for most computation, parsing, transforms, or hitting public HTTP APIs — it spins up much faster. Only use `sandbox_run_code` if you need a filesystem.',
 		inputSchema,
+		name: 'run_js',
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
 		const parsed = safeValidate(inputArgsSchema, input);
 		if (!parsed.ok) {
-			return { content: `Invalid input: ${parsed.error}`, isError: true, errorCode: 'invalid_input' };
+			return { content: `Invalid input: ${parsed.error}`, errorCode: 'invalid_input', isError: true };
 		}
 		const args = parsed.value;
 		const loader = ctx.env.RUN_JS_LOADER;
 		if (!loader) {
 			return {
 				content: 'RUN_JS_LOADER binding is not configured.',
-				isError: true,
 				errorCode: 'execution_failure',
+				isError: true,
 			};
 		}
 		const cpuMs = clampTimeout(args.timeout);
@@ -112,13 +110,13 @@ export const runJsTool: Tool = {
 			const stub = loader.load({
 				compatibilityDate: HOST_COMPAT_DATE,
 				compatibilityFlags: ['nodejs_compat'],
+				env: {},
+				limits: { cpuMs, subRequests: DEFAULT_SUBREQUESTS },
 				mainModule: 'main.js',
 				modules: {
 					'main.js': { js: HOST_MODULE },
 					'user.js': { js: buildUserModule(args.code) },
 				},
-				env: {},
-				limits: { cpuMs, subRequests: DEFAULT_SUBREQUESTS },
 			});
 			const entrypoint = stub.getEntrypoint() as unknown as { run(): Promise<RunResult> };
 			const result = await entrypoint.run();
@@ -126,8 +124,8 @@ export const runJsTool: Tool = {
 		} catch (e) {
 			return {
 				content: e instanceof Error ? `${e.name}: ${e.message}` : String(e),
-				isError: true,
 				errorCode: 'execution_failure',
+				isError: true,
 			};
 		}
 	},
@@ -152,9 +150,7 @@ function formatRunResult(result: RunResult): ToolExecutionResult {
 		if (result.result !== undefined) {
 			if (lines.length > 0) lines.push('');
 			lines.push('--- result ---');
-			lines.push(
-				typeof result.result === 'string' ? result.result : JSON.stringify(result.result, null, 2),
-			);
+			lines.push(typeof result.result === 'string' ? result.result : JSON.stringify(result.result, null, 2));
 		} else if (lines.length === 0) {
 			lines.push('(no output)');
 		}
@@ -163,5 +159,5 @@ function formatRunResult(result: RunResult): ToolExecutionResult {
 	if (lines.length > 0) lines.push('');
 	lines.push('--- error ---');
 	lines.push(result.error);
-	return { content: lines.join('\n'), isError: true, errorCode: 'execution_failure' };
+	return { content: lines.join('\n'), errorCode: 'execution_failure', isError: true };
 }

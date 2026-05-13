@@ -14,7 +14,7 @@ class StubBackend implements WebSearchBackend {
 	}
 }
 
-const ctx = { env, conversationId: 'c', assistantMessageId: 'a', modelId: 'p/m' };
+const ctx = { assistantMessageId: 'a', conversationId: 'c', env, modelId: 'p/m' };
 
 describe('web_search tool', () => {
 	it('rejects missing query', async () => {
@@ -34,8 +34,8 @@ describe('web_search tool', () => {
 			new StubBackend({
 				ok: true,
 				results: [
-					{ url: 'https://a.example/cats', title: 'Cats!', snippet: 'A page about cats' },
-					{ url: 'https://b.example/dogs', title: 'Dogs vs cats', snippet: 'Comparing.' },
+					{ snippet: 'A page about cats', title: 'Cats!', url: 'https://a.example/cats' },
+					{ snippet: 'Comparing.', title: 'Dogs vs cats', url: 'https://b.example/dogs' },
 				],
 			}),
 		);
@@ -67,8 +67,8 @@ describe('web_search tool', () => {
 			new StubBackend({
 				ok: true,
 				results: [
-					{ url: 'https://a/', title: 'A', snippet: '' },
-					{ url: 'https://b/', title: 'B', snippet: '' },
+					{ snippet: '', title: 'A', url: 'https://a/' },
+					{ snippet: '', title: 'B', url: 'https://b/' },
 				],
 			}),
 		);
@@ -85,9 +85,9 @@ describe('web_search tool', () => {
 				ok: true,
 				results: [
 					// A repeats — must keep index 1.
-					{ url: 'https://a/', title: 'A', snippet: '' },
+					{ snippet: '', title: 'A', url: 'https://a/' },
 					// New URL — gets the next free index, 3.
-					{ url: 'https://c/', title: 'C', snippet: '' },
+					{ snippet: '', title: 'C', url: 'https://c/' },
 				],
 			}),
 		);
@@ -101,7 +101,7 @@ describe('web_search tool', () => {
 		const tool = createWebSearchTool(
 			new StubBackend({
 				ok: true,
-				results: [{ url: 'https://x/', title: 'X', snippet: '' }],
+				results: [{ snippet: '', title: 'X', url: 'https://x/' }],
 			}),
 		);
 		const result = await tool.execute(ctx, { query: 'x' });
@@ -109,7 +109,7 @@ describe('web_search tool', () => {
 	});
 
 	it('surfaces backend errors', async () => {
-		const tool = createWebSearchTool(new StubBackend({ ok: false, error: 'rate limited' }));
+		const tool = createWebSearchTool(new StubBackend({ error: 'rate limited', ok: false }));
 		const result = await tool.execute(ctx, { query: 'cats' });
 		expect(result.isError).toBe(true);
 		expect(result.content).toContain('rate limited');

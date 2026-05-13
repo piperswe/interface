@@ -14,18 +14,14 @@
 // newest-registered first).
 
 import 'katex/dist/katex.min.css';
-import { Marked, type MarkedExtension } from 'marked';
-import markedShiki from 'marked-shiki';
-import markedKatex from 'marked-katex-extension';
 import createDOMPurify from 'dompurify';
-import { markedKatexParen } from './marked-katex-paren';
-import { markedInlineCitation } from './marked-inline-citation';
-import {
-	createHighlighter,
-	type Highlighter,
-	type BundledLanguage,
-} from 'shiki';
+import { Marked, type MarkedExtension } from 'marked';
+import markedKatex from 'marked-katex-extension';
+import markedShiki from 'marked-shiki';
+import { type BundledLanguage, createHighlighter, type Highlighter } from 'shiki';
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
+import { markedInlineCitation } from './marked-inline-citation';
+import { markedKatexParen } from './marked-katex-paren';
 
 // DOMPurify needs a window/document. The production browser bundle gets one
 // natively; vitest's workerd pool does not, and the dompurify default export
@@ -33,7 +29,7 @@ import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
 // that case. We lazy-initialise so the cost is paid once per isolate and
 // only when needed.
 type PurifyInstance = ReturnType<typeof createDOMPurify>;
-let purifyInstance: PurifyInstance | null | undefined = undefined;
+let purifyInstance: PurifyInstance | null | undefined;
 function getPurify(): PurifyInstance | null {
 	if (purifyInstance !== undefined) return purifyInstance;
 	if (typeof window === 'undefined' || typeof document === 'undefined') {
@@ -72,11 +68,14 @@ const THEME = 'github-dark';
 
 let highlighterPromise: Promise<Highlighter> | undefined;
 function getHighlighter(): Promise<Highlighter> {
-	return (highlighterPromise ??= createHighlighter({
-		themes: [THEME],
-		langs: LANGS,
-		engine: createJavaScriptRegexEngine(),
-	}));
+	if (highlighterPromise === undefined) {
+		highlighterPromise = createHighlighter({
+			engine: createJavaScriptRegexEngine(),
+			langs: LANGS,
+			themes: [THEME],
+		});
+	}
+	return highlighterPromise;
 }
 
 // URL scheme allowlist for marked's link/image renderers. Exported for
@@ -108,12 +107,7 @@ function isSafeUrl(value: string): boolean {
 }
 
 function escapeHtml(s: string): string {
-	return s
-		.replace(/&/g, '&amp;')
-		.replace(/</g, '&lt;')
-		.replace(/>/g, '&gt;')
-		.replace(/"/g, '&quot;')
-		.replace(/'/g, '&#39;');
+	return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 function escapeAttr(s: string): string {
@@ -121,9 +115,9 @@ function escapeAttr(s: string): string {
 }
 
 const marked = new Marked({
-	gfm: true,
-	breaks: true,
 	async: true,
+	breaks: true,
+	gfm: true,
 });
 
 // `link` and `image` renderers drop dangerous URL schemes. The `walkTokens`
@@ -132,15 +126,13 @@ const marked = new Marked({
 // from the markdown source while leaving alone the `html` tokens that
 // marked-shiki synthesises from `code` blocks with its own trusted output.
 const xssGuardExtension: MarkedExtension = {
-	walkTokens(token) {
-		// Order matters: this runs before marked-shiki's walkTokens (newest
-		// `marked.use(...)` runs first), so code tokens are still `type:
-		// 'code'` here and slip through untouched.
-		if (token.type !== 'html') return;
-		const t = token as { text?: string };
-		if (typeof t.text === 'string') t.text = escapeHtml(t.text);
-	},
 	renderer: {
+		image({ href, title, text }) {
+			const safe = isSafeUrl(href) ? href : '';
+			if (!safe) return escapeHtml(text);
+			const titleAttr = title ? ` title="${escapeAttr(title)}"` : '';
+			return `<img src="${escapeAttr(safe)}" alt="${escapeAttr(text)}"${titleAttr}>`;
+		},
 		link({ href, title, tokens }) {
 			const safe = isSafeUrl(href) ? href : '#';
 			const titleAttr = title ? ` title="${escapeAttr(title)}"` : '';
@@ -149,16 +141,18 @@ const xssGuardExtension: MarkedExtension = {
 			const text = this.parser.parseInline(tokens);
 			return `<a href="${escapeAttr(safe)}"${titleAttr}>${text}</a>`;
 		},
-		image({ href, title, text }) {
-			const safe = isSafeUrl(href) ? href : '';
-			if (!safe) return escapeHtml(text);
-			const titleAttr = title ? ` title="${escapeAttr(title)}"` : '';
-			return `<img src="${escapeAttr(safe)}" alt="${escapeAttr(text)}"${titleAttr}>`;
-		},
+	},
+	walkTokens(token) {
+		// Order matters: this runs before marked-shiki's walkTokens (newest
+		// `marked.use(...)` runs first), so code tokens are still `type:
+		// 'code'` here and slip through untouched.
+		if (token.type !== 'html') return;
+		const t = token as { text?: string };
+		if (typeof t.text === 'string') t.text = escapeHtml(t.text);
 	},
 };
 
-marked.use(markedKatex({ throwOnError: false, nonStandard: true }));
+marked.use(markedKatex({ nonStandard: true, throwOnError: false }));
 marked.use(markedKatexParen({ throwOnError: false }));
 marked.use(markedInlineCitation());
 
@@ -205,10 +199,10 @@ export function sanitizeSvgClient(svg: string): string {
 	const purify = getPurify();
 	if (purify) {
 		return purify.sanitize(svg, {
-			USE_PROFILES: { svg: true, svgFilters: true },
 			// Disallow `foreignObject` — it lets the SVG embed HTML which
 			// then gets the surrounding document's JS context.
 			FORBID_TAGS: ['foreignObject', 'script'],
+			USE_PROFILES: { svg: true, svgFilters: true },
 		}) as string;
 	}
 	return _regexFallbackSanitizeSvg(svg);
@@ -230,10 +224,7 @@ export function _regexFallbackSanitizeSvg(svg: string): string {
 	out = out.replace(/\s+on[a-z]+\s*=\s*'[^']*'/gi, '');
 	out = out.replace(/\s+on[a-z]+\s*=\s*[^\s>]+/gi, '');
 	// Strip `javascript:` / `vbscript:` URLs in href/src/xlink:href.
-	out = out.replace(
-		/(\s(?:href|src|xlink:href)\s*=\s*["']?)\s*(?:javascript|vbscript|data:text):/gi,
-		'$1#blocked:',
-	);
+	out = out.replace(/(\s(?:href|src|xlink:href)\s*=\s*["']?)\s*(?:javascript|vbscript|data:text):/gi, '$1#blocked:');
 	return out;
 }
 

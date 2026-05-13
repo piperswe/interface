@@ -32,7 +32,7 @@ rl.on('line', (line) => {
 		suppressed++;
 		return;
 	}
-	process.stdout.write(line + '\n');
+	process.stdout.write(`${line}\n`);
 });
 
 for (const sig of ['SIGINT', 'SIGTERM']) {

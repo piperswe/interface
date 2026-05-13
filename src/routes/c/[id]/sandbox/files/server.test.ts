@@ -1,20 +1,22 @@
 import { env } from 'cloudflare:test';
 import { isHttpError } from '@sveltejs/kit';
 import { afterEach, describe, expect, it } from 'vitest';
+import { assertDefined } from '../../../../../../test/assert-defined';
 import { GET } from './+server';
 
 const VALID_ID = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
 
 type FileNode = { path: string; type: 'file' | 'directory' };
 
-const bucket = env.WORKSPACE_BUCKET!;
+assertDefined(env.WORKSPACE_BUCKET, 'WORKSPACE_BUCKET binding required');
+const bucket = env.WORKSPACE_BUCKET;
 
 afterEach(async () => {
 	let cursor: string | undefined;
 	do {
 		const page = await bucket.list({
-			prefix: `conversations/${VALID_ID}/`,
 			cursor,
+			prefix: `conversations/${VALID_ID}/`,
 		});
 		for (const obj of page.objects) await bucket.delete(obj.key);
 		cursor = page.truncated ? page.cursor : undefined;
@@ -25,9 +27,9 @@ async function callGet(conversationId: string, search: string): Promise<Response
 	const url = new URL(`http://localhost/c/${conversationId}/sandbox/files?${search}`);
 	const event = {
 		params: { id: conversationId },
-		url,
 		platform: { env },
 		request: new Request(url.toString()),
+		url,
 	} as Parameters<typeof GET>[0];
 	return GET(event);
 }
@@ -66,11 +68,7 @@ describe('sandbox/files +server.ts — GET', () => {
 		expect(res.headers.get('Content-Type')).toMatch(/application\/json/);
 		const list = (await res.json()) as FileNode[];
 		const paths = list.map((n) => `${n.type}:${n.path}`);
-		expect(paths).toEqual([
-			'file:/workspace/alpha.txt',
-			'directory:/workspace/sub',
-			'file:/workspace/zeta.txt',
-		]);
+		expect(paths).toEqual(['file:/workspace/alpha.txt', 'directory:/workspace/sub', 'file:/workspace/zeta.txt']);
 	});
 
 	it('lists nested entries under /workspace/sub', async () => {
@@ -95,12 +93,7 @@ describe('sandbox/files +server.ts — GET', () => {
 		const total = 1100;
 		const writes: Promise<unknown>[] = [];
 		for (let i = 0; i < total; i++) {
-			writes.push(
-				bucket.put(
-					`conversations/${VALID_ID}/file-${String(i).padStart(4, '0')}.txt`,
-					'x',
-				),
-			);
+			writes.push(bucket.put(`conversations/${VALID_ID}/file-${String(i).padStart(4, '0')}.txt`, 'x'));
 		}
 		await Promise.all(writes);
 		const res = await callGet(VALID_ID, 'path=/workspace');

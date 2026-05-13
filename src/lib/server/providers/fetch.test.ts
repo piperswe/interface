@@ -6,11 +6,7 @@ afterEach(() => {
 });
 
 function mockOnce(body: unknown, init?: ResponseInit) {
-	return vi
-		.spyOn(globalThis, 'fetch')
-		.mockResolvedValueOnce(
-			new Response(typeof body === 'string' ? body : JSON.stringify(body), init),
-		);
+	return vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(typeof body === 'string' ? body : JSON.stringify(body), init));
 }
 
 describe('fetchOpenRouterModels', () => {
@@ -18,20 +14,20 @@ describe('fetchOpenRouterModels', () => {
 		mockOnce({
 			data: [
 				{
-					id: 'anthropic/claude-sonnet-4-6',
-					name: 'Claude Sonnet 4.6',
 					context_length: 200_000,
 					description: 'long context',
+					id: 'anthropic/claude-sonnet-4-6',
+					name: 'Claude Sonnet 4.6',
 				},
 			],
 		});
 		const result = await fetchOpenRouterModels();
 		expect(result).toEqual([
 			{
-				id: 'anthropic/claude-sonnet-4-6',
-				name: 'Claude Sonnet 4.6',
 				description: 'long context',
+				id: 'anthropic/claude-sonnet-4-6',
 				maxContextLength: 200_000,
+				name: 'Claude Sonnet 4.6',
 				reasoningType: 'max_tokens',
 			},
 		]);
@@ -96,9 +92,7 @@ describe('fetchOpenRouterModels', () => {
 	});
 
 	it('throws on a non-2xx response', async () => {
-		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-			new Response('nope', { status: 500 }),
-		);
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('nope', { status: 500 }));
 		await expect(fetchOpenRouterModels()).rejects.toThrow(/500/);
 	});
 

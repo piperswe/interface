@@ -1,5 +1,5 @@
-import type { ContentBlock, Message, ToolResultBlock } from './LLM';
 import type { ResolvedModel } from '../providers/types';
+import type { ContentBlock, Message, ToolResultBlock } from './LLM';
 
 // Per-turn message sanitizer applied just before `llm.chat({ messages })`.
 // The persisted timeline keeps full fidelity (images, thinking, signatures);
@@ -40,7 +40,7 @@ export function sanitizeHistoryForModel(messages: Message[], resolved: ResolvedM
 				if (supportsImages) {
 					filtered.push(b);
 				} else {
-					filtered.push({ type: 'text', text: REDACTED_IMAGE_TEXT });
+					filtered.push({ text: REDACTED_IMAGE_TEXT, type: 'text' });
 				}
 				continue;
 			}
@@ -70,14 +70,11 @@ export function sanitizeHistoryForModel(messages: Message[], resolved: ResolvedM
 	});
 }
 
-function sanitizeToolResultBlock(
-	b: ContentBlock & { type: 'tool_result' },
-	supportsImages: boolean,
-): ContentBlock {
+function sanitizeToolResultBlock(b: ContentBlock & { type: 'tool_result' }, supportsImages: boolean): ContentBlock {
 	if (typeof b.content === 'string') return b;
 	if (supportsImages) return b;
 	const subBlocks: ToolResultBlock[] = b.content.map((sub) =>
-		sub.type === 'image' ? { type: 'text' as const, text: REDACTED_IMAGE_TEXT } : sub,
+		sub.type === 'image' ? { text: REDACTED_IMAGE_TEXT, type: 'text' as const } : sub,
 	);
 	// If the only thing left is one or more redacted-image placeholders with no
 	// genuine narration, collapse the array to a single string so the block

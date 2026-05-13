@@ -6,5 +6,4 @@
 // The pattern enforces the dash positions so pathological strings of pure
 // dashes ("------------------------------------") or 36 zeros are rejected
 // at the route boundary instead of flowing into D1 / Durable Object lookups.
-export const CONVERSATION_ID_PATTERN =
-	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+export const CONVERSATION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;

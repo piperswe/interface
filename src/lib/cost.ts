@@ -34,17 +34,11 @@ export type CostBreakdown = {
 export function computeCost(input: CostInput): CostBreakdown {
 	const llmCost = computeLlmCost(input.usage, input.model);
 	const webSearchCost = computeWebSearchCost(input.webSearchCount, input.kagiCostPer1000Searches);
-	const total =
-		llmCost == null && webSearchCost === 0
-			? null
-			: (llmCost ?? 0) + webSearchCost;
-	return { llmCost, webSearchCost, total };
+	const total = llmCost == null && webSearchCost === 0 ? null : (llmCost ?? 0) + webSearchCost;
+	return { llmCost, total, webSearchCost };
 }
 
-function computeLlmCost(
-	usage: CostInput['usage'],
-	model: CostInput['model'],
-): number | null {
+function computeLlmCost(usage: CostInput['usage'], model: CostInput['model']): number | null {
 	if (!usage) return null;
 	if (typeof usage.cost === 'number' && Number.isFinite(usage.cost)) {
 		return usage.cost;
@@ -53,10 +47,7 @@ function computeLlmCost(
 	const inRate = model.inputCostPerMillionTokens;
 	const outRate = model.outputCostPerMillionTokens;
 	if (inRate == null && outRate == null) return null;
-	const billedInput =
-		(usage.inputTokens ?? 0) +
-		(usage.cacheReadInputTokens ?? 0) +
-		(usage.cacheCreationInputTokens ?? 0);
+	const billedInput = (usage.inputTokens ?? 0) + (usage.cacheReadInputTokens ?? 0) + (usage.cacheCreationInputTokens ?? 0);
 	const billedOutput = usage.outputTokens ?? 0;
 	const inputCost = inRate != null ? (billedInput * inRate) / 1_000_000 : 0;
 	const outputCost = outRate != null ? (billedOutput * outRate) / 1_000_000 : 0;
@@ -92,7 +83,7 @@ export function computeConversationCost(
 		const usage = m.meta?.usage ?? null;
 		const model = m.model ? lookupModelPricing(m.model) : null;
 		const webSearchCount = countWebSearches(m.parts);
-		const cost = computeCost({ usage, model, webSearchCount, kagiCostPer1000Searches });
+		const cost = computeCost({ kagiCostPer1000Searches, model, usage, webSearchCount });
 		if (cost.llmCost != null) {
 			llmAny = true;
 			llmTotal += cost.llmCost;
@@ -100,9 +91,8 @@ export function computeConversationCost(
 		webSearchTotal += cost.webSearchCost;
 	}
 	const llmCost = llmAny ? llmTotal : null;
-	const total =
-		!llmAny && webSearchTotal === 0 ? null : (llmAny ? llmTotal : 0) + webSearchTotal;
-	return { llmCost, webSearchCost: webSearchTotal, total };
+	const total = !llmAny && webSearchTotal === 0 ? null : (llmAny ? llmTotal : 0) + webSearchTotal;
+	return { llmCost, total, webSearchCost: webSearchTotal };
 }
 
 // Count tool_use parts whose name matches a web-search tool. The default
@@ -110,10 +100,7 @@ export function computeConversationCost(
 // can rename it but we accept `web_search` as the canonical id since that's
 // what the assistant calls in practice. Pass `extraNames` to count
 // additional tool names (e.g. test fixtures).
-export function countWebSearches(
-	parts: MessagePart[] | null | undefined,
-	extraNames: readonly string[] = [],
-): number {
+export function countWebSearches(parts: MessagePart[] | null | undefined, extraNames: readonly string[] = []): number {
 	if (!parts || parts.length === 0) return 0;
 	const names = new Set<string>(['web_search', ...extraNames]);
 	let count = 0;

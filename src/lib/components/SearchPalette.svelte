@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
 	import { onMount, tick } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { searchConversations } from '$lib/search.remote';
 	import type { SearchHit } from '$lib/server/search';
 

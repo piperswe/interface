@@ -31,10 +31,10 @@ describe('deriveMeta', () => {
 	it('passes through fully populated rows', () => {
 		const meta = deriveMeta(1000, 1200, '{"finishReason":"stop"}', '{"inputTokens":5,"outputTokens":7,"cost":0.001}');
 		expect(meta).toEqual({
-			startedAt: 1000,
 			firstTokenAt: 1200,
 			lastChunk: { finishReason: 'stop' },
-			usage: { inputTokens: 5, outputTokens: 7, cost: 0.001 },
+			startedAt: 1000,
+			usage: { cost: 0.001, inputTokens: 5, outputTokens: 7 },
 		});
 	});
 });

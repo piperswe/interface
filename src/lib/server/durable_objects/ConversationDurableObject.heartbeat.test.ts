@@ -1,7 +1,8 @@
 import { env, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createConversation } from '../conversations';
+import { assertDefined } from '../../../../test/assert-defined';
 import { textTurn, toolUseTurn } from '../../../../test/fakes/FakeLLM';
+import { createConversation } from '../conversations';
 import { setOverride, stubFor, waitForState } from './conversation/_test-helpers';
 import type { ConversationStub } from './index';
 
@@ -25,10 +26,7 @@ describe('ConversationDurableObject — alarm heartbeat', () => {
 	it('schedules a heartbeat alarm during work and clears it on completion', async () => {
 		const id = await createConversation(env);
 		const stub = stubFor(id);
-		await setOverride(stub, [
-			toolUseTurn('t1', 'remember', { content: 'foo' }).events,
-			textTurn('done').events,
-		]);
+		await setOverride(stub, [toolUseTurn('t1', 'remember', { content: 'foo' }).events, textTurn('done').events]);
 
 		const slot = await barrierFor(stub).__armToolExecBarrier();
 		const started = await stub.addUserMessage(id, 'hi', 'fake/model');
@@ -43,8 +41,9 @@ describe('ConversationDurableObject — alarm heartbeat', () => {
 
 		const midAlarm = await runInDurableObject(stub, async (_inst, ctx) => ctx.storage.getAlarm());
 		expect(midAlarm).not.toBeNull();
+		assertDefined(midAlarm);
 		// 30s heartbeat ± wall-clock noise. Just check it's in the future.
-		expect(midAlarm!).toBeGreaterThan(Date.now() - 1_000);
+		expect(midAlarm).toBeGreaterThan(Date.now() - 1_000);
 
 		await barrierFor(stub).__releaseToolExecBarrier(slot);
 		await waitForState(stub, (s) => s.messages.at(-1)?.status === 'complete');
@@ -61,10 +60,7 @@ describe('ConversationDurableObject — alarm heartbeat', () => {
 	it('alarm handler reschedules heartbeat while work is in flight', async () => {
 		const id = await createConversation(env);
 		const stub = stubFor(id);
-		await setOverride(stub, [
-			toolUseTurn('t1', 'remember', { content: 'foo' }).events,
-			textTurn('done').events,
-		]);
+		await setOverride(stub, [toolUseTurn('t1', 'remember', { content: 'foo' }).events, textTurn('done').events]);
 
 		const slot = await barrierFor(stub).__armToolExecBarrier();
 		await stub.addUserMessage(id, 'hi', 'fake/model');
@@ -88,18 +84,19 @@ describe('ConversationDurableObject — alarm heartbeat', () => {
 
 		const a2 = await runInDurableObject(stub, async (_inst, ctx) => ctx.storage.getAlarm());
 		expect(a2).not.toBeNull();
+		assertDefined(a2);
 		// Branch A re-arms the heartbeat to Date.now() + 30s. Branch B with
 		// an active #inProgress is a no-op and leaves alarm == null. The
 		// sentinel was 5min out, so a value well under 1min away proves the
 		// heartbeat was re-scheduled rather than left as the sentinel.
-		expect(a2!).toBeLessThan(sentinel - 60_000);
+		expect(a2).toBeLessThan(sentinel - 60_000);
 
 		// And the streaming row was not touched by a resume — Branch B's
 		// #detectAndResume rewrites started_at when it hydrates #inProgress.
 		const status = await runInDurableObject(stub, async (_inst, ctx) => {
-			const rows = ctx.storage.sql
-				.exec("SELECT status FROM messages WHERE role = 'assistant'")
-				.toArray() as unknown as Array<{ status: string }>;
+			const rows = ctx.storage.sql.exec("SELECT status FROM messages WHERE role = 'assistant'").toArray() as unknown as Array<{
+				status: string;
+			}>;
 			return rows[0]?.status;
 		});
 		expect(status).toBe('streaming');

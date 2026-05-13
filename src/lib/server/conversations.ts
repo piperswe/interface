@@ -1,11 +1,10 @@
-import { now, uuid } from './clock';
 import type { Conversation } from '$lib/types/conversation';
+import { now, uuid } from './clock';
 import { indexTitle, unindexConversation } from './search';
 
 export type { Conversation };
 
-const SELECT_COLS =
-	'id, title, created_at, updated_at, thinking_budget, archived_at, style_id, system_prompt';
+const SELECT_COLS = 'id, title, created_at, updated_at, thinking_budget, archived_at, style_id, system_prompt';
 
 export async function listConversations(env: Env): Promise<Conversation[]> {
 	const result = await env.DB.prepare(
@@ -28,7 +27,9 @@ export async function listArchivedConversations(env: Env): Promise<Conversation[
 // background create resolves).
 export async function createConversation(env: Env, id: string = uuid()): Promise<string> {
 	const ts = now();
-	await env.DB.prepare(`INSERT OR IGNORE INTO conversations (id, title, created_at, updated_at, thinking_budget) VALUES (?, 'New conversation', ?, ?, 4096)`)
+	await env.DB.prepare(
+		`INSERT OR IGNORE INTO conversations (id, title, created_at, updated_at, thinking_budget) VALUES (?, 'New conversation', ?, ?, 4096)`,
+	)
 		.bind(id, ts, ts)
 		.run();
 	await indexTitle(env, id, 'New conversation', ts);
@@ -36,24 +37,16 @@ export async function createConversation(env: Env, id: string = uuid()): Promise
 }
 
 export async function getConversation(env: Env, id: string): Promise<Conversation | null> {
-	const row = await env.DB.prepare(
-		`SELECT ${SELECT_COLS} FROM conversations WHERE id = ?`,
-	)
-		.bind(id)
-		.first<Conversation>();
+	const row = await env.DB.prepare(`SELECT ${SELECT_COLS} FROM conversations WHERE id = ?`).bind(id).first<Conversation>();
 	return row ?? null;
 }
 
 export async function archiveConversation(env: Env, id: string): Promise<void> {
-	await env.DB.prepare('UPDATE conversations SET archived_at = ? WHERE id = ?')
-		.bind(now(), id)
-		.run();
+	await env.DB.prepare('UPDATE conversations SET archived_at = ? WHERE id = ?').bind(now(), id).run();
 }
 
 export async function unarchiveConversation(env: Env, id: string): Promise<void> {
-	await env.DB.prepare('UPDATE conversations SET archived_at = NULL WHERE id = ?')
-		.bind(id)
-		.run();
+	await env.DB.prepare('UPDATE conversations SET archived_at = NULL WHERE id = ?').bind(id).run();
 }
 
 // Hard-delete the conversation row. The Durable Object's storage is cleared

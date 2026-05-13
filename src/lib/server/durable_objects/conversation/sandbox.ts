@@ -14,17 +14,13 @@ export async function _listExposedPorts(
 	const result = await sandbox.getExposedPorts(hostname);
 	const ports = Array.isArray(result) ? result : ((result as { ports?: unknown[] }).ports ?? []);
 	return (ports as Array<{ port: number; url: string; name?: string }>).map((p) => ({
+		name: p.name,
 		port: p.port,
 		url: p.url,
-		name: p.name,
 	}));
 }
 
-export async function getSandboxPreviewPorts(
-	env: Env,
-	conversationId: string | null,
-	hostname: string,
-): Promise<ExposedPort[]> {
+export async function getSandboxPreviewPorts(env: Env, conversationId: string | null, hostname: string): Promise<ExposedPort[]> {
 	if (!conversationId) return [];
 	try {
 		const instance = await getSandboxInstance(env, conversationId);

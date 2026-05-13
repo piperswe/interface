@@ -1,9 +1,9 @@
 <script lang="ts">
+	import { X } from 'lucide-svelte';
 	import type { Artifact } from '$lib/types/conversation';
-	import SidePanelArtifacts from './SidePanelArtifacts.svelte';
 	import SandboxFileBrowser from './SandboxFileBrowser.svelte';
 	import SandboxPreview from './SandboxPreview.svelte';
-	import { X } from 'lucide-svelte';
+	import SidePanelArtifacts from './SidePanelArtifacts.svelte';
 
 	let {
 		conversationId,

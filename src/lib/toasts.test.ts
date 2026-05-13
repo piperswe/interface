@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dismissToast, pushToast, toasts } from './toasts';
 import type { Toast } from './toasts';
+import { dismissToast, pushToast, toasts } from './toasts';
 
 function snapshot(): Toast[] {
 	let captured: Toast[] = [];

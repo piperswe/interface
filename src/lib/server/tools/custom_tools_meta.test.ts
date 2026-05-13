@@ -1,17 +1,12 @@
 import { env } from 'cloudflare:test';
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-	createCustomToolTool,
-	getCustomToolTool,
-	listCustomToolsTool,
-	updateCustomToolTool,
-} from './custom_tools_meta';
 import { createCustomTool, getCustomToolByName } from '../custom_tools';
+import { createCustomToolTool, getCustomToolTool, listCustomToolsTool, updateCustomToolTool } from './custom_tools_meta';
 
 const STUB_SOURCE = `import { WorkerEntrypoint } from 'cloudflare:workers';
 export default class extends WorkerEntrypoint { async run(){ return 1; } }`;
 
-const ctx = { env, conversationId: 'c', assistantMessageId: 'a', modelId: 'p/m' };
+const ctx = { assistantMessageId: 'a', conversationId: 'c', env, modelId: 'p/m' };
 
 afterEach(async () => {
 	await env.DB.prepare('DELETE FROM custom_tools').run();
@@ -25,16 +20,16 @@ describe('list_custom_tools', () => {
 
 	it('lists tools (id, name, description, enabled)', async () => {
 		await createCustomTool(env, {
-			name: 'weather',
 			description: 'gets weather',
-			source: STUB_SOURCE,
 			inputSchema: '{"type":"object"}',
+			name: 'weather',
+			source: STUB_SOURCE,
 		});
 		const result = await listCustomToolsTool.execute(ctx, {});
 		expect(result.isError).toBeFalsy();
 		const parsed = JSON.parse(String(result.content));
 		expect(parsed).toHaveLength(1);
-		expect(parsed[0]).toMatchObject({ name: 'weather', description: 'gets weather', enabled: true });
+		expect(parsed[0]).toMatchObject({ description: 'gets weather', enabled: true, name: 'weather' });
 	});
 });
 
@@ -53,11 +48,11 @@ describe('get_custom_tool', () => {
 
 	it('redacts secret values, returning only the keys', async () => {
 		await createCustomTool(env, {
-			name: 'weather',
 			description: 'd',
-			source: STUB_SOURCE,
 			inputSchema: '{"type":"object"}',
+			name: 'weather',
 			secretsJson: '{"OWM_KEY":"hunter2","BACKUP_KEY":"hunter3"}',
+			source: STUB_SOURCE,
 		});
 		const result = await getCustomToolTool.execute(ctx, { name: 'weather' });
 		expect(result.isError).toBeFalsy();
@@ -71,11 +66,11 @@ describe('get_custom_tool', () => {
 describe('create_custom_tool', () => {
 	it('creates a tool with the given fields', async () => {
 		const result = await createCustomToolTool.execute(ctx, {
-			name: 'weather',
 			description: 'gets weather',
-			source: STUB_SOURCE,
-			input_schema: { type: 'object', properties: { city: { type: 'string' } } },
+			input_schema: { properties: { city: { type: 'string' } }, type: 'object' },
+			name: 'weather',
 			secrets: { OWM_KEY: 'abc' },
+			source: STUB_SOURCE,
 		});
 		expect(result.isError).toBeFalsy();
 		const row = await getCustomToolByName(env, 'weather');
@@ -86,10 +81,10 @@ describe('create_custom_tool', () => {
 
 	it('rejects invalid names', async () => {
 		const result = await createCustomToolTool.execute(ctx, {
-			name: 'mcp_taken',
 			description: 'd',
-			source: STUB_SOURCE,
 			input_schema: { type: 'object' },
+			name: 'mcp_taken',
+			source: STUB_SOURCE,
 		});
 		expect(result.isError).toBe(true);
 	});
@@ -102,10 +97,10 @@ describe('create_custom_tool', () => {
 
 	it('accepts input_schema as a string (already JSON)', async () => {
 		const result = await createCustomToolTool.execute(ctx, {
-			name: 'a',
 			description: 'd',
-			source: STUB_SOURCE,
 			input_schema: '{"type":"object"}',
+			name: 'a',
+			source: STUB_SOURCE,
 		});
 		expect(result.isError).toBeFalsy();
 	});
@@ -114,12 +109,12 @@ describe('create_custom_tool', () => {
 describe('update_custom_tool', () => {
 	it('patches partial fields', async () => {
 		const id = await createCustomTool(env, {
-			name: 'foo',
 			description: 'old',
-			source: STUB_SOURCE,
 			inputSchema: '{"type":"object"}',
+			name: 'foo',
+			source: STUB_SOURCE,
 		});
-		const result = await updateCustomToolTool.execute(ctx, { id, description: 'new' });
+		const result = await updateCustomToolTool.execute(ctx, { description: 'new', id });
 		expect(result.isError).toBeFalsy();
 		const row = await getCustomToolByName(env, 'foo');
 		expect(row?.description).toBe('new');
@@ -132,11 +127,11 @@ describe('update_custom_tool', () => {
 
 	it('clears secrets when an empty object is passed', async () => {
 		const id = await createCustomTool(env, {
-			name: 'foo',
 			description: 'd',
-			source: STUB_SOURCE,
 			inputSchema: '{"type":"object"}',
+			name: 'foo',
 			secretsJson: '{"X":"y"}',
+			source: STUB_SOURCE,
 		});
 		const result = await updateCustomToolTool.execute(ctx, { id, secrets: {} });
 		expect(result.isError).toBeFalsy();

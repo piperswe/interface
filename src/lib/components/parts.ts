@@ -15,8 +15,7 @@ export type Bundle = {
 export type Standalone = { kind: 'standalone'; part: MessagePart; index: number };
 export type Group = Bundle | Standalone;
 
-const isOutput = (part: MessagePart) =>
-	part.type === 'text' || part.type === 'info' || part.type === 'citations';
+const isOutput = (part: MessagePart) => part.type === 'text' || part.type === 'info' || part.type === 'citations';
 
 export function buildResultsMap(parts: MessagePart[]): Map<string, ToolResultPart> {
 	const m = new Map<string, ToolResultPart>();
@@ -33,25 +32,25 @@ export function groupParts(parts: MessagePart[], streaming: boolean, results: Ma
 	const flush = () => {
 		if (bundle.length === 0) return;
 		if (bundle.length === 1) {
-			groups.push({ kind: 'standalone', part: bundle[0].part, index: bundle[0].index });
+			groups.push({ index: bundle[0].index, kind: 'standalone', part: bundle[0].part });
 		} else {
 			const hasActive = bundle.some(({ part, index }) => {
-			if (part.type === 'thinking') return streaming && index === parts.length - 1;
-			if (part.type === 'tool_use') {
-				const result = results.get((part as ToolUsePart).id);
-				if (!result) return streaming;
-				return streaming && result.streaming;
-			}
-			return false;
+				if (part.type === 'thinking') return streaming && index === parts.length - 1;
+				if (part.type === 'tool_use') {
+					const result = results.get((part as ToolUsePart).id);
+					if (!result) return streaming;
+					return streaming && result.streaming;
+				}
+				return false;
 			});
 			const mixed = bundle.some((b) => b.part.type === 'tool_use');
 			groups.push({
-				kind: 'bundle',
-				key: `bundle-${bundle[0].index}`,
-				parts: bundle,
 				hasActive,
-				mixed,
 				isLast: false,
+				key: `bundle-${bundle[0].index}`,
+				kind: 'bundle',
+				mixed,
+				parts: bundle,
 			});
 		}
 		bundle = [];
@@ -62,9 +61,9 @@ export function groupParts(parts: MessagePart[], streaming: boolean, results: Ma
 		if (isOutput(part)) {
 			flush();
 			if (part.type === 'text' && !part.text) continue;
-			groups.push({ kind: 'standalone', part, index: i });
+			groups.push({ index: i, kind: 'standalone', part });
 		} else {
-			bundle.push({ part, index: i });
+			bundle.push({ index: i, part });
 		}
 	}
 	flush();
@@ -72,7 +71,10 @@ export function groupParts(parts: MessagePart[], streaming: boolean, results: Ma
 	// Mark the last bundle so the template can keep it open while streaming.
 	for (let i = groups.length - 1; i >= 0; i--) {
 		const g = groups[i];
-		if (g.kind === 'bundle') { g.isLast = true; break; }
+		if (g.kind === 'bundle') {
+			g.isLast = true;
+			break;
+		}
 	}
 
 	return groups;

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { toasts, dismissToast, type Toast } from '$lib/toasts';
+	import { dismissToast, type Toast, toasts } from '$lib/toasts';
 
 	let items = $state<Toast[]>([]);
 	toasts.subscribe((v) => (items = v));
@@ -7,22 +7,17 @@
 
 <div class="toaster">
 	{#each items as t (t.id)}
-		<div
-			class="toast-item toast-{t.type}"
-			role={t.type === 'error' ? 'alert' : 'status'}
-			aria-live={t.type === 'error' ? 'assertive' : 'polite'}
-			aria-atomic="true"
-		>
-			<span class="toast-message">{t.message}</span>
-			<button
-				type="button"
-				class="toast-dismiss"
-				aria-label="Dismiss"
-				onclick={() => dismissToast(t.id)}
-			>
-				×
-			</button>
-		</div>
+		{#if t.type === 'error'}
+			<div class="toast-item toast-{t.type}" role="alert" aria-live="assertive" aria-atomic="true">
+				<span class="toast-message">{t.message}</span>
+				<button type="button" class="toast-dismiss" aria-label="Dismiss" onclick={() => dismissToast(t.id)}>×</button>
+			</div>
+		{:else}
+			<div class="toast-item toast-{t.type}" role="status" aria-live="polite" aria-atomic="true">
+				<span class="toast-message">{t.message}</span>
+				<button type="button" class="toast-dismiss" aria-label="Dismiss" onclick={() => dismissToast(t.id)}>×</button>
+			</div>
+		{/if}
 	{/each}
 </div>
 

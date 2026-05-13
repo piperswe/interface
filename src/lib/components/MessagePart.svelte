@@ -1,8 +1,8 @@
 <script lang="ts">
 	import type { MessagePart, ToolResultPart } from '$lib/types/conversation';
-	import ThinkingPart from './ThinkingPart.svelte';
-	import InfoPart from './InfoPart.svelte';
 	import CitationsPart from './CitationsPart.svelte';
+	import InfoPart from './InfoPart.svelte';
+	import ThinkingPart from './ThinkingPart.svelte';
 	import ToolCall from './ToolCall.svelte';
 
 	let {
@@ -45,8 +45,8 @@
 {:else if part.type === 'tool_use'}
 	{@const result = results.get(part.id)}
 	<ToolCall
-		call={{ id: part.id, name: part.name, input: part.input, inputHtml: part.inputHtml, startedAt: part.startedAt }}
-		result={result ? { toolUseId: result.toolUseId, content: result.content, isError: result.isError, streaming: result.streaming, startedAt: result.startedAt, endedAt: result.endedAt } : undefined}
+		call={{ id: part.id, input: part.input, inputHtml: part.inputHtml, name: part.name, startedAt: part.startedAt }}
+		result={result ? { content: result.content, endedAt: result.endedAt, isError: result.isError, startedAt: result.startedAt, streaming: result.streaming, toolUseId: result.toolUseId } : undefined}
 		defaultOpen={isStreaming && !result}
 		{nested}
 	/>

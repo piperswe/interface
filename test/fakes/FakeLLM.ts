@@ -24,7 +24,7 @@ export class FakeLLM implements LLM {
 		this.calls.push(request);
 		const turn = this.#turns.shift();
 		if (!turn) {
-			yield { type: 'error', message: 'FakeLLM: ran out of scripted turns' };
+			yield { message: 'FakeLLM: ran out of scripted turns', type: 'error' };
 			return;
 		}
 		for (const ev of turn.events) {
@@ -41,9 +41,9 @@ export class FakeLLM implements LLM {
 export function textTurn(text: string): ScriptedTurn {
 	return {
 		events: [
-			{ type: 'text_delta', delta: text },
+			{ delta: text, type: 'text_delta' },
 			{ type: 'usage', usage: { inputTokens: 10, outputTokens: text.length } },
-			{ type: 'done', finishReason: 'stop' },
+			{ finishReason: 'stop', type: 'done' },
 		],
 	};
 }
@@ -52,9 +52,9 @@ export function textTurn(text: string): ScriptedTurn {
 export function toolUseTurn(id: string, name: string, input: unknown): ScriptedTurn {
 	return {
 		events: [
-			{ type: 'tool_call', id, name, input },
+			{ id, input, name, type: 'tool_call' },
 			{ type: 'usage', usage: { inputTokens: 10, outputTokens: 5 } },
-			{ type: 'done', finishReason: 'tool_use' },
+			{ finishReason: 'tool_use', type: 'done' },
 		],
 	};
 }

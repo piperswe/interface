@@ -3,7 +3,7 @@ import { isHttpError } from '@sveltejs/kit';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createConversation, getConversation } from '$lib/server/conversations';
 import { getConversationStub } from '$lib/server/durable_objects';
-import { createTag, addTagToConversation } from '$lib/server/tags';
+import { addTagToConversation, createTag } from '$lib/server/tags';
 import { load } from './+page.server';
 
 // Each test uses a fresh DO id so DO state from earlier tests can't leak in.
@@ -36,12 +36,11 @@ async function expectError(promise: Promise<unknown>, status: number): Promise<v
 	}
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function loadOk(event: LoadEvent): Promise<Record<string, any>> {
+async function loadOk(event: LoadEvent): Promise<Record<string, unknown>> {
 	const result = await load(event);
 	if (!result) throw new Error('load returned void');
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	return result as Record<string, any>;
+
+	return result as Record<string, unknown>;
 }
 
 describe('c/[id]/+page.server.ts — load', () => {
@@ -53,7 +52,7 @@ describe('c/[id]/+page.server.ts — load', () => {
 		const id = freshId();
 		expect(await getConversation(env, id)).toBeNull();
 		const data = await loadOk(makeEvent(id));
-		expect(data.conversation.id).toBe(id);
+		expect((data.conversation as { id: string }).id).toBe(id);
 		// Row now exists in D1.
 		expect(await getConversation(env, id)).not.toBeNull();
 	});
@@ -65,9 +64,7 @@ describe('c/[id]/+page.server.ts — load', () => {
 		// the DO yet. The loader must NOT resurrect it.
 		const stub = getConversationStub(env, id);
 		await runInDurableObject(stub, async (_instance, ctx) => {
-			ctx.storage.sql.exec(
-				"INSERT INTO messages (id, role, content, status, created_at) VALUES ('u1', 'user', 'hi', 'complete', 1)",
-			);
+			ctx.storage.sql.exec("INSERT INTO messages (id, role, content, status, created_at) VALUES ('u1', 'user', 'hi', 'complete', 1)");
 		});
 		await expectError(Promise.resolve(load(makeEvent(id))), 404);
 	});
@@ -78,8 +75,8 @@ describe('c/[id]/+page.server.ts — load', () => {
 		const tagId = await createTag(env, { name: 'project' });
 		await addTagToConversation(env, id, tagId);
 		const data = await loadOk(makeEvent(id));
-		expect(data.conversation.id).toBe(id);
-		expect(data.initialState.messages).toEqual([]);
+		expect((data.conversation as { id: string }).id).toBe(id);
+		expect((data.initialState as { messages: unknown[] }).messages).toEqual([]);
 		expect(Array.isArray(data.models)).toBe(true);
 		expect(Array.isArray(data.styles)).toBe(true);
 		expect((data.conversationTags as Array<{ id: number }>).map((t) => t.id)).toEqual([tagId]);
@@ -90,9 +87,7 @@ describe('c/[id]/+page.server.ts — load', () => {
 	it('passes thinkingBudget, styleId, and systemPromptOverride from the row', async () => {
 		const id = freshId();
 		await createConversation(env, id);
-		await env.DB.prepare(
-			'UPDATE conversations SET thinking_budget = ?, style_id = ?, system_prompt = ? WHERE id = ?',
-		)
+		await env.DB.prepare('UPDATE conversations SET thinking_budget = ?, style_id = ?, system_prompt = ? WHERE id = ?')
 			.bind(8192, 5, 'be terse', id)
 			.run();
 		const data = await loadOk(makeEvent(id));

@@ -17,18 +17,18 @@ describe('buildGlobalModelId', () => {
 describe('parseGlobalModelId', () => {
 	it('splits on the first slash', () => {
 		expect(parseGlobalModelId('openrouter/anthropic/claude')).toEqual({
-			providerId: 'openrouter',
 			modelId: 'anthropic/claude',
+			providerId: 'openrouter',
 		});
 	});
 	it('handles a single-slash id (provider/model)', () => {
-		expect(parseGlobalModelId('p/m')).toEqual({ providerId: 'p', modelId: 'm' });
+		expect(parseGlobalModelId('p/m')).toEqual({ modelId: 'm', providerId: 'p' });
 	});
 	it('preserves an empty model segment when input ends in a slash', () => {
-		expect(parseGlobalModelId('p/')).toEqual({ providerId: 'p', modelId: '' });
+		expect(parseGlobalModelId('p/')).toEqual({ modelId: '', providerId: 'p' });
 	});
 	it('treats a leading slash as an empty providerId', () => {
-		expect(parseGlobalModelId('/m')).toEqual({ providerId: '', modelId: 'm' });
+		expect(parseGlobalModelId('/m')).toEqual({ modelId: 'm', providerId: '' });
 	});
 	it('throws on inputs without a slash', () => {
 		expect(() => parseGlobalModelId('justmodel')).toThrow(/Invalid global model ID/);

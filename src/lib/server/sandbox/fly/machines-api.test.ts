@@ -6,17 +6,10 @@ afterEach(() => {
 	// between tests.
 	vi.restoreAllMocks();
 });
-import {
-	FlyApiError,
-	createMachine,
-	destroyMachine,
-	execMachine,
-	flyConfigFromEnv,
-	getMachine,
-	startMachine,
-} from './machines-api';
 
-const CFG = { token: 'tok-abc', appName: 'sandbox-app', appHostname: 'sandbox-app.fly.dev' };
+import { createMachine, destroyMachine, execMachine, FlyApiError, flyConfigFromEnv, getMachine, startMachine } from './machines-api';
+
+const CFG = { appHostname: 'sandbox-app.fly.dev', appName: 'sandbox-app', token: 'tok-abc' };
 
 function stubFetch(handler: (url: string, init: RequestInit) => Response | Promise<Response>) {
 	return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init = {}) => {
@@ -38,8 +31,8 @@ describe('flyConfigFromEnv', () => {
 	it('honors the FLY_APP_HOSTNAME override', () => {
 		const cfg = flyConfigFromEnv({
 			FLY_API_TOKEN: 't',
-			FLY_APP_NAME: 'a',
 			FLY_APP_HOSTNAME: 'preview.example.com',
+			FLY_APP_NAME: 'a',
 		} as unknown as Env);
 		expect(cfg?.appHostname).toBe('preview.example.com');
 	});
@@ -47,11 +40,12 @@ describe('flyConfigFromEnv', () => {
 
 describe('machines-api REST', () => {
 	it('sends Bearer auth and JSON body for createMachine', async () => {
-		const spy = stubFetch(() =>
-			new Response(JSON.stringify({ id: 'm-1', state: 'created' }), {
-				status: 200,
-				headers: { 'content-type': 'application/json' },
-			}),
+		const spy = stubFetch(
+			() =>
+				new Response(JSON.stringify({ id: 'm-1', state: 'created' }), {
+					headers: { 'content-type': 'application/json' },
+					status: 200,
+				}),
 		);
 		const created = await createMachine(CFG, { config: { image: 'r/x:latest' } });
 		expect(created.id).toBe('m-1');
@@ -75,11 +69,9 @@ describe('machines-api REST', () => {
 	});
 
 	it('startMachine POSTs to the start endpoint', async () => {
-		const spy = stubFetch(() => new Response(JSON.stringify({}), { status: 200, headers: { 'content-type': 'application/json' } }));
+		const spy = stubFetch(() => new Response(JSON.stringify({}), { headers: { 'content-type': 'application/json' }, status: 200 }));
 		await startMachine(CFG, 'm-42');
-		expect(String(spy.mock.calls[0][0])).toBe(
-			'https://api.machines.dev/v1/apps/sandbox-app/machines/m-42/start',
-		);
+		expect(String(spy.mock.calls[0][0])).toBe('https://api.machines.dev/v1/apps/sandbox-app/machines/m-42/start');
 		expect((spy.mock.calls[0][1] as RequestInit).method).toBe('POST');
 	});
 
@@ -96,13 +88,13 @@ describe('machines-api REST', () => {
 	it('execMachine returns the parsed body verbatim', async () => {
 		stubFetch(
 			() =>
-				new Response(JSON.stringify({ exit_code: 0, stdout: 'hi', stderr: '' }), {
-					status: 200,
+				new Response(JSON.stringify({ exit_code: 0, stderr: '', stdout: 'hi' }), {
 					headers: { 'content-type': 'application/json' },
+					status: 200,
 				}),
 		);
 		const r = await execMachine(CFG, 'm-1', { cmd: ['echo', 'hi'] });
-		expect(r).toEqual({ exit_code: 0, stdout: 'hi', stderr: '' });
+		expect(r).toEqual({ exit_code: 0, stderr: '', stdout: 'hi' });
 	});
 
 	it('execMachine normalises null stdout/stderr to empty strings', async () => {
@@ -111,9 +103,9 @@ describe('machines-api REST', () => {
 		// either and downstream callers always see a string.
 		stubFetch(
 			() =>
-				new Response(JSON.stringify({ exit_code: 0, stdout: null, stderr: null }), {
-					status: 200,
+				new Response(JSON.stringify({ exit_code: 0, stderr: null, stdout: null }), {
 					headers: { 'content-type': 'application/json' },
+					status: 200,
 				}),
 		);
 		const r = await execMachine(CFG, 'm-1', { cmd: ['true'] });
@@ -128,8 +120,8 @@ describe('machines-api REST', () => {
 		stubFetch(
 			() =>
 				new Response(JSON.stringify({ id: 'm-1' /* no state */ }), {
-					status: 200,
 					headers: { 'content-type': 'application/json' },
+					status: 200,
 				}),
 		);
 		await expect(getMachine(CFG, 'm-1')).rejects.toThrow(/failed validation/);

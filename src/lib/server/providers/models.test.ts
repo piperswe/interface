@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:test';
 import { afterEach, describe, expect, it } from 'vitest';
+import { assertDefined } from '../../../../test/assert-defined';
 import {
 	createModel,
 	deleteModel,
@@ -22,32 +23,32 @@ afterEach(async () => {
 });
 
 async function setupProvider(id = 'p1') {
-	await createProvider(env, { id, type: 'openai_compatible', apiKey: 'sk', endpoint: 'https://x/v1' });
+	await createProvider(env, { apiKey: 'sk', endpoint: 'https://x/v1', id, type: 'openai_compatible' });
 }
 
 describe('createModel + getModel', () => {
 	it('round-trips a model with explicit fields', async () => {
 		await setupProvider();
 		await createModel(env, 'p1', {
-			id: 'gpt-x',
-			name: 'GPT X',
 			description: 'flagship',
-			maxContextLength: 200_000,
-			reasoningType: 'effort',
+			id: 'gpt-x',
 			inputCostPerMillionTokens: 3,
+			maxContextLength: 200_000,
+			name: 'GPT X',
 			outputCostPerMillionTokens: 15,
+			reasoningType: 'effort',
 			sortOrder: 5,
 		});
 		const m = await getModel(env, 'p1', 'gpt-x');
 		expect(m).toMatchObject({
-			id: 'gpt-x',
-			providerId: 'p1',
-			name: 'GPT X',
 			description: 'flagship',
-			maxContextLength: 200_000,
-			reasoningType: 'effort',
+			id: 'gpt-x',
 			inputCostPerMillionTokens: 3,
+			maxContextLength: 200_000,
+			name: 'GPT X',
 			outputCostPerMillionTokens: 15,
+			providerId: 'p1',
+			reasoningType: 'effort',
 			sortOrder: 5,
 		});
 		expect(m?.createdAt).toBeGreaterThan(0);
@@ -60,10 +61,10 @@ describe('createModel + getModel', () => {
 		const m = await getModel(env, 'p1', 'a');
 		expect(m).toMatchObject({
 			description: null,
-			maxContextLength: 128_000, // default
-			reasoningType: null,
 			inputCostPerMillionTokens: null,
+			maxContextLength: 128_000, // default
 			outputCostPerMillionTokens: null,
+			reasoningType: null,
 			sortOrder: 0,
 		});
 	});
@@ -105,11 +106,7 @@ describe('listModelsForProvider + listAllModels', () => {
 		await createModel(env, 'alpha', { id: 'a2', name: 'A2', sortOrder: 5 });
 		await createModel(env, 'alpha', { id: 'a1', name: 'A1', sortOrder: 1 });
 		const rows = await listAllModels(env);
-		expect(rows.map((r) => `${r.providerId}/${r.id}`)).toEqual([
-			'alpha/a1',
-			'alpha/a2',
-			'beta/b1',
-		]);
+		expect(rows.map((r) => `${r.providerId}/${r.id}`)).toEqual(['alpha/a1', 'alpha/a2', 'beta/b1']);
 	});
 });
 
@@ -133,7 +130,7 @@ describe('listGlobalIdsForProvider + listAllGlobalModelIds', () => {
 describe('updateModel', () => {
 	it('patches a single field, leaving others alone', async () => {
 		await setupProvider();
-		await createModel(env, 'p1', { id: 'a', name: 'A', description: 'old', sortOrder: 3 });
+		await createModel(env, 'p1', { description: 'old', id: 'a', name: 'A', sortOrder: 3 });
 		await updateModel(env, 'p1', 'a', { name: 'A2' });
 		const after = await getModel(env, 'p1', 'a');
 		expect(after?.name).toBe('A2');
@@ -144,18 +141,18 @@ describe('updateModel', () => {
 	it('clears nullable fields when set to null', async () => {
 		await setupProvider();
 		await createModel(env, 'p1', {
-			id: 'a',
-			name: 'A',
 			description: 'desc',
-			reasoningType: 'effort',
+			id: 'a',
 			inputCostPerMillionTokens: 5,
+			name: 'A',
 			outputCostPerMillionTokens: 10,
+			reasoningType: 'effort',
 		});
 		await updateModel(env, 'p1', 'a', {
 			description: null,
-			reasoningType: null,
 			inputCostPerMillionTokens: null,
 			outputCostPerMillionTokens: null,
+			reasoningType: null,
 		});
 		const after = await getModel(env, 'p1', 'a');
 		expect(after?.description).toBeNull();
@@ -180,7 +177,9 @@ describe('updateModel', () => {
 		await new Promise((r) => setTimeout(r, 5));
 		await updateModel(env, 'p1', 'a', { name: 'A2' });
 		const after = await getModel(env, 'p1', 'a');
-		expect(after!.updatedAt).toBeGreaterThan(before!.updatedAt);
+		assertDefined(after);
+		assertDefined(before);
+		expect(after.updatedAt).toBeGreaterThan(before.updatedAt);
 	});
 });
 

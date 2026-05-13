@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { assertDefined } from '../../../../test/assert-defined';
 import { createMcpServer, getMcpServer, setMcpServerOauthClient, setMcpServerOauthTokens } from '../mcp_servers';
 import {
 	consumeAuthState,
@@ -24,13 +25,13 @@ describe('persistAuthState / consumeAuthState', () => {
 	it('round-trips state and deletes on consume', async () => {
 		const id = await seedServer();
 		await persistAuthState(env, {
-			state: 'state-a',
-			serverId: id,
 			codeVerifier: 'v',
 			redirectUri: 'https://app.example/cb',
+			serverId: id,
+			state: 'state-a',
 		});
 		const out = await consumeAuthState(env, 'state-a');
-		expect(out).toMatchObject({ state: 'state-a', serverId: id, codeVerifier: 'v', redirectUri: 'https://app.example/cb' });
+		expect(out).toMatchObject({ codeVerifier: 'v', redirectUri: 'https://app.example/cb', serverId: id, state: 'state-a' });
 		// Second consume returns null — single-use.
 		expect(await consumeAuthState(env, 'state-a')).toBeNull();
 	});
@@ -50,9 +51,7 @@ describe('persistAuthState / consumeAuthState', () => {
 			.run();
 		expect(await consumeAuthState(env, 'expired')).toBeNull();
 		// Re-querying confirms the row is gone (consumed-then-rejected pattern).
-		const row = await env.DB.prepare('SELECT state FROM mcp_oauth_state WHERE state = ?')
-			.bind('expired')
-			.first();
+		const row = await env.DB.prepare('SELECT state FROM mcp_oauth_state WHERE state = ?').bind('expired').first();
 		expect(row).toBeNull();
 	});
 
@@ -79,9 +78,9 @@ describe('persistTokens', () => {
 		const before = Date.now();
 		await persistTokens(env, id, {
 			access_token: 'AT',
-			token_type: 'Bearer',
 			expires_in: 60,
 			refresh_token: 'RT',
+			token_type: 'Bearer',
 		});
 		const row = await getMcpServer(env, id);
 		expect(row?.oauth?.accessToken).toBe('AT');
@@ -108,22 +107,23 @@ describe('getValidAccessToken', () => {
 	it('returns the cached token when not near expiry', async () => {
 		const id = await seedServer();
 		await setMcpServerOauthClient(env, id, {
-			authorizationServer: 'https://as.example',
 			authorizationEndpoint: 'https://as.example/authorize',
-			tokenEndpoint: 'https://as.example/token',
-			registrationEndpoint: null,
+			authorizationServer: 'https://as.example',
 			clientId: 'cid',
 			clientSecret: null,
+			registrationEndpoint: null,
 			scopes: null,
+			tokenEndpoint: 'https://as.example/token',
 		});
 		await setMcpServerOauthTokens(env, id, {
 			accessToken: 'AT',
-			refreshToken: 'RT',
 			expiresAt: Date.now() + 5 * 60_000,
+			refreshToken: 'RT',
 		});
 		const row = await getMcpServer(env, id);
+		assertDefined(row);
 		const fetchSpy = vi.spyOn(globalThis, 'fetch');
-		const tok = await getValidAccessToken(env, id, row!.oauth);
+		const tok = await getValidAccessToken(env, id, row.oauth);
 		expect(tok).toBe('AT');
 		expect(fetchSpy).not.toHaveBeenCalled();
 	});
@@ -136,27 +136,28 @@ describe('getValidAccessToken', () => {
 	it('retains the existing refresh token when AS returns none', async () => {
 		const id = await seedServer();
 		await setMcpServerOauthClient(env, id, {
-			authorizationServer: 'https://as.example',
 			authorizationEndpoint: 'https://as.example/authorize',
-			tokenEndpoint: 'https://as.example/token',
-			registrationEndpoint: null,
+			authorizationServer: 'https://as.example',
 			clientId: 'cid',
 			clientSecret: null,
+			registrationEndpoint: null,
 			scopes: null,
+			tokenEndpoint: 'https://as.example/token',
 		});
 		await setMcpServerOauthTokens(env, id, {
 			accessToken: 'AT-old',
-			refreshToken: 'RT-keep',
 			expiresAt: Date.now() + 5_000,
+			refreshToken: 'RT-keep',
 		});
 		const row = await getMcpServer(env, id);
+		assertDefined(row);
 		vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-			new Response(
-				JSON.stringify({ access_token: 'AT-new', token_type: 'Bearer', expires_in: 60 }),
-				{ status: 200, headers: { 'Content-Type': 'application/json' } },
-			),
+			new Response(JSON.stringify({ access_token: 'AT-new', expires_in: 60, token_type: 'Bearer' }), {
+				headers: { 'Content-Type': 'application/json' },
+				status: 200,
+			}),
 		);
-		const tok = await getValidAccessToken(env, id, row!.oauth);
+		const tok = await getValidAccessToken(env, id, row.oauth);
 		expect(tok).toBe('AT-new');
 		const after = await getMcpServer(env, id);
 		expect(after?.oauth?.accessToken).toBe('AT-new');
@@ -168,35 +169,36 @@ describe('getValidAccessToken', () => {
 	it('does not re-enable a disabled server on background refresh', async () => {
 		const id = await seedServer();
 		await setMcpServerOauthClient(env, id, {
-			authorizationServer: 'https://as.example',
 			authorizationEndpoint: 'https://as.example/authorize',
-			tokenEndpoint: 'https://as.example/token',
-			registrationEndpoint: null,
+			authorizationServer: 'https://as.example',
 			clientId: 'cid',
 			clientSecret: null,
+			registrationEndpoint: null,
 			scopes: null,
+			tokenEndpoint: 'https://as.example/token',
 		});
 		await setMcpServerOauthTokens(env, id, {
 			accessToken: 'AT-old',
-			refreshToken: 'RT-old',
 			expiresAt: Date.now() + 5_000,
+			refreshToken: 'RT-old',
 		});
 		// Operator-level disable.
 		await env.DB.prepare('UPDATE mcp_servers SET enabled = 0 WHERE id = ?').bind(id).run();
 		const row = await getMcpServer(env, id);
 		expect(row?.enabled).toBe(false);
+		assertDefined(row);
 		vi.spyOn(globalThis, 'fetch').mockResolvedValue(
 			new Response(
 				JSON.stringify({
 					access_token: 'AT-new',
-					token_type: 'Bearer',
 					expires_in: 60,
 					refresh_token: 'RT-new',
+					token_type: 'Bearer',
 				}),
-				{ status: 200, headers: { 'Content-Type': 'application/json' } },
+				{ headers: { 'Content-Type': 'application/json' }, status: 200 },
 			),
 		);
-		await getValidAccessToken(env, id, row!.oauth);
+		await getValidAccessToken(env, id, row.oauth);
 		const after = await getMcpServer(env, id);
 		expect(after?.enabled).toBe(false);
 	});
@@ -204,38 +206,40 @@ describe('getValidAccessToken', () => {
 	it('refreshes when within the buffer and persists new tokens', async () => {
 		const id = await seedServer();
 		await setMcpServerOauthClient(env, id, {
-			authorizationServer: 'https://as.example',
 			authorizationEndpoint: 'https://as.example/authorize',
-			tokenEndpoint: 'https://as.example/token',
-			registrationEndpoint: null,
+			authorizationServer: 'https://as.example',
 			clientId: 'cid',
 			clientSecret: null,
+			registrationEndpoint: null,
 			scopes: null,
+			tokenEndpoint: 'https://as.example/token',
 		});
 		await setMcpServerOauthTokens(env, id, {
 			accessToken: 'AT-old',
-			refreshToken: 'RT-old',
 			expiresAt: Date.now() + 5_000, // within REFRESH_BUFFER_MS (60_000)
+			refreshToken: 'RT-old',
 		});
 		const row = await getMcpServer(env, id);
+		assertDefined(row);
 
 		vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
 			expect(String(input)).toBe('https://as.example/token');
-			const params = new URLSearchParams(String(init!.body));
+			if (!init) throw new Error('expected init');
+			const params = new URLSearchParams(String(init.body));
 			expect(params.get('grant_type')).toBe('refresh_token');
 			expect(params.get('refresh_token')).toBe('RT-old');
 			return new Response(
 				JSON.stringify({
 					access_token: 'AT-new',
-					token_type: 'Bearer',
 					expires_in: 3600,
 					refresh_token: 'RT-new',
+					token_type: 'Bearer',
 				}),
-				{ status: 200, headers: { 'Content-Type': 'application/json' } },
+				{ headers: { 'Content-Type': 'application/json' }, status: 200 },
 			);
 		});
 
-		const tok = await getValidAccessToken(env, id, row!.oauth);
+		const tok = await getValidAccessToken(env, id, row.oauth);
 		expect(tok).toBe('AT-new');
 		const after = await getMcpServer(env, id);
 		expect(after?.oauth?.accessToken).toBe('AT-new');
@@ -245,23 +249,24 @@ describe('getValidAccessToken', () => {
 	it('returns null on refresh failure and leaves stored tokens intact', async () => {
 		const id = await seedServer();
 		await setMcpServerOauthClient(env, id, {
-			authorizationServer: 'https://as.example',
 			authorizationEndpoint: 'https://as.example/authorize',
-			tokenEndpoint: 'https://as.example/token',
-			registrationEndpoint: null,
+			authorizationServer: 'https://as.example',
 			clientId: 'cid',
 			clientSecret: null,
+			registrationEndpoint: null,
 			scopes: null,
+			tokenEndpoint: 'https://as.example/token',
 		});
 		await setMcpServerOauthTokens(env, id, {
 			accessToken: 'AT-old',
-			refreshToken: 'RT-old',
 			expiresAt: Date.now() + 5_000,
+			refreshToken: 'RT-old',
 		});
 		const row = await getMcpServer(env, id);
+		assertDefined(row);
 		vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('boom', { status: 400 }));
 
-		const tok = await getValidAccessToken(env, id, row!.oauth);
+		const tok = await getValidAccessToken(env, id, row.oauth);
 		expect(tok).toBeNull();
 		// Stored tokens should still be the old ones — operator can manually reconnect.
 		const after = await getMcpServer(env, id);
@@ -272,20 +277,21 @@ describe('getValidAccessToken', () => {
 	it('serialises concurrent refresh attempts to a single fetch', async () => {
 		const id = await seedServer();
 		await setMcpServerOauthClient(env, id, {
-			authorizationServer: 'https://as.example',
 			authorizationEndpoint: 'https://as.example/authorize',
-			tokenEndpoint: 'https://as.example/token',
-			registrationEndpoint: null,
+			authorizationServer: 'https://as.example',
 			clientId: 'cid',
 			clientSecret: null,
+			registrationEndpoint: null,
 			scopes: null,
+			tokenEndpoint: 'https://as.example/token',
 		});
 		await setMcpServerOauthTokens(env, id, {
 			accessToken: 'AT-old',
-			refreshToken: 'RT-old',
 			expiresAt: Date.now() + 5_000,
+			refreshToken: 'RT-old',
 		});
 		const row = await getMcpServer(env, id);
+		assertDefined(row);
 
 		let calls = 0;
 		const release = (() => {
@@ -298,14 +304,14 @@ describe('getValidAccessToken', () => {
 		vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
 			calls++;
 			await release.p;
-			return new Response(
-				JSON.stringify({ access_token: 'AT-new', token_type: 'Bearer', expires_in: 60 }),
-				{ status: 200, headers: { 'Content-Type': 'application/json' } },
-			);
+			return new Response(JSON.stringify({ access_token: 'AT-new', expires_in: 60, token_type: 'Bearer' }), {
+				headers: { 'Content-Type': 'application/json' },
+				status: 200,
+			});
 		});
 
-		const a = getValidAccessToken(env, id, row!.oauth);
-		const b = getValidAccessToken(env, id, row!.oauth);
+		const a = getValidAccessToken(env, id, row.oauth);
+		const b = getValidAccessToken(env, id, row.oauth);
 		// Yield a tick so both are in the same in-flight slot.
 		await new Promise((r) => setTimeout(r, 0));
 		release.release();
@@ -320,31 +326,23 @@ describe('exchangeAndPersist', () => {
 	it('exchanges code, persists tokens, enables the row', async () => {
 		const id = await seedServer();
 		vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
-			const params = new URLSearchParams(String(init!.body));
+			if (!init) throw new Error('expected init');
+			const params = new URLSearchParams(String(init.body));
 			expect(params.get('grant_type')).toBe('authorization_code');
 			expect(params.get('code')).toBe('CODE');
 			expect(params.get('code_verifier')).toBe('VER');
 			return new Response(
 				JSON.stringify({
 					access_token: 'AT',
-					token_type: 'Bearer',
 					expires_in: 7200,
 					refresh_token: 'RT',
+					token_type: 'Bearer',
 				}),
-				{ status: 200, headers: { 'Content-Type': 'application/json' } },
+				{ headers: { 'Content-Type': 'application/json' }, status: 200 },
 			);
 		});
 		await env.DB.prepare('UPDATE mcp_servers SET enabled = 0 WHERE id = ?').bind(id).run();
-		const tok = await exchangeAndPersist(
-			env,
-			id,
-			'https://as.example/token',
-			'cid',
-			null,
-			'CODE',
-			'VER',
-			'https://app.example/cb',
-		);
+		const tok = await exchangeAndPersist(env, id, 'https://as.example/token', 'cid', null, 'CODE', 'VER', 'https://app.example/cb');
 		expect(tok.access_token).toBe('AT');
 		const row = await getMcpServer(env, id);
 		expect(row?.oauth?.accessToken).toBe('AT');

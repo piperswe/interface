@@ -1,12 +1,14 @@
 import { env } from 'cloudflare:test';
 import { isHttpError } from '@sveltejs/kit';
 import { afterEach, describe, expect, it } from 'vitest';
+import { assertDefined } from '../../../../../../test/assert-defined';
 import { GET } from './+server';
 
 const VALID_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
 
 // `wrangler.test.jsonc` binds WORKSPACE_BUCKET, so it's never undefined here.
-const bucket = env.WORKSPACE_BUCKET!;
+assertDefined(env.WORKSPACE_BUCKET, 'WORKSPACE_BUCKET binding required');
+const bucket = env.WORKSPACE_BUCKET;
 
 afterEach(async () => {
 	const list = await bucket.list({ prefix: `conversations/${VALID_ID}/` });
@@ -19,9 +21,9 @@ async function callGet(conversationId: string, search: string): Promise<Response
 	const url = new URL(`http://localhost/c/${conversationId}/sandbox/file?${search}`);
 	const event = {
 		params: { id: conversationId },
-		url,
 		platform: { env },
 		request: new Request(url.toString()),
+		url,
 	} as Parameters<typeof GET>[0];
 	return GET(event);
 }

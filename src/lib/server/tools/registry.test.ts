@@ -1,12 +1,12 @@
 import { env } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
-import { ToolRegistry, type Tool } from './registry';
+import { type Tool, ToolRegistry } from './registry';
 
 const echoTool: Tool = {
 	definition: {
-		name: 'echo',
 		description: 'echoes input.text',
-		inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
+		inputSchema: { properties: { text: { type: 'string' } }, required: ['text'], type: 'object' },
+		name: 'echo',
 	},
 	async execute(_ctx, input) {
 		const args = input as { text?: string };
@@ -15,14 +15,14 @@ const echoTool: Tool = {
 };
 
 const throwingTool: Tool = {
-	definition: { name: 'boom', description: 'throws', inputSchema: { type: 'object' } },
+	definition: { description: 'throws', inputSchema: { type: 'object' }, name: 'boom' },
 	async execute() {
 		throw new Error('boom');
 	},
 };
 
 describe('ToolRegistry', () => {
-	const ctx = { env, conversationId: 'c', assistantMessageId: 'a', modelId: 'p/m' };
+	const ctx = { assistantMessageId: 'a', conversationId: 'c', env, modelId: 'p/m' };
 
 	it('registers and executes a tool', async () => {
 		const registry = new ToolRegistry().register(echoTool);
@@ -50,9 +50,9 @@ describe('ToolRegistry', () => {
 
 	it('preserves errorCodes returned by the tool itself (does not overwrite)', async () => {
 		const validatorTool: Tool = {
-			definition: { name: 'validator', description: '', inputSchema: { type: 'object' } },
+			definition: { description: '', inputSchema: { type: 'object' }, name: 'validator' },
 			async execute() {
-				return { content: 'bad input', isError: true, errorCode: 'invalid_input' as const };
+				return { content: 'bad input', errorCode: 'invalid_input' as const, isError: true };
 			},
 		};
 		const registry = new ToolRegistry().register(validatorTool);
@@ -64,7 +64,7 @@ describe('ToolRegistry', () => {
 	it('passes the same context object through to the tool execute()', async () => {
 		const seen: unknown[] = [];
 		const peek: Tool = {
-			definition: { name: 'peek', description: '', inputSchema: { type: 'object' } },
+			definition: { description: '', inputSchema: { type: 'object' }, name: 'peek' },
 			async execute(c) {
 				seen.push(c);
 				return { content: 'ok' };
@@ -83,7 +83,7 @@ describe('ToolRegistry', () => {
 
 	it('serialises non-Error throw values when execute() throws', async () => {
 		const oddThrow: Tool = {
-			definition: { name: 'odd', description: '', inputSchema: { type: 'object' } },
+			definition: { description: '', inputSchema: { type: 'object' }, name: 'odd' },
 			async execute() {
 				throw 'string-thrown';
 			},
@@ -101,7 +101,7 @@ describe('ToolRegistry', () => {
 
 	it('register() overwrites a previously-registered tool with the same name', () => {
 		const replacement: Tool = {
-			definition: { name: 'echo', description: 'replacement', inputSchema: { type: 'object' } },
+			definition: { description: 'replacement', inputSchema: { type: 'object' }, name: 'echo' },
 			async execute() {
 				return { content: 'replaced' };
 			},
@@ -125,7 +125,7 @@ describe('ToolRegistry', () => {
 	it('passes the input verbatim to the tool execute()', async () => {
 		const seenInput: unknown[] = [];
 		const seer: Tool = {
-			definition: { name: 'seer', description: '', inputSchema: { type: 'object' } },
+			definition: { description: '', inputSchema: { type: 'object' }, name: 'seer' },
 			async execute(_ctx, input) {
 				seenInput.push(input);
 				return { content: 'ok' };

@@ -1,11 +1,11 @@
 import { z } from 'zod';
-import { safeValidate } from '$lib/zod-utils';
-import { getWorkspaceIoMode, type WorkspaceIoMode } from '$lib/server/settings';
 import { getSandboxInstance } from '$lib/server/sandbox';
-import type { ExecEvent, ExecResult, SandboxInstance } from '$lib/server/sandbox/backend';
-import type { Tool, ToolContext, ToolExecutionResult } from './registry';
+import type { ExecResult, SandboxInstance } from '$lib/server/sandbox/backend';
+import { getWorkspaceIoMode, type WorkspaceIoMode } from '$lib/server/settings';
+import { safeValidate } from '$lib/zod-utils';
 import type { ProviderModel } from '../providers/types';
 import { parseGlobalModelId } from '../providers/types';
+import type { Tool, ToolContext, ToolExecutionResult } from './registry';
 
 // Zod schemas for validating LLM-supplied tool arguments. Each tool's
 // `definition.inputSchema` is the JSON schema the LLM sees; these run on
@@ -23,13 +23,13 @@ const runCodeArgsSchema = z.object({
 	timeout: z.number().optional(),
 });
 const pathOnlyArgsSchema = z.object({ path: z.string() });
-const writeFileArgsSchema = z.object({ path: z.string(), content: z.string() });
+const writeFileArgsSchema = z.object({ content: z.string(), path: z.string() });
 const mkdirArgsSchema = z.object({ path: z.string(), recursive: z.boolean().optional() });
 const createArtifactArgsSchema = z.object({
+	language: z.string().optional(),
+	name: z.string().optional(),
 	path: z.string(),
 	type: z.enum(['code', 'markdown', 'html', 'svg', 'mermaid']).optional(),
-	name: z.string().optional(),
-	language: z.string().optional(),
 });
 
 // ---------------------------------------------------------------------------
@@ -118,7 +118,7 @@ async function injectSshKey(sandbox: SandboxInstance, key: string): Promise<void
 		/* may already exist */
 	}
 	await sandbox.exec('chmod 700 /root/.ssh');
-	const normalizedKey = key.endsWith('\n') ? key : key + '\n';
+	const normalizedKey = key.endsWith('\n') ? key : `${key}\n`;
 	await sandbox.writeFile(SSH_KEY_PATH, normalizedKey);
 	await sandbox.exec(`chmod 600 ${SSH_KEY_PATH}`);
 	await sandbox.writeFile(SSH_CONFIG_PATH, SSH_CONFIG);
@@ -216,11 +216,11 @@ function r2ConfigFromEnv(ctx: ToolContext): R2Config | null {
 	const secretAccessKey = ctx.env.R2_SECRET_ACCESS_KEY;
 	if (!endpoint || !accessKeyId || !secretAccessKey) return null;
 	return {
-		endpoint,
 		accessKeyId,
-		secretAccessKey,
 		bucketName: ctx.env.R2_WORKSPACE_BUCKET_NAME ?? DEFAULT_R2_BUCKET_NAME,
+		endpoint,
 		prefix: `conversations/${ctx.conversationId}`,
+		secretAccessKey,
 	};
 }
 
@@ -294,11 +294,7 @@ async function execOrThrow(sandbox: SandboxInstance, command: string): Promise<v
 // file and append its tail to the thrown error. Useful for commands whose
 // real diagnostic output goes to a `--log-file` rather than stderr (rclone
 // mount with `--daemon`, the snapshot sync daemon, etc).
-async function execOrThrowWithLog(
-	sandbox: SandboxInstance,
-	command: string,
-	logPath: string,
-): Promise<void> {
+async function execOrThrowWithLog(sandbox: SandboxInstance, command: string, logPath: string): Promise<void> {
 	const result = await sandbox.exec(command);
 	if (result.success) return;
 	let logTail = '';
@@ -409,9 +405,7 @@ export async function ensureWorkspaceReady(ctx: ToolContext): Promise<void> {
 		// only `mountBucket(..., { localBucket: true })` path that has no fly
 		// equivalent and didn't survive DO eviction in production. Log once
 		// so operators see why /workspace is non-persistent in this case.
-		console.warn(
-			'ensureWorkspaceReady: R2 S3-API credentials not configured; /workspace will not be synced to R2.',
-		);
+		console.warn('ensureWorkspaceReady: R2 S3-API credentials not configured; /workspace will not be synced to R2.');
 		return;
 	}
 
@@ -482,7 +476,7 @@ function withFlushWarning(result: ToolExecutionResult, flush: FlushResult): Tool
 	// Append the warning as a trailing text block so it stays visible.
 	return {
 		...result,
-		content: [...result.content, { type: 'text', text: `[workspace flush warning]\n${flush.warning}` }],
+		content: [...result.content, { text: `[workspace flush warning]\n${flush.warning}`, type: 'text' }],
 	};
 }
 
@@ -504,36 +498,36 @@ function formatExecResult(result: Pick<ExecResult, 'exitCode' | 'success' | 'std
 // sandbox_exec
 // ---------------------------------------------------------------------------
 const execInputSchema = {
-	type: 'object',
 	properties: {
-		command: { type: 'string', description: 'Shell command to execute.' },
-		cwd: { type: 'string', description: 'Optional working directory for the command.' },
+		command: { description: 'Shell command to execute.', type: 'string' },
+		cwd: { description: 'Optional working directory for the command.', type: 'string' },
 		env: {
-			type: 'object',
 			additionalProperties: { type: 'string' },
 			description: 'Optional environment variables as key-value strings.',
+			type: 'object',
 		},
-		stdin: { type: 'string', description: 'Optional data to pass via stdin.' },
+		stdin: { description: 'Optional data to pass via stdin.', type: 'string' },
 		timeout: {
-			type: 'integer',
-			minimum: 1000,
 			description: 'Optional timeout in milliseconds (default: no timeout).',
+			minimum: 1000,
+			type: 'integer',
 		},
 	},
 	required: ['command'],
+	type: 'object',
 } as const;
 
 export const sandboxExecTool: Tool = {
 	definition: {
-		name: 'sandbox_exec',
 		description:
 			"Execute a shell command inside the conversation's isolated sandbox. Returns stdout, stderr, exit code, and success status. Use for running scripts, installing packages, compiling code, or any shell-level operation. The sandbox is running the latest Debian testing as root. Use `apt-get` to install packages. Ensure you run `apt-get update` before `apt-get install`. The default working directory is `/workspace`, which is the only directory whose contents persist across sandbox restarts and is visible to the user in the file browser. Files written elsewhere (e.g. `/tmp`, `/root`) are ephemeral and are NOT synced to R2.",
 		inputSchema: execInputSchema,
+		name: 'sandbox_exec',
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
 		const parsed = safeValidate(execArgsSchema, input);
 		if (!parsed.ok) {
-			return { content: `Invalid input: ${parsed.error}`, isError: true, errorCode: 'invalid_input' };
+			return { content: `Invalid input: ${parsed.error}`, errorCode: 'invalid_input', isError: true };
 		}
 		const args = parsed.value;
 		const cwd = args.cwd ?? '/workspace';
@@ -541,7 +535,8 @@ export const sandboxExecTool: Tool = {
 			await ensureWorkspaceReady(ctx);
 			await ensureSshKey(ctx);
 			const sandbox = await getConversationSandbox(ctx);
-			if (ctx.emitToolOutput) {
+			const emitToolOutput = ctx.emitToolOutput;
+			if (emitToolOutput) {
 				// NOTE: ctx.signal is intentionally not forwarded into the
 				// RPC options. AbortSignal serialization over Durable Object
 				// RPC requires the experimental `enable_abortsignal_rpc`
@@ -632,7 +627,7 @@ export const sandboxExecTool: Tool = {
 								if (ev.data) {
 									if (ev.type === 'stdout') stdout += ev.data;
 									else stderr += ev.data;
-									ctx.emitToolOutput!(ev.data);
+									emitToolOutput(ev.data);
 								}
 							} else if (ev.type === 'complete') {
 								exitCode = ev.exitCode;
@@ -669,11 +664,7 @@ export const sandboxExecTool: Tool = {
 					return { content: streamError, isError: true };
 				}
 				if (exitCode === undefined) {
-					const partial = [
-						idledOut
-							? `Exec stream stalled (no output for ${IDLE_MS / 1000}s)`
-							: 'Exec stream ended without completion',
-					];
+					const partial = [idledOut ? `Exec stream stalled (no output for ${IDLE_MS / 1000}s)` : 'Exec stream ended without completion'];
 					if (stdout) partial.push('', '--- stdout ---', stdout);
 					if (stderr) partial.push('', '--- stderr ---', stderr);
 					return { content: partial.join('\n'), isError: true };
@@ -687,7 +678,7 @@ export const sandboxExecTool: Tool = {
 				// snapshot-mode background daemon syncs every 15s, so files
 				// are durable within that window without a tool-boundary
 				// flush.
-				return formatExecResult({ success: exitCode === 0, exitCode, stdout, stderr });
+				return formatExecResult({ exitCode, stderr, stdout, success: exitCode === 0 });
 			}
 			const result = await sandbox.exec(args.command, {
 				cwd,
@@ -710,34 +701,34 @@ export const sandboxExecTool: Tool = {
 // sandbox_run_code
 // ---------------------------------------------------------------------------
 const runCodeInputSchema = {
-	type: 'object',
 	properties: {
-		code: { type: 'string', description: 'Code to execute.' },
+		code: { description: 'Code to execute.', type: 'string' },
 		language: {
-			type: 'string',
-			enum: ['python', 'javascript', 'typescript'],
 			description: 'Language to run (default: python).',
+			enum: ['python', 'javascript', 'typescript'],
+			type: 'string',
 		},
 		timeout: {
-			type: 'integer',
-			minimum: 1000,
 			description: 'Optional timeout in milliseconds (default: 60000).',
+			minimum: 1000,
+			type: 'integer',
 		},
 	},
 	required: ['code'],
+	type: 'object',
 } as const;
 
 export const sandboxRunCodeTool: Tool = {
 	definition: {
-		name: 'sandbox_run_code',
 		description:
 			"Execute Python, JavaScript, or TypeScript code inside the conversation's isolated sandbox. The default execution context is reused for the same language, so variables and imports persist across calls in this conversation. Returns the last expression result, stdout/stderr logs, and any execution errors. Use for data analysis, calculations, or any interpreted code.",
 		inputSchema: runCodeInputSchema,
+		name: 'sandbox_run_code',
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
 		const parsed = safeValidate(runCodeArgsSchema, input);
 		if (!parsed.ok) {
-			return { content: `Invalid input: ${parsed.error}`, isError: true, errorCode: 'invalid_input' };
+			return { content: `Invalid input: ${parsed.error}`, errorCode: 'invalid_input', isError: true };
 		}
 		const args = parsed.value;
 		const language = args.language ?? 'python';
@@ -796,23 +787,23 @@ export const sandboxRunCodeTool: Tool = {
 // sandbox_read_file
 // ---------------------------------------------------------------------------
 const readFileInputSchema = {
-	type: 'object',
 	properties: {
-		path: { type: 'string', description: 'Absolute path of the file to read.' },
+		path: { description: 'Absolute path of the file to read.', type: 'string' },
 	},
 	required: ['path'],
+	type: 'object',
 } as const;
 
 export const sandboxReadFileTool: Tool = {
 	definition: {
-		name: 'sandbox_read_file',
 		description: "Read the contents of a file from the conversation's sandbox filesystem.",
 		inputSchema: readFileInputSchema,
+		name: 'sandbox_read_file',
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
 		const parsed = safeValidate(pathOnlyArgsSchema, input);
 		if (!parsed.ok) {
-			return { content: `Invalid input: ${parsed.error}`, isError: true, errorCode: 'invalid_input' };
+			return { content: `Invalid input: ${parsed.error}`, errorCode: 'invalid_input', isError: true };
 		}
 		const args = parsed.value;
 		try {
@@ -823,7 +814,7 @@ export const sandboxReadFileTool: Tool = {
 				content: file.content,
 				// If the file is base64-encoded, surface that info in the text so the model knows.
 				...(file.encoding === 'base64'
-					? { artifacts: [{ type: 'code' as const, name: args.path.split('/').pop(), language: 'base64', content: file.content }] }
+					? { artifacts: [{ content: file.content, language: 'base64', name: args.path.split('/').pop(), type: 'code' as const }] }
 					: {}),
 			};
 		} catch (e) {
@@ -839,25 +830,25 @@ export const sandboxReadFileTool: Tool = {
 // sandbox_write_file
 // ---------------------------------------------------------------------------
 const writeFileInputSchema = {
-	type: 'object',
 	properties: {
-		path: { type: 'string', description: 'Absolute path of the file to write.' },
-		content: { type: 'string', description: 'File contents as a string.' },
+		content: { description: 'File contents as a string.', type: 'string' },
+		path: { description: 'Absolute path of the file to write.', type: 'string' },
 	},
 	required: ['path', 'content'],
+	type: 'object',
 } as const;
 
 export const sandboxWriteFileTool: Tool = {
 	definition: {
-		name: 'sandbox_write_file',
 		description:
 			"Write (or overwrite) a file in the conversation's sandbox filesystem. Write under `/workspace/` to persist the file across sandbox restarts and surface it in the user's file browser; files written outside `/workspace` are ephemeral and not synced to R2.",
 		inputSchema: writeFileInputSchema,
+		name: 'sandbox_write_file',
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
 		const parsed = safeValidate(writeFileArgsSchema, input);
 		if (!parsed.ok) {
-			return { content: `Invalid input: ${parsed.error}`, isError: true, errorCode: 'invalid_input' };
+			return { content: `Invalid input: ${parsed.error}`, errorCode: 'invalid_input', isError: true };
 		}
 		const args = parsed.value;
 		try {
@@ -879,23 +870,23 @@ export const sandboxWriteFileTool: Tool = {
 // sandbox_delete_file
 // ---------------------------------------------------------------------------
 const deleteFileInputSchema = {
-	type: 'object',
 	properties: {
-		path: { type: 'string', description: 'Absolute path of the file to delete.' },
+		path: { description: 'Absolute path of the file to delete.', type: 'string' },
 	},
 	required: ['path'],
+	type: 'object',
 } as const;
 
 export const sandboxDeleteFileTool: Tool = {
 	definition: {
-		name: 'sandbox_delete_file',
 		description: "Delete a file from the conversation's sandbox filesystem.",
 		inputSchema: deleteFileInputSchema,
+		name: 'sandbox_delete_file',
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
 		const parsed = safeValidate(pathOnlyArgsSchema, input);
 		if (!parsed.ok) {
-			return { content: `Invalid input: ${parsed.error}`, isError: true, errorCode: 'invalid_input' };
+			return { content: `Invalid input: ${parsed.error}`, errorCode: 'invalid_input', isError: true };
 		}
 		const args = parsed.value;
 		try {
@@ -917,28 +908,28 @@ export const sandboxDeleteFileTool: Tool = {
 // sandbox_mkdir
 // ---------------------------------------------------------------------------
 const mkdirInputSchema = {
-	type: 'object',
 	properties: {
-		path: { type: 'string', description: 'Absolute path of the directory to create.' },
+		path: { description: 'Absolute path of the directory to create.', type: 'string' },
 		recursive: {
-			type: 'boolean',
 			description: 'Create parent directories as needed (default: false).',
+			type: 'boolean',
 		},
 	},
 	required: ['path'],
+	type: 'object',
 } as const;
 
 export const sandboxMkdirTool: Tool = {
 	definition: {
-		name: 'sandbox_mkdir',
 		description:
 			"Create a directory in the conversation's sandbox filesystem. Create under `/workspace/` for persistence; directories outside `/workspace` are ephemeral.",
 		inputSchema: mkdirInputSchema,
+		name: 'sandbox_mkdir',
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
 		const parsed = safeValidate(mkdirArgsSchema, input);
 		if (!parsed.ok) {
-			return { content: `Invalid input: ${parsed.error}`, isError: true, errorCode: 'invalid_input' };
+			return { content: `Invalid input: ${parsed.error}`, errorCode: 'invalid_input', isError: true };
 		}
 		const args = parsed.value;
 		try {
@@ -960,23 +951,23 @@ export const sandboxMkdirTool: Tool = {
 // sandbox_exists
 // ---------------------------------------------------------------------------
 const existsInputSchema = {
-	type: 'object',
 	properties: {
-		path: { type: 'string', description: 'Absolute path to check.' },
+		path: { description: 'Absolute path to check.', type: 'string' },
 	},
 	required: ['path'],
+	type: 'object',
 } as const;
 
 export const sandboxExistsTool: Tool = {
 	definition: {
-		name: 'sandbox_exists',
 		description: "Check whether a file or directory exists in the conversation's sandbox filesystem.",
 		inputSchema: existsInputSchema,
+		name: 'sandbox_exists',
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
 		const parsed = safeValidate(pathOnlyArgsSchema, input);
 		if (!parsed.ok) {
-			return { content: `Invalid input: ${parsed.error}`, isError: true, errorCode: 'invalid_input' };
+			return { content: `Invalid input: ${parsed.error}`, errorCode: 'invalid_input', isError: true };
 		}
 		const args = parsed.value;
 		try {
@@ -997,18 +988,18 @@ export const sandboxExistsTool: Tool = {
 // sandbox_create_artifact
 // ---------------------------------------------------------------------------
 const createArtifactInputSchema = {
-	type: 'object',
 	properties: {
-		path: { type: 'string', description: 'Absolute path of the file to turn into an artifact.' },
+		language: { description: 'Optional language hint for code artifacts (default: auto-detected).', type: 'string' },
+		name: { description: 'Optional display name for the artifact (default: filename).', type: 'string' },
+		path: { description: 'Absolute path of the file to turn into an artifact.', type: 'string' },
 		type: {
-			type: 'string',
-			enum: ['code', 'markdown', 'html', 'svg', 'mermaid'],
 			description: 'Artifact type (default: auto-detected from file extension).',
+			enum: ['code', 'markdown', 'html', 'svg', 'mermaid'],
+			type: 'string',
 		},
-		name: { type: 'string', description: 'Optional display name for the artifact (default: filename).' },
-		language: { type: 'string', description: 'Optional language hint for code artifacts (default: auto-detected).' },
 	},
 	required: ['path'],
+	type: 'object',
 } as const;
 
 function inferArtifactType(path: string): 'code' | 'markdown' | 'html' | 'svg' | 'mermaid' {
@@ -1082,15 +1073,15 @@ function inferLanguage(path: string): string | undefined {
 
 export const sandboxCreateArtifactTool: Tool = {
 	definition: {
-		name: 'sandbox_create_artifact',
 		description:
 			'Read a file from the sandbox and expose it as a visual artifact in the conversation. Use this to share code, HTML pages, SVG images, markdown documents, or mermaid diagrams with the user. The artifact will appear in the side panel for easy viewing.',
 		inputSchema: createArtifactInputSchema,
+		name: 'sandbox_create_artifact',
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
 		const parsed = safeValidate(createArtifactArgsSchema, input);
 		if (!parsed.ok) {
-			return { content: `Invalid input: ${parsed.error}`, isError: true, errorCode: 'invalid_input' };
+			return { content: `Invalid input: ${parsed.error}`, errorCode: 'invalid_input', isError: true };
 		}
 		const args = parsed.value;
 		try {
@@ -1102,15 +1093,15 @@ export const sandboxCreateArtifactTool: Tool = {
 			const language = args.language ?? (type === 'code' ? inferLanguage(args.path) : undefined);
 
 			return {
-				content: `Created artifact from ${args.path}`,
 				artifacts: [
 					{
-						type,
 						name,
+						type,
 						...(language ? { language } : {}),
 						content: file.content,
 					},
 				],
+				content: `Created artifact from ${args.path}`,
 			};
 		} catch (e) {
 			return {
@@ -1130,10 +1121,10 @@ export const sandboxCreateArtifactTool: Tool = {
 // see a text fallback steering the agent to existing sandbox tools.
 
 const IMAGE_EXTENSIONS: Record<string, string> = {
-	png: 'image/png',
-	jpg: 'image/jpeg',
-	jpeg: 'image/jpeg',
 	gif: 'image/gif',
+	jpeg: 'image/jpeg',
+	jpg: 'image/jpeg',
+	png: 'image/png',
 	webp: 'image/webp',
 };
 
@@ -1143,14 +1134,14 @@ const IMAGE_EXTENSIONS: Record<string, string> = {
 const MAX_IMAGE_BYTES = 3584 * 1024;
 
 const loadImageInputSchema = {
-	type: 'object',
 	properties: {
 		path: {
-			type: 'string',
 			description: 'Absolute path under /workspace, e.g. /workspace/uploads/foo.png.',
+			type: 'string',
 		},
 	},
 	required: ['path'],
+	type: 'object',
 } as const;
 
 export type SandboxLoadImageDeps = {
@@ -1173,22 +1164,22 @@ function bytesToBase64(bytes: Uint8Array): string {
 export function createSandboxLoadImageTool(deps: SandboxLoadImageDeps): Tool {
 	return {
 		definition: {
-			name: 'sandbox_load_image',
 			description:
 				"Load an image from the conversation's /workspace into the model's context as a vision-readable image. Supported formats: PNG, JPEG, GIF, WEBP. The current model must accept image input — for non-vision models, this tool returns text guidance pointing you at sandbox_read_file or sandbox_exec instead. Images larger than 3.5 MB are automatically resized when the image processing service is configured; otherwise use sandbox_exec (e.g. ImageMagick) to resize before loading.",
 			inputSchema: loadImageInputSchema,
+			name: 'sandbox_load_image',
 		},
 		async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
 			const parsed = safeValidate(pathOnlyArgsSchema, input);
 			if (!parsed.ok) {
-				return { content: `Invalid input: ${parsed.error}`, isError: true, errorCode: 'invalid_input' };
+				return { content: `Invalid input: ${parsed.error}`, errorCode: 'invalid_input', isError: true };
 			}
 			const path = parsed.value.path;
 			if (!path.startsWith('/workspace/')) {
 				return {
 					content: 'Path must start with /workspace/.',
-					isError: true,
 					errorCode: 'invalid_input',
+					isError: true,
 				};
 			}
 			// Defense-in-depth: reject `..` segments so the R2 key construction
@@ -1197,8 +1188,8 @@ export function createSandboxLoadImageTool(deps: SandboxLoadImageDeps): Tool {
 			if (path.split('/').includes('..')) {
 				return {
 					content: 'Path must not contain ".." segments.',
-					isError: true,
 					errorCode: 'invalid_input',
+					isError: true,
 				};
 			}
 			const ext = path.split('.').pop()?.toLowerCase() ?? '';
@@ -1206,8 +1197,8 @@ export function createSandboxLoadImageTool(deps: SandboxLoadImageDeps): Tool {
 			if (!mimeType) {
 				return {
 					content: `Unsupported image extension: .${ext}. Supported: ${Object.keys(IMAGE_EXTENSIONS).join(', ')}. For non-image files, use sandbox_read_file or sandbox_exec.`,
-					isError: true,
 					errorCode: 'invalid_input',
+					isError: true,
 				};
 			}
 
@@ -1232,8 +1223,8 @@ export function createSandboxLoadImageTool(deps: SandboxLoadImageDeps): Tool {
 			if (!obj) {
 				return {
 					content: `File not found: ${path}`,
-					isError: true,
 					errorCode: 'not_found',
+					isError: true,
 				};
 			}
 			const size = obj.size;
@@ -1254,25 +1245,25 @@ export function createSandboxLoadImageTool(deps: SandboxLoadImageDeps): Tool {
 			if (ctx.env.IMAGES) {
 				try {
 					const resized = await ctx.env.IMAGES.input(obj.body)
-						.transform({ width: 1568, height: 1568, fit: 'scale-down' })
+						.transform({ fit: 'scale-down', height: 1568, width: 1568 })
 						.output({ format: 'image/jpeg' });
 					const resizedBytes = new Uint8Array(await resized.response().arrayBuffer());
 					const resizedBase64 = bytesToBase64(resizedBytes);
 					return {
 						content: [
 							{
-								type: 'text',
 								text: `Loaded ${filename} (image/jpeg, ${resizedBytes.length} bytes) into context.`,
+								type: 'text',
 							},
 							{
-								type: 'image',
-								mimeType: 'image/jpeg',
 								data: resizedBase64,
+								mimeType: 'image/jpeg',
+								type: 'image',
 							},
 						],
 					};
 				} catch (err) {
-					console.error('sandbox_load_image: IMAGES.transform failed', { err, size, mb, path });
+					console.error('sandbox_load_image: IMAGES.transform failed', { err, mb, path, size });
 					const message = err instanceof Error ? err.message : String(err);
 					return {
 						content: `Failed to resize ${path} (${mb} MB) via the IMAGES binding: ${message}.`,
@@ -1293,13 +1284,13 @@ export function createSandboxLoadImageTool(deps: SandboxLoadImageDeps): Tool {
 			return {
 				content: [
 					{
-						type: 'text',
 						text: `Loaded ${filename} (${mimeType}, ${size} bytes) into context.`,
+						type: 'text',
 					},
 					{
-						type: 'image',
-						mimeType,
 						data: base64,
+						mimeType,
+						type: 'image',
 					},
 				],
 			};

@@ -1,17 +1,13 @@
 import { env, runInDurableObject } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import {
-	createSchedule,
-	listSchedules,
-	nextScheduledRun,
-	type Schedule,
-} from '../schedules';
-import { setSetting } from '../settings';
-import { createProvider } from '../providers/store';
-import { createModel } from '../providers/models';
-import { getSchedulerStub, getConversationStub } from './index';
+import { assertDefined } from '../../../../test/assert-defined';
 import { textTurn } from '../../../../test/fakes/FakeLLM';
-import { setOverride, readState, waitForState } from './conversation/_test-helpers';
+import { createModel } from '../providers/models';
+import { createProvider } from '../providers/store';
+import { createSchedule, listSchedules, nextScheduledRun, type Schedule } from '../schedules';
+import { setSetting } from '../settings';
+import { readState, setOverride, waitForState } from './conversation/_test-helpers';
+import { getConversationStub, getSchedulerStub } from './index';
 import type SchedulerDurableObject from './SchedulerDurableObject';
 
 afterEach(async () => {
@@ -46,7 +42,7 @@ async function bump(): Promise<void> {
 }
 
 async function seedFakeModel(modelGlobalId = 'fake/model'): Promise<void> {
-	await createProvider(env, { id: 'fake', type: 'openai_compatible', apiKey: 'k' });
+	await createProvider(env, { apiKey: 'k', id: 'fake', type: 'openai_compatible' });
 	await createModel(env, 'fake', { id: 'model', name: 'Fake Model' });
 	await setSetting(env, 'default_model', modelGlobalId);
 }
@@ -61,12 +57,12 @@ beforeEach(async () => {
 describe('SchedulerDurableObject — bump()', () => {
 	it('sets an alarm at the next scheduled run', async () => {
 		const scheduled = await createSchedule(env, {
+			dayOfWeek: null,
 			name: 's',
 			prompt: 'p',
 			recurrence: 'daily',
-			timeOfDay: 8 * 60,
-			dayOfWeek: null,
 			targetConversationId: null,
+			timeOfDay: 8 * 60,
 		});
 		await bump();
 		const alarm = await readAlarm();
@@ -81,12 +77,12 @@ describe('SchedulerDurableObject — bump()', () => {
 
 	it('clears the alarm when no enabled schedules exist', async () => {
 		await createSchedule(env, {
+			dayOfWeek: null,
 			name: 's',
 			prompt: 'p',
 			recurrence: 'daily',
-			timeOfDay: 8 * 60,
-			dayOfWeek: null,
 			targetConversationId: null,
+			timeOfDay: 8 * 60,
 		});
 		await bump();
 		expect(await readAlarm()).not.toBeNull();
@@ -100,31 +96,32 @@ describe('SchedulerDurableObject — bump()', () => {
 		// Set next_run_at three days in the future.
 		const future = Date.now() + 3 * 24 * 60 * 60 * 1000;
 		await createSchedule(env, {
+			dayOfWeek: null,
 			name: 'far',
 			prompt: 'p',
 			recurrence: 'daily',
-			timeOfDay: 0,
-			dayOfWeek: null,
 			targetConversationId: null,
+			timeOfDay: 0,
 		});
 		await env.DB.prepare('UPDATE schedules SET next_run_at = ?').bind(future).run();
 		await bump();
 		const alarm = await readAlarm();
 		expect(alarm).not.toBeNull();
+		assertDefined(alarm);
 		// Should be within 24h+slop of now.
-		expect(alarm!).toBeLessThanOrEqual(Date.now() + 24 * 60 * 60 * 1000 + 5_000);
+		expect(alarm).toBeLessThanOrEqual(Date.now() + 24 * 60 * 60 * 1000 + 5_000);
 	});
 });
 
 describe('SchedulerDurableObject — alarm()', () => {
 	async function dueSchedule(input: Partial<Parameters<typeof createSchedule>[1]> = {}): Promise<Schedule> {
 		const created = await createSchedule(env, {
+			dayOfWeek: null,
 			name: 'morning',
 			prompt: 'check on overnight emails',
 			recurrence: 'daily',
-			timeOfDay: 0,
-			dayOfWeek: null,
 			targetConversationId: null,
+			timeOfDay: 0,
 			...input,
 		});
 		// Force it overdue.
@@ -139,19 +136,15 @@ describe('SchedulerDurableObject — alarm()', () => {
 		const created = await dueSchedule();
 		await fireAlarm();
 		// A new conversation should now exist.
-		const conversations = await env.DB.prepare('SELECT id FROM conversations')
-			.all<{ id: string }>();
+		const conversations = await env.DB.prepare('SELECT id FROM conversations').all<{ id: string }>();
 		expect(conversations.results?.length).toBe(1);
-		const convoId = conversations.results![0].id;
+		assertDefined(conversations.results);
+		const convoId = conversations.results[0].id;
 		// User message is queued (assistant generation is in-flight against the
 		// real router; we don't stub that here because the schedule path doesn't
 		// require deterministic completion). Just check the user message landed.
 		const stub = getConversationStub(env, convoId);
-		await waitForState(
-			stub,
-			(s) => s.messages.some((m) => m.role === 'user' && m.content === created.prompt),
-			{ timeoutMs: 5000 },
-		);
+		await waitForState(stub, (s) => s.messages.some((m) => m.role === 'user' && m.content === created.prompt), { timeoutMs: 5000 });
 		// next_run_at should have advanced.
 		const list = await listSchedules(env);
 		expect(list[0].lastRunAt).not.toBeNull();
@@ -163,9 +156,7 @@ describe('SchedulerDurableObject — alarm()', () => {
 		// Pre-create the target conversation and override its LLM so the
 		// generation completes deterministically.
 		const targetId = crypto.randomUUID();
-		await env.DB.prepare(
-			"INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, 'pinned', ?, ?)",
-		)
+		await env.DB.prepare("INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, 'pinned', ?, ?)")
 			.bind(targetId, Date.now(), Date.now())
 			.run();
 		const targetStub = getConversationStub(env, targetId);
@@ -174,11 +165,9 @@ describe('SchedulerDurableObject — alarm()', () => {
 		await dueSchedule({ targetConversationId: targetId });
 		await fireAlarm();
 
-		const state = await waitForState(
-			targetStub,
-			(s) => s.messages.some((m) => m.role === 'assistant' && m.status === 'complete'),
-			{ timeoutMs: 5000 },
-		);
+		const state = await waitForState(targetStub, (s) => s.messages.some((m) => m.role === 'assistant' && m.status === 'complete'), {
+			timeoutMs: 5000,
+		});
 		const userMsg = state.messages.find((m) => m.role === 'user');
 		expect(userMsg?.content).toBe('check on overnight emails');
 		expect(state.messages.find((m) => m.role === 'assistant')?.content).toBe('ok');
@@ -190,8 +179,7 @@ describe('SchedulerDurableObject — alarm()', () => {
 		// message was posted into it instead.
 		await dueSchedule();
 		await fireAlarm();
-		const conversations = await env.DB.prepare('SELECT id FROM conversations')
-			.all<{ id: string }>();
+		const conversations = await env.DB.prepare('SELECT id FROM conversations').all<{ id: string }>();
 		// The conversation row is created up-front; its DO should be empty.
 		if (conversations.results && conversations.results.length > 0) {
 			const stub = getConversationStub(env, conversations.results[0].id);
@@ -206,18 +194,14 @@ describe('SchedulerDurableObject — alarm()', () => {
 	it('falls through silently when the target DO is busy', async () => {
 		await seedFakeModel();
 		const targetId = crypto.randomUUID();
-		await env.DB.prepare(
-			"INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, 'busy', ?, ?)",
-		)
+		await env.DB.prepare("INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, 'busy', ?, ?)")
 			.bind(targetId, Date.now(), Date.now())
 			.run();
 		const targetStub = getConversationStub(env, targetId);
 		// Override LLM with a turn that emits a single text_delta but never
 		// signals `done` — the DO stays in `inProgress`, so the next
 		// addUserMessage hits the `busy` branch.
-		await setOverride(targetStub, [
-			[{ type: 'text_delta', delta: 'partial' }],
-		]);
+		await setOverride(targetStub, [[{ delta: 'partial', type: 'text_delta' }]]);
 
 		await dueSchedule({ targetConversationId: targetId });
 		await fireAlarm();
@@ -241,6 +225,7 @@ describe('SchedulerDurableObject — alarm()', () => {
 		// next day's run time.
 		const alarm = await readAlarm();
 		expect(alarm).not.toBeNull();
-		expect(alarm!).toBeGreaterThan(Date.now());
+		assertDefined(alarm);
+		expect(alarm).toBeGreaterThan(Date.now());
 	});
 });

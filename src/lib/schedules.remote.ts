@@ -1,15 +1,10 @@
-import { form, getRequestEvent } from '$app/server';
 import { error, redirect } from '@sveltejs/kit';
 import { z } from 'zod';
-import {
-	bumpScheduleNow,
-	createSchedule,
-	deleteSchedule,
-	setScheduleEnabled,
-} from '$lib/server/schedules';
-import { getSchedulerStub } from '$lib/server/durable_objects';
+import { form, getRequestEvent } from '$app/server';
 import { CONVERSATION_ID_PATTERN } from '$lib/conversation-id';
+import { getSchedulerStub } from '$lib/server/durable_objects';
 import { positiveIntFromString, trimmedNonEmpty } from '$lib/server/remote-schemas';
+import { bumpScheduleNow, createSchedule, deleteSchedule, setScheduleEnabled } from '$lib/server/schedules';
 
 function getEnv(): Env {
 	const event = getRequestEvent();
@@ -37,14 +32,14 @@ async function bumpScheduler(env: Env): Promise<void> {
 
 export const addSchedule = form(
 	z.object({
+		day_of_week: z.string().optional().default(''),
 		name: trimmedNonEmpty('Name is required'),
 		prompt: trimmedNonEmpty('Prompt is required'),
 		recurrence: z.enum(['hourly', 'daily', 'weekly'], {
 			errorMap: () => ({ message: 'Recurrence must be hourly, daily, or weekly' }),
 		}),
-		time_of_day: z.string().optional().default(''),
-		day_of_week: z.string().optional().default(''),
 		target_conversation_id: z.string().optional().default(''),
+		time_of_day: z.string().optional().default(''),
 	}),
 	async ({ name, prompt, recurrence, time_of_day, day_of_week, target_conversation_id }) => {
 		const env = getEnv();
@@ -54,12 +49,12 @@ export const addSchedule = form(
 		const targetId = targetRaw && CONVERSATION_ID_PATTERN.test(targetRaw) ? targetRaw : null;
 		try {
 			await createSchedule(env, {
+				dayOfWeek: recurrence === 'weekly' ? (Number.isFinite(dow) ? (dow + 7) % 7 : 1) : null,
 				name,
 				prompt,
 				recurrence,
-				timeOfDay: recurrence === 'hourly' ? null : tod ?? 8 * 60,
-				dayOfWeek: recurrence === 'weekly' ? (Number.isFinite(dow) ? ((dow + 7) % 7) : 1) : null,
 				targetConversationId: targetId,
+				timeOfDay: recurrence === 'hourly' ? null : (tod ?? 8 * 60),
 			});
 		} catch (e) {
 			error(400, e instanceof Error ? e.message : String(e));
@@ -69,32 +64,23 @@ export const addSchedule = form(
 	},
 );
 
-export const removeSchedule = form(
-	z.object({ id: positiveIntFromString }),
-	async ({ id }) => {
-		const env = getEnv();
-		await deleteSchedule(env, id);
-		await bumpScheduler(env);
-		redirect(303, '/settings');
-	},
-);
+export const removeSchedule = form(z.object({ id: positiveIntFromString }), async ({ id }) => {
+	const env = getEnv();
+	await deleteSchedule(env, id);
+	await bumpScheduler(env);
+	redirect(303, '/settings');
+});
 
-export const toggleSchedule = form(
-	z.object({ id: positiveIntFromString, enabled: z.string().optional() }),
-	async ({ id, enabled }) => {
-		const env = getEnv();
-		await setScheduleEnabled(env, id, enabled === 'true');
-		await bumpScheduler(env);
-		redirect(303, '/settings');
-	},
-);
+export const toggleSchedule = form(z.object({ enabled: z.string().optional(), id: positiveIntFromString }), async ({ id, enabled }) => {
+	const env = getEnv();
+	await setScheduleEnabled(env, id, enabled === 'true');
+	await bumpScheduler(env);
+	redirect(303, '/settings');
+});
 
-export const runScheduleNow = form(
-	z.object({ id: positiveIntFromString }),
-	async ({ id }) => {
-		const env = getEnv();
-		await bumpScheduleNow(env, id);
-		await bumpScheduler(env);
-		redirect(303, '/settings');
-	},
-);
+export const runScheduleNow = form(z.object({ id: positiveIntFromString }), async ({ id }) => {
+	const env = getEnv();
+	await bumpScheduleNow(env, id);
+	await bumpScheduler(env);
+	redirect(303, '/settings');
+});

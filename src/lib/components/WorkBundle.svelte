@@ -1,8 +1,8 @@
 <script lang="ts">
-	import type { ToolResultPart } from '$lib/types/conversation';
-	import type { Bundle } from './parts';
-	import MessagePart from './MessagePart.svelte';
 	import { ChevronRight } from 'lucide-svelte';
+	import type { ToolResultPart } from '$lib/types/conversation';
+	import MessagePart from './MessagePart.svelte';
+	import type { Bundle } from './parts';
 
 	let {
 		group,

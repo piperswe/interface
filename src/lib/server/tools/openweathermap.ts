@@ -12,50 +12,45 @@ const FORECAST_URL = 'https://api.openweathermap.org/data/2.5/forecast';
 
 const unitsZ = z.enum(['standard', 'metric', 'imperial']);
 const geocodeArgs = z.object({
-	query: z.string(),
 	limit: z.number().optional(),
+	query: z.string(),
 });
 const reverseGeocodeArgs = z.object({
 	lat: z.number(),
-	lon: z.number(),
 	limit: z.number().optional(),
+	lon: z.number(),
 });
 const currentArgs = z.object({
+	lang: z.string().optional(),
 	lat: z.number(),
 	lon: z.number(),
 	units: unitsZ.optional(),
-	lang: z.string().optional(),
 });
 const forecastArgs = z.object({
+	lang: z.string().optional(),
 	lat: z.number(),
+	limit: z.number().optional(),
 	lon: z.number(),
 	units: unitsZ.optional(),
-	lang: z.string().optional(),
-	limit: z.number().optional(),
 });
 
 const unitsSchema = {
-	type: 'string',
+	description: 'Unit system: "standard" (Kelvin, m/s), "metric" (Celsius, m/s), or "imperial" (Fahrenheit, mph). Defaults to "metric".',
 	enum: ['standard', 'metric', 'imperial'],
-	description:
-		'Unit system: "standard" (Kelvin, m/s), "metric" (Celsius, m/s), or "imperial" (Fahrenheit, mph). Defaults to "metric".',
+	type: 'string',
 } as const;
 
 const langSchema = {
+	description: 'ISO 639-1 language code for localized weather descriptions (e.g. "en", "es", "fr"). Defaults to "en".',
 	type: 'string',
-	description:
-		'ISO 639-1 language code for localized weather descriptions (e.g. "en", "es", "fr"). Defaults to "en".',
 } as const;
 
 function ok(content: unknown): ToolExecutionResult {
 	return { content: typeof content === 'string' ? content : JSON.stringify(content, null, 2) };
 }
 
-function err(
-	message: string,
-	errorCode: 'invalid_input' | 'execution_failure' = 'execution_failure',
-): ToolExecutionResult {
-	return { content: message, isError: true, errorCode };
+function err(message: string, errorCode: 'invalid_input' | 'execution_failure' = 'execution_failure'): ToolExecutionResult {
+	return { content: message, errorCode, isError: true };
 }
 
 async function callOpenWeather(
@@ -71,7 +66,7 @@ async function callOpenWeather(
 	try {
 		res = await fetch(u.toString(), { signal });
 	} catch (e) {
-		return { ok: false, error: e instanceof Error ? e.message : String(e) };
+		return { error: e instanceof Error ? e.message : String(e), ok: false };
 	}
 	let body: unknown = null;
 	try {
@@ -84,9 +79,9 @@ async function callOpenWeather(
 			body && typeof body === 'object' && 'message' in body
 				? String((body as { message: unknown }).message)
 				: `HTTP ${res.status} ${res.statusText}`;
-		return { ok: false, error: `OpenWeatherMap error: ${message}` };
+		return { error: `OpenWeatherMap error: ${message}`, ok: false };
 	}
-	return { ok: true, data: body };
+	return { data: body, ok: true };
 }
 
 type GeocodeHit = {
@@ -101,47 +96,42 @@ type GeocodeHit = {
 function geocodeTool(apiKey: string): Tool {
 	return {
 		definition: {
-			name: 'openweather_geocode',
 			description:
-				'Resolve a free-text location (city name, optionally with state/country) into geographic coordinates using OpenWeatherMap\'s geocoding API. Returns up to `limit` candidate places with lat/lon, country, and state. Use this first to obtain coordinates for the other openweather_* tools.',
+				"Resolve a free-text location (city name, optionally with state/country) into geographic coordinates using OpenWeatherMap's geocoding API. Returns up to `limit` candidate places with lat/lon, country, and state. Use this first to obtain coordinates for the other openweather_* tools.",
 			inputSchema: {
-				type: 'object',
 				properties: {
+					limit: {
+						description: 'Maximum number of candidate locations to return. Defaults to 5.',
+						maximum: 5,
+						minimum: 1,
+						type: 'integer',
+					},
 					query: {
-						type: 'string',
 						description:
 							'Location to look up. Free text "city", "city,state", or "city,state,country" (ISO 3166 country code). Example: "Austin,TX,US".',
-					},
-					limit: {
-						type: 'integer',
-						minimum: 1,
-						maximum: 5,
-						description: 'Maximum number of candidate locations to return. Defaults to 5.',
+						type: 'string',
 					},
 				},
 				required: ['query'],
+				type: 'object',
 			},
+			name: 'openweather_geocode',
 		},
 		async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
 			const parsed = safeValidate(geocodeArgs, input);
 			if (!parsed.ok) return err(`Invalid input: ${parsed.error}`, 'invalid_input');
 			const args = parsed.value;
 			const limit = Math.min(Math.max(args.limit ?? 5, 1), 5);
-			const result = await callOpenWeather(
-				GEOCODE_URL,
-				{ q: args.query, limit: String(limit) },
-				apiKey,
-				ctx.signal,
-			);
+			const result = await callOpenWeather(GEOCODE_URL, { limit: String(limit), q: args.query }, apiKey, ctx.signal);
 			if (!result.ok) return err(result.error);
 			const hits = (result.data as GeocodeHit[] | null) ?? [];
 			if (hits.length === 0) return ok(`No locations matched "${args.query}".`);
 			return ok(
 				hits.map((h) => ({
-					name: h.name,
+					country: h.country,
 					lat: h.lat,
 					lon: h.lon,
-					country: h.country,
+					name: h.name,
 					state: h.state,
 				})),
 			);
@@ -152,23 +142,23 @@ function geocodeTool(apiKey: string): Tool {
 function reverseGeocodeTool(apiKey: string): Tool {
 	return {
 		definition: {
-			name: 'openweather_reverse_geocode',
 			description:
-				'Reverse-geocode latitude/longitude into nearby place names using OpenWeatherMap\'s geocoding API. Useful for labeling coordinates returned by other tools.',
+				"Reverse-geocode latitude/longitude into nearby place names using OpenWeatherMap's geocoding API. Useful for labeling coordinates returned by other tools.",
 			inputSchema: {
-				type: 'object',
 				properties: {
-					lat: { type: 'number', minimum: -90, maximum: 90, description: 'Latitude in decimal degrees.' },
-					lon: { type: 'number', minimum: -180, maximum: 180, description: 'Longitude in decimal degrees.' },
+					lat: { description: 'Latitude in decimal degrees.', maximum: 90, minimum: -90, type: 'number' },
 					limit: {
-						type: 'integer',
-						minimum: 1,
-						maximum: 5,
 						description: 'Maximum number of candidate places to return. Defaults to 1.',
+						maximum: 5,
+						minimum: 1,
+						type: 'integer',
 					},
+					lon: { description: 'Longitude in decimal degrees.', maximum: 180, minimum: -180, type: 'number' },
 				},
 				required: ['lat', 'lon'],
+				type: 'object',
 			},
+			name: 'openweather_reverse_geocode',
 		},
 		async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
 			const parsed = safeValidate(reverseGeocodeArgs, input);
@@ -177,7 +167,7 @@ function reverseGeocodeTool(apiKey: string): Tool {
 			const limit = Math.min(Math.max(args.limit ?? 1, 1), 5);
 			const result = await callOpenWeather(
 				REVERSE_GEOCODE_URL,
-				{ lat: String(args.lat), lon: String(args.lon), limit: String(limit) },
+				{ lat: String(args.lat), limit: String(limit), lon: String(args.lon) },
 				apiKey,
 				ctx.signal,
 			);
@@ -186,10 +176,10 @@ function reverseGeocodeTool(apiKey: string): Tool {
 			if (hits.length === 0) return ok(`No places found near (${args.lat}, ${args.lon}).`);
 			return ok(
 				hits.map((h) => ({
-					name: h.name,
+					country: h.country,
 					lat: h.lat,
 					lon: h.lon,
-					country: h.country,
+					name: h.name,
 					state: h.state,
 				})),
 			);
@@ -227,19 +217,19 @@ function summarizeWeatherEntries(weather: CurrentWeatherResponse['weather']): st
 function currentWeatherTool(apiKey: string): Tool {
 	return {
 		definition: {
-			name: 'openweather_current',
 			description:
 				'Get current weather conditions for a location by latitude/longitude using OpenWeatherMap. Returns temperature, feels-like, humidity, wind, conditions summary, and sunrise/sunset times. Use openweather_geocode first if you only have a place name.',
 			inputSchema: {
-				type: 'object',
 				properties: {
-					lat: { type: 'number', minimum: -90, maximum: 90, description: 'Latitude in decimal degrees.' },
-					lon: { type: 'number', minimum: -180, maximum: 180, description: 'Longitude in decimal degrees.' },
-					units: unitsSchema,
 					lang: langSchema,
+					lat: { description: 'Latitude in decimal degrees.', maximum: 90, minimum: -90, type: 'number' },
+					lon: { description: 'Longitude in decimal degrees.', maximum: 180, minimum: -180, type: 'number' },
+					units: unitsSchema,
 				},
 				required: ['lat', 'lon'],
+				type: 'object',
 			},
+			name: 'openweather_current',
 		},
 		async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
 			const parsed = safeValidate(currentArgs, input);
@@ -249,10 +239,10 @@ function currentWeatherTool(apiKey: string): Tool {
 			const result = await callOpenWeather(
 				CURRENT_URL,
 				{
+					lang: args.lang ?? 'en',
 					lat: String(args.lat),
 					lon: String(args.lon),
 					units,
-					lang: args.lang ?? 'en',
 				},
 				apiKey,
 				ctx.signal,
@@ -260,31 +250,31 @@ function currentWeatherTool(apiKey: string): Tool {
 			if (!result.ok) return err(result.error);
 			const data = result.data as CurrentWeatherResponse;
 			return ok({
+				cloudiness_percent: data.clouds?.all,
+				conditions: summarizeWeatherEntries(data.weather),
+				feels_like: data.main?.feels_like,
+				humidity_percent: data.main?.humidity,
 				location: {
-					name: data.name,
 					country: data.sys?.country,
 					lat: data.coord?.lat,
 					lon: data.coord?.lon,
+					name: data.name,
 					timezone_offset_seconds: data.timezone,
 				},
 				observed_at_unix: data.dt,
-				conditions: summarizeWeatherEntries(data.weather),
-				temperature: data.main?.temp,
-				feels_like: data.main?.feels_like,
-				temp_min: data.main?.temp_min,
-				temp_max: data.main?.temp_max,
-				humidity_percent: data.main?.humidity,
 				pressure_hpa: data.main?.pressure,
-				wind_speed: data.wind?.speed,
-				wind_deg: data.wind?.deg,
-				wind_gust: data.wind?.gust,
-				cloudiness_percent: data.clouds?.all,
-				visibility_meters: data.visibility,
 				rain_mm: data.rain?.['1h'] ?? data.rain?.['3h'],
 				snow_mm: data.snow?.['1h'] ?? data.snow?.['3h'],
 				sunrise_unix: data.sys?.sunrise,
 				sunset_unix: data.sys?.sunset,
+				temp_max: data.main?.temp_max,
+				temp_min: data.main?.temp_min,
+				temperature: data.main?.temp,
 				units,
+				visibility_meters: data.visibility,
+				wind_deg: data.wind?.deg,
+				wind_gust: data.wind?.gust,
+				wind_speed: data.wind?.speed,
 			});
 		},
 	};
@@ -315,26 +305,25 @@ type ForecastResponse = {
 function forecastTool(apiKey: string): Tool {
 	return {
 		definition: {
-			name: 'openweather_forecast',
 			description:
 				'5-day / 3-hour weather forecast for a location by latitude/longitude using OpenWeatherMap. Returns up to 40 forecast entries spaced 3 hours apart. Pass `limit` to cap the count for a more compact response.',
 			inputSchema: {
-				type: 'object',
 				properties: {
-					lat: { type: 'number', minimum: -90, maximum: 90, description: 'Latitude in decimal degrees.' },
-					lon: { type: 'number', minimum: -180, maximum: 180, description: 'Longitude in decimal degrees.' },
-					units: unitsSchema,
 					lang: langSchema,
+					lat: { description: 'Latitude in decimal degrees.', maximum: 90, minimum: -90, type: 'number' },
 					limit: {
-						type: 'integer',
-						minimum: 1,
+						description: 'Maximum number of 3-hour forecast entries to return (most recent first). Defaults to 16 (~2 days).',
 						maximum: 40,
-						description:
-							'Maximum number of 3-hour forecast entries to return (most recent first). Defaults to 16 (~2 days).',
+						minimum: 1,
+						type: 'integer',
 					},
+					lon: { description: 'Longitude in decimal degrees.', maximum: 180, minimum: -180, type: 'number' },
+					units: unitsSchema,
 				},
 				required: ['lat', 'lon'],
+				type: 'object',
 			},
+			name: 'openweather_forecast',
 		},
 		async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
 			const parsed = safeValidate(forecastArgs, input);
@@ -345,11 +334,11 @@ function forecastTool(apiKey: string): Tool {
 			const result = await callOpenWeather(
 				FORECAST_URL,
 				{
+					cnt: String(limit),
+					lang: args.lang ?? 'en',
 					lat: String(args.lat),
 					lon: String(args.lon),
 					units,
-					lang: args.lang ?? 'en',
-					cnt: String(limit),
 				},
 				apiKey,
 				ctx.signal,
@@ -357,34 +346,34 @@ function forecastTool(apiKey: string): Tool {
 			if (!result.ok) return err(result.error);
 			const data = result.data as ForecastResponse;
 			const entries = (data.list ?? []).map((e) => ({
-				time_unix: e.dt,
-				time_iso: e.dt_txt,
+				cloudiness_percent: e.clouds.all,
 				conditions: summarizeWeatherEntries(e.weather),
-				temperature: e.main.temp,
 				feels_like: e.main.feels_like,
 				humidity_percent: e.main.humidity,
 				pressure_hpa: e.main.pressure,
-				wind_speed: e.wind.speed,
-				wind_deg: e.wind.deg,
-				wind_gust: e.wind.gust,
-				cloudiness_percent: e.clouds.all,
 				probability_of_precipitation: e.pop,
 				rain_mm_3h: e.rain?.['3h'],
 				snow_mm_3h: e.snow?.['3h'],
+				temperature: e.main.temp,
+				time_iso: e.dt_txt,
+				time_unix: e.dt,
+				wind_deg: e.wind.deg,
+				wind_gust: e.wind.gust,
+				wind_speed: e.wind.speed,
 			}));
 			return ok({
+				count: entries.length,
+				entries,
 				location: {
-					name: data.city?.name,
 					country: data.city?.country,
 					lat: data.city?.coord?.lat,
 					lon: data.city?.coord?.lon,
-					timezone_offset_seconds: data.city?.timezone,
+					name: data.city?.name,
 					sunrise_unix: data.city?.sunrise,
 					sunset_unix: data.city?.sunset,
+					timezone_offset_seconds: data.city?.timezone,
 				},
 				units,
-				count: entries.length,
-				entries,
 			});
 		},
 	};
@@ -393,10 +382,5 @@ function forecastTool(apiKey: string): Tool {
 // Returns every OpenWeatherMap tool. The caller decides whether to register
 // them based on whether OPENWEATHERMAP_KEY is configured.
 export function createOpenWeatherMapTools(apiKey: string): Tool[] {
-	return [
-		geocodeTool(apiKey),
-		reverseGeocodeTool(apiKey),
-		currentWeatherTool(apiKey),
-		forecastTool(apiKey),
-	];
+	return [geocodeTool(apiKey), reverseGeocodeTool(apiKey), currentWeatherTool(apiKey), forecastTool(apiKey)];
 }

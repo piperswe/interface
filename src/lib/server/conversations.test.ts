@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:test';
 import { afterEach, describe, expect, it } from 'vitest';
+import { assertDefined } from '../../../test/assert-defined';
 import {
 	archiveConversation,
 	createConversation,
@@ -21,9 +22,10 @@ describe('conversations', () => {
 
 		const row = await getConversation(env, id);
 		expect(row).not.toBeNull();
-		expect(row!.id).toBe(id);
-		expect(row!.title).toBe('New conversation');
-		expect(row!.archived_at).toBeNull();
+		assertDefined(row);
+		expect(row.id).toBe(id);
+		expect(row.title).toBe('New conversation');
+		expect(row.archived_at).toBeNull();
 	});
 
 	it('listConversations orders by updated_at DESC', async () => {
@@ -55,7 +57,7 @@ describe('conversations', () => {
 		await archiveConversation(env, a);
 		const row = await getConversation(env, a);
 		expect(row?.archived_at).toBeTypeOf('number');
-		expect(row!.archived_at!).toBeGreaterThan(0);
+		expect(row?.archived_at ?? 0).toBeGreaterThan(0);
 	});
 
 	it('listArchivedConversations returns archived rows sorted by archived_at DESC', async () => {

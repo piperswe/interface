@@ -1,8 +1,8 @@
 import { env } from 'cloudflare:test';
 import { isHttpError, isRedirect } from '@sveltejs/kit';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createMcpServer, getMcpServer, setMcpServerOauthClient } from '$lib/server/mcp_servers';
 import { persistAuthState } from '$lib/server/mcp/oauth_store';
+import { createMcpServer, getMcpServer, setMcpServerOauthClient } from '$lib/server/mcp_servers';
 import { GET } from './+server';
 
 afterEach(async () => {
@@ -15,9 +15,9 @@ async function callGet(idParam: string, search: string): Promise<Response> {
 	const url = new URL(`http://app.example/settings/mcp/${idParam}/callback?${search}`);
 	const event = {
 		params: { id: idParam },
-		url,
 		platform: { env },
 		request: new Request(url.toString()),
+		url,
 	} as Parameters<typeof GET>[0];
 	return GET(event);
 }
@@ -50,28 +50,28 @@ async function seedReadyServer(): Promise<{ id: number; state: string }> {
 		url: 'https://mcp.example.com/server',
 	});
 	await setMcpServerOauthClient(env, id, {
-		authorizationServer: 'https://as.example.com',
 		authorizationEndpoint: 'https://as.example.com/authorize',
-		tokenEndpoint: 'https://as.example.com/token',
-		registrationEndpoint: 'https://as.example.com/register',
+		authorizationServer: 'https://as.example.com',
 		clientId: 'cid-1',
 		clientSecret: null,
+		registrationEndpoint: 'https://as.example.com/register',
 		scopes: 'read',
+		tokenEndpoint: 'https://as.example.com/token',
 	});
 	const state = 'state-abc';
 	await persistAuthState(env, {
-		state,
-		serverId: id,
 		codeVerifier: 'verifier-xyz',
 		redirectUri: `http://app.example/settings/mcp/${id}/callback`,
+		serverId: id,
+		state,
 	});
 	return { id, state };
 }
 
 function tokenRes(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), {
-		status,
 		headers: { 'content-type': 'application/json' },
+		status,
 	});
 }
 
@@ -83,20 +83,12 @@ describe('settings/mcp/[id]/callback +server.ts', () => {
 
 	it('returns 400 when error param is present and forwards error_description', async () => {
 		const { id } = await seedReadyServer();
-		await expectError(
-			callGet(String(id), 'error=access_denied&error_description=user+declined'),
-			400,
-			/access_denied — user declined/,
-		);
+		await expectError(callGet(String(id), 'error=access_denied&error_description=user+declined'), 400, /access_denied — user declined/);
 	});
 
 	it('returns 400 when state is unknown', async () => {
 		const { id } = await seedReadyServer();
-		await expectError(
-			callGet(String(id), 'code=c1&state=does-not-exist'),
-			400,
-			/Unknown or expired/,
-		);
+		await expectError(callGet(String(id), 'code=c1&state=does-not-exist'), 400, /Unknown or expired/);
 	});
 
 	it('returns 400 when stored serverId does not match the path id', async () => {
@@ -106,11 +98,7 @@ describe('settings/mcp/[id]/callback +server.ts', () => {
 			transport: 'http',
 			url: 'https://other.example.com/',
 		});
-		await expectError(
-			callGet(String(otherId), `code=c1&state=${state}`),
-			400,
-			/does not match/,
-		);
+		await expectError(callGet(String(otherId), `code=c1&state=${state}`), 400, /does not match/);
 	});
 
 	it('returns 409 when the server is missing tokenEndpoint or clientId', async () => {
@@ -121,26 +109,24 @@ describe('settings/mcp/[id]/callback +server.ts', () => {
 		});
 		const state = 'state-half';
 		await persistAuthState(env, {
-			state,
-			serverId: id,
 			codeVerifier: 'v',
 			redirectUri: 'http://app/cb',
+			serverId: id,
+			state,
 		});
 		await expectError(callGet(String(id), `code=c1&state=${state}`), 409, /awaiting/);
 	});
 
 	it('successful exchange persists tokens, redirects to /settings, and POSTs grant_type=authorization_code', async () => {
 		const { id, state } = await seedReadyServer();
-		const fetchSpy = vi
-			.spyOn(globalThis, 'fetch')
-			.mockResolvedValueOnce(
-				tokenRes({
-					access_token: 'A1',
-					refresh_token: 'R1',
-					expires_in: 3600,
-					token_type: 'Bearer',
-				}),
-			);
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			tokenRes({
+				access_token: 'A1',
+				expires_in: 3600,
+				refresh_token: 'R1',
+				token_type: 'Bearer',
+			}),
+		);
 		const dest = await expectRedirect(callGet(String(id), `code=auth-code&state=${state}`));
 		expect(dest.pathname).toBe('/settings');
 		expect(fetchSpy.mock.calls).toHaveLength(1);
@@ -170,15 +156,9 @@ describe('settings/mcp/[id]/callback +server.ts', () => {
 
 	it('state is one-shot — replaying the same state yields 400', async () => {
 		const { id, state } = await seedReadyServer();
-		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-			tokenRes({ access_token: 'A', token_type: 'Bearer' }),
-		);
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(tokenRes({ access_token: 'A', token_type: 'Bearer' }));
 		await expectRedirect(callGet(String(id), `code=c&state=${state}`));
-		await expectError(
-			callGet(String(id), `code=c&state=${state}`),
-			400,
-			/Unknown or expired/,
-		);
+		await expectError(callGet(String(id), `code=c&state=${state}`), 400, /Unknown or expired/);
 	});
 
 	it('returns 400 when the path id is not numeric', async () => {

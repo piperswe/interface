@@ -1,13 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-	fmtMs,
-	fmtNumber,
-	fmtRelative,
-	fmtThroughput,
-	fmtUsd,
-	recencyBand,
-	recencyBandLabel,
-} from './formatters';
+import { fmtMs, fmtNumber, fmtRelative, fmtThroughput, fmtUsd, recencyBand, recencyBandLabel } from './formatters';
 
 describe('fmtNumber', () => {
 	it('formats integers with locale grouping', () => {

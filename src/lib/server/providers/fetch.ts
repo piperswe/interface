@@ -6,21 +6,15 @@ import type { CuratedModel } from './presets';
 
 const openRouterModelSchema = z
 	.object({
+		context_length: z.number().optional(),
+		description: z.string().optional(),
 		id: z.string(),
 		name: z.string().optional(),
-		context_length: z.number().optional(),
-		top_provider: z
-			.object({ context_length: z.number().optional() })
-			.passthrough()
-			.nullable()
-			.optional(),
-		description: z.string().optional(),
+		top_provider: z.object({ context_length: z.number().optional() }).passthrough().nullable().optional(),
 	})
 	.passthrough();
 
-const openRouterModelsResponseSchema = z
-	.object({ data: z.array(openRouterModelSchema).optional() })
-	.passthrough();
+const openRouterModelsResponseSchema = z.object({ data: z.array(openRouterModelSchema).optional() }).passthrough();
 
 // OpenRouter's public model endpoint requires no authentication.
 export async function fetchOpenRouterModels(apiKey?: string): Promise<CuratedModel[]> {
@@ -30,20 +24,16 @@ export async function fetchOpenRouterModels(apiKey?: string): Promise<CuratedMod
 	const res = await fetch('https://openrouter.ai/api/v1/models', { headers });
 	if (!res.ok) throw new Error(`OpenRouter API error: ${res.status}`);
 
-	const data = validateOrThrow(
-		openRouterModelsResponseSchema,
-		await res.json(),
-		'OpenRouter models response',
-	);
+	const data = validateOrThrow(openRouterModelsResponseSchema, await res.json(), 'OpenRouter models response');
 
 	const models = data.data ?? [];
 	return models.map((m) => {
 		const ctx = m.context_length ?? m.top_provider?.context_length ?? 128_000;
 		return {
-			id: m.id,
-			name: m.name ?? m.id,
 			description: m.description,
+			id: m.id,
 			maxContextLength: ctx,
+			name: m.name ?? m.id,
 			// Infer reasoning type from vendor prefix / model name patterns
 			reasoningType: inferReasoningType(m.id),
 		};

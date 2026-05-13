@@ -1,8 +1,8 @@
-import { getContextCompactionThreshold, getContextCompactionSummaryTokens } from '../settings';
 import { getResolvedModel } from '../providers/models';
-import { routeLLMByGlobalId } from './route';
+import { getContextCompactionSummaryTokens, getContextCompactionThreshold } from '../settings';
 import type LLM from './LLM';
 import type { Message } from './LLM';
+import { routeLLMByGlobalId } from './route';
 
 // Tokens ≈ characters / 4, with ~10% safety margin.
 function estimateTokens(text: string): number {
@@ -76,7 +76,7 @@ export async function compactHistory(
 ): Promise<CompactionResult> {
 	const threshold = await getContextCompactionThreshold(env);
 	if (threshold === 0 && !force) {
-		return { messages, wasCompacted: false, summary: null, droppedCount: 0 };
+		return { droppedCount: 0, messages, summary: null, wasCompacted: false };
 	}
 
 	const resolved = await getResolvedModel(env, modelGlobalId);
@@ -100,7 +100,7 @@ export async function compactHistory(
 	estimated += 1024;
 
 	if (!force && estimated <= maxAllowed) {
-		return { messages, wasCompacted: false, summary: null, droppedCount: 0 };
+		return { droppedCount: 0, messages, summary: null, wasCompacted: false };
 	}
 
 	// We need to drop some of the oldest messages to make room while keeping
@@ -108,7 +108,7 @@ export async function compactHistory(
 	// (4 messages) and never compact a conversation with 2 or fewer turns.
 	const minKeep = Math.min(4, messages.length);
 	if (messages.length <= minKeep) {
-		return { messages, wasCompacted: false, summary: null, droppedCount: 0 };
+		return { droppedCount: 0, messages, summary: null, wasCompacted: false };
 	}
 
 	// Walk from the oldest message forward, adding to the drop pile until
@@ -135,17 +135,17 @@ export async function compactHistory(
 		const llm = await (deps.llm ?? routeLLMByGlobalId)(env, modelGlobalId);
 		let buf = '';
 		for await (const ev of llm.chat({
+			maxTokens: summaryTokens,
 			messages: [
 				{
-					role: 'system',
 					content:
 						'Summarize the key points from this conversation transcript concisely but comprehensively. ' +
 						'Preserve all important facts, decisions, user instructions, and context that may be needed later. ' +
 						'Reply with the summary only — no meta commentary.',
+					role: 'system',
 				},
-				{ role: 'user', content: droppedText },
+				{ content: droppedText, role: 'user' },
 			],
-			maxTokens: summaryTokens,
 			temperature: 0.3,
 		})) {
 			if (ev.type === 'text_delta') buf += ev.delta;
@@ -158,14 +158,14 @@ export async function compactHistory(
 	}
 
 	const summaryMessage: Message = {
-		role: 'system',
 		content: `Previous conversation summary: ${summary}`,
+		role: 'system',
 	};
 
 	return {
-		messages: [summaryMessage, ...remaining],
-		wasCompacted: true,
-		summary,
 		droppedCount: dropped.length,
+		messages: [summaryMessage, ...remaining],
+		summary,
+		wasCompacted: true,
 	};
 }

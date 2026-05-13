@@ -6,7 +6,7 @@ const now = 1_700_000_000_000;
 const DAY = 86_400_000;
 
 function conv(id: string, updated_at: number): Conversation {
-	return { id, title: id, created_at: updated_at, updated_at };
+	return { created_at: updated_at, id, title: id, updated_at };
 }
 
 describe('groupByBand', () => {

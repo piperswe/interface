@@ -1,9 +1,9 @@
 <script lang="ts">
-	import type { PageData } from './$types';
-	import { saveCustomTool, removeCustomTool, toggleCustomTool } from '$lib/custom-tools.remote';
-	import { toastSubmit, confirmToastSubmit } from '$lib/form-actions';
-	import MonacoEditor from '$lib/components/MonacoEditor.svelte';
 	import { ArrowLeft } from 'lucide-svelte';
+	import MonacoEditor from '$lib/components/MonacoEditor.svelte';
+	import { removeCustomTool, saveCustomTool, toggleCustomTool } from '$lib/custom-tools.remote';
+	import { confirmToastSubmit, toastSubmit } from '$lib/form-actions';
+	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
 	const tool = $derived(data.tool);

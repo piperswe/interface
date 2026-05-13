@@ -2,7 +2,7 @@ import { env } from 'cloudflare:test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fetchUrlTool } from './fetch_url';
 
-const ctx = { env, conversationId: 'c', assistantMessageId: 'a', modelId: 'p/m' };
+const ctx = { assistantMessageId: 'a', conversationId: 'c', env, modelId: 'p/m' };
 
 afterEach(() => {
 	vi.restoreAllMocks();
@@ -60,8 +60,8 @@ describe('fetch_url tool', () => {
 	it('refuses to follow a redirect to a private IP', async () => {
 		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
 			new Response(null, {
-				status: 302,
 				headers: { location: 'http://169.254.169.254/latest/meta-data/' },
+				status: 302,
 			}),
 		);
 		const result = await fetchUrlTool.execute(ctx, { url: 'https://example.com/' });
@@ -70,9 +70,9 @@ describe('fetch_url tool', () => {
 	});
 
 	it('returns body for a 2xx response', async () => {
-		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-			new Response('hello world', { status: 200, statusText: 'OK', headers: { 'content-type': 'text/plain' } }),
-		);
+		vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(new Response('hello world', { headers: { 'content-type': 'text/plain' }, status: 200, statusText: 'OK' }));
 		const result = await fetchUrlTool.execute(ctx, { url: 'https://example.com' });
 		expect(result.isError).toBeFalsy();
 		expect(result.content).toContain('HTTP 200');
@@ -102,9 +102,9 @@ describe('fetch_url tool', () => {
 			</article></main>
 			<footer>(c) 2099 noise that should be stripped</footer>
 		</body></html>`;
-		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-			new Response(html, { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } }),
-		);
+		vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' }, status: 200 }));
 		const result = await fetchUrlTool.execute(ctx, { url: 'https://example.com' });
 		expect(result.isError).toBeFalsy();
 		expect(result.content).toContain('mode=readability');
@@ -115,16 +115,16 @@ describe('fetch_url tool', () => {
 
 	it('returns raw HTML when readability is explicitly disabled', async () => {
 		const html = '<!doctype html><html><body><h1>Raw</h1><p>body</p></body></html>';
-		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }));
-		const result = await fetchUrlTool.execute(ctx, { url: 'https://example.com', readability: false });
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(html, { headers: { 'content-type': 'text/html' }, status: 200 }));
+		const result = await fetchUrlTool.execute(ctx, { readability: false, url: 'https://example.com' });
 		expect(result.content).toContain('mode=raw');
 		expect(result.content).toContain('<h1>Raw</h1>');
 	});
 
 	it('falls back to raw text for non-HTML responses even when readability is on', async () => {
-		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-			new Response('{"hello":"world"}', { status: 200, headers: { 'content-type': 'application/json' } }),
-		);
+		vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(new Response('{"hello":"world"}', { headers: { 'content-type': 'application/json' }, status: 200 }));
 		const result = await fetchUrlTool.execute(ctx, { url: 'https://example.com' });
 		expect(result.content).toContain('mode=raw');
 		expect(result.content).toContain('"hello":"world"');

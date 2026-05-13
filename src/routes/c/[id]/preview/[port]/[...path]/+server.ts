@@ -23,7 +23,7 @@ export function _buildPreviewUrl(opts: {
 	const { port, conversationId, hostname, path, search } = opts;
 	const token = 'preview';
 	const previewHostname = `${port}-${conversationId}-${token}.${hostname}`;
-	const targetPath = '/' + (path ?? '') + search;
+	const targetPath = `/${path ?? ''}${search}`;
 	return new URL(targetPath, `http://${previewHostname}`);
 }
 
@@ -43,13 +43,7 @@ export function _parsePreviewPort(raw: string): number | null {
 // operator does not control; forwarding browser auth/cookies/IP hands the
 // container the operator's session for the app and their real client IP.
 const STRIPPED_HEADER_PREFIXES = ['x-forwarded-', 'cf-'];
-const STRIPPED_HEADERS = new Set([
-	'cookie',
-	'authorization',
-	'proxy-authorization',
-	'x-real-ip',
-	'forwarded',
-]);
+const STRIPPED_HEADERS = new Set(['cookie', 'authorization', 'proxy-authorization', 'x-real-ip', 'forwarded']);
 
 export function _buildSanitizedProxyRequest(targetUrl: URL, request: Request): Request {
 	const headers = new Headers();
@@ -62,8 +56,8 @@ export function _buildSanitizedProxyRequest(targetUrl: URL, request: Request): R
 	// `new Request(url, init)` requires a mode-compatible body when method is
 	// not GET/HEAD; passing `request.body` keeps the original ReadableStream.
 	const init: RequestInit = {
-		method: request.method,
 		headers,
+		method: request.method,
 		redirect: 'manual',
 	};
 	if (request.method !== 'GET' && request.method !== 'HEAD') {
@@ -96,10 +90,10 @@ async function proxyToPreview({ params, request, url, platform }: Parameters<Req
 	}
 
 	const previewUrl = _buildPreviewUrl({
-		port,
 		conversationId,
 		hostname,
 		path: params.path,
+		port,
 		search: url.search,
 	});
 

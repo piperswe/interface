@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
 	import type * as Monaco from 'monaco-editor';
+	import { onDestroy, onMount } from 'svelte';
 
 	let {
 		value = $bindable(''),
@@ -28,28 +28,28 @@
 		// the in-thread tokenizer, which is enough for editing-only use.
 		(self as unknown as { MonacoEnvironment?: unknown }).MonacoEnvironment = {
 			getWorker: () => ({
-				postMessage: () => {},
-				terminate: () => {},
 				addEventListener: () => {},
-				removeEventListener: () => {},
 				dispatchEvent: () => false,
-				onmessage: null,
 				onerror: null,
+				onmessage: null,
 				onmessageerror: null,
+				postMessage: () => {},
+				removeEventListener: () => {},
+				terminate: () => {},
 			}),
 		};
 
 		if (!container) return;
 		editor = monaco.editor.create(container, {
-			value,
-			language,
-			theme: 'vs',
 			automaticLayout: true,
-			minimap: { enabled: false },
-			scrollBeyondLastLine: false,
 			fontSize: 13,
-			tabSize: 2,
+			language,
+			minimap: { enabled: false },
 			readOnly: readonly,
+			scrollBeyondLastLine: false,
+			tabSize: 2,
+			theme: 'vs',
+			value,
 		});
 		editor.onDidChangeModelContent(() => {
 			if (!editor) return;

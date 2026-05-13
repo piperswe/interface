@@ -68,14 +68,14 @@ const SELECT_COLS = `id, name, description, source, input_schema, secrets_json, 
 
 function rowToTool(r: Row): CustomToolRow {
 	return {
-		id: r.id,
-		name: r.name,
-		description: r.description,
-		source: r.source,
-		inputSchema: r.input_schema,
-		secretsJson: r.secrets_json,
-		enabled: r.enabled === 1,
 		createdAt: r.created_at,
+		description: r.description,
+		enabled: r.enabled === 1,
+		id: r.id,
+		inputSchema: r.input_schema,
+		name: r.name,
+		secretsJson: r.secrets_json,
+		source: r.source,
 		updatedAt: r.updated_at,
 	};
 }
@@ -105,33 +105,17 @@ export function customToolNameError(name: string): string | null {
 }
 
 export async function listCustomTools(env: Env, userId: number = SINGLE_USER_ID): Promise<CustomToolRow[]> {
-	const result = await env.DB.prepare(
-		`SELECT ${SELECT_COLS} FROM custom_tools WHERE user_id = ? ORDER BY name`,
-	)
-		.bind(userId)
-		.all<Row>();
+	const result = await env.DB.prepare(`SELECT ${SELECT_COLS} FROM custom_tools WHERE user_id = ? ORDER BY name`).bind(userId).all<Row>();
 	return (result.results ?? []).map(rowToTool);
 }
 
 export async function getCustomTool(env: Env, id: number, userId: number = SINGLE_USER_ID): Promise<CustomToolRow | null> {
-	const row = await env.DB.prepare(
-		`SELECT ${SELECT_COLS} FROM custom_tools WHERE id = ? AND user_id = ?`,
-	)
-		.bind(id, userId)
-		.first<Row>();
+	const row = await env.DB.prepare(`SELECT ${SELECT_COLS} FROM custom_tools WHERE id = ? AND user_id = ?`).bind(id, userId).first<Row>();
 	return row ? rowToTool(row) : null;
 }
 
-export async function getCustomToolByName(
-	env: Env,
-	name: string,
-	userId: number = SINGLE_USER_ID,
-): Promise<CustomToolRow | null> {
-	const row = await env.DB.prepare(
-		`SELECT ${SELECT_COLS} FROM custom_tools WHERE name = ? AND user_id = ?`,
-	)
-		.bind(name, userId)
-		.first<Row>();
+export async function getCustomToolByName(env: Env, name: string, userId: number = SINGLE_USER_ID): Promise<CustomToolRow | null> {
+	const row = await env.DB.prepare(`SELECT ${SELECT_COLS} FROM custom_tools WHERE name = ? AND user_id = ?`).bind(name, userId).first<Row>();
 	return row ? rowToTool(row) : null;
 }
 
@@ -207,11 +191,7 @@ function validateLengthOrThrow(label: string, value: string, max: number): void 
 	}
 }
 
-export async function createCustomTool(
-	env: Env,
-	input: CreateCustomToolInput,
-	userId: number = SINGLE_USER_ID,
-): Promise<number> {
+export async function createCustomTool(env: Env, input: CreateCustomToolInput, userId: number = SINGLE_USER_ID): Promise<number> {
 	if (typeof input.name !== 'string') throw new Error('Tool name must be a string.');
 	if (typeof input.description !== 'string') throw new Error('Description must be a string.');
 	if (typeof input.source !== 'string') throw new Error('Source must be a string.');
@@ -239,16 +219,7 @@ export async function createCustomTool(
 		 VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
 		 RETURNING id`,
 	)
-		.bind(
-			userId,
-			input.name,
-			input.description,
-			input.source,
-			input.inputSchema,
-			input.secretsJson ?? null,
-			ts,
-			ts,
-		)
+		.bind(userId, input.name, input.description, input.source, input.inputSchema, input.secretsJson ?? null, ts, ts)
 		.first<{ id: number }>();
 	if (!result) throw new Error('Failed to create custom tool.');
 	return result.id;
@@ -263,12 +234,7 @@ export type UpdateCustomToolPatch = {
 	enabled?: boolean;
 };
 
-export async function updateCustomTool(
-	env: Env,
-	id: number,
-	patch: UpdateCustomToolPatch,
-	userId: number = SINGLE_USER_ID,
-): Promise<void> {
+export async function updateCustomTool(env: Env, id: number, patch: UpdateCustomToolPatch, userId: number = SINGLE_USER_ID): Promise<void> {
 	const sets: string[] = [];
 	const values: unknown[] = [];
 
@@ -324,9 +290,7 @@ export async function updateCustomTool(
 	values.push(id);
 	values.push(userId);
 
-	await env.DB.prepare(
-		`UPDATE custom_tools SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`,
-	)
+	await env.DB.prepare(`UPDATE custom_tools SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`)
 		.bind(...values)
 		.run();
 }
@@ -335,15 +299,8 @@ export async function deleteCustomTool(env: Env, id: number, userId: number = SI
 	await env.DB.prepare(`DELETE FROM custom_tools WHERE id = ? AND user_id = ?`).bind(id, userId).run();
 }
 
-export async function setCustomToolEnabled(
-	env: Env,
-	id: number,
-	enabled: boolean,
-	userId: number = SINGLE_USER_ID,
-): Promise<void> {
-	await env.DB.prepare(
-		`UPDATE custom_tools SET enabled = ?, updated_at = ? WHERE id = ? AND user_id = ?`,
-	)
+export async function setCustomToolEnabled(env: Env, id: number, enabled: boolean, userId: number = SINGLE_USER_ID): Promise<void> {
+	await env.DB.prepare(`UPDATE custom_tools SET enabled = ?, updated_at = ? WHERE id = ? AND user_id = ?`)
 		.bind(enabled ? 1 : 0, nowMs(), id, userId)
 		.run();
 }

@@ -1,6 +1,6 @@
 import { error, redirect } from '@sveltejs/kit';
-import { getMcpServer } from '$lib/server/mcp_servers';
 import { consumeAuthState, exchangeAndPersist } from '$lib/server/mcp/oauth_store';
+import { getMcpServer } from '$lib/server/mcp_servers';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ params, url, platform }) => {
@@ -24,7 +24,7 @@ export const GET: RequestHandler = async ({ params, url, platform }) => {
 	if (stored.serverId !== id) error(400, 'OAuth state does not match this server');
 
 	const server = await getMcpServer(env, id);
-	if (!server || !server.oauth?.tokenEndpoint || !server.oauth?.clientId) {
+	if (!server?.oauth?.tokenEndpoint || !server.oauth?.clientId) {
 		error(409, 'MCP server is not awaiting an OAuth callback');
 	}
 

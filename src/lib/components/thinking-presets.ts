@@ -5,14 +5,14 @@
 export type Preset = { id: string; label: string; budget: number | null };
 
 export const THINKING_PRESETS: Preset[] = [
-	{ id: 'off', label: 'Off', budget: null },
-	{ id: 'low', label: 'Low', budget: 1024 },
-	{ id: 'medium', label: 'Medium', budget: 4096 },
-	{ id: 'high', label: 'High', budget: 16384 },
+	{ budget: null, id: 'off', label: 'Off' },
+	{ budget: 1024, id: 'low', label: 'Low' },
+	{ budget: 4096, id: 'medium', label: 'Medium' },
+	{ budget: 16384, id: 'high', label: 'High' },
 	// `xhigh` matches the reasoning effort name used by AnthropicLLM and
 	// `budgetToEffort` in the DO, so the preset id and the underlying provider
 	// effort string line up.
-	{ id: 'xhigh', label: 'Extra high', budget: 32768 },
+	{ budget: 32768, id: 'xhigh', label: 'Extra high' },
 ];
 
 export function presetFor(budget: number | null): Preset | null {

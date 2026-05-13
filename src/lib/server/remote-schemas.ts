@@ -6,16 +6,12 @@
 import { z } from 'zod';
 import { CONVERSATION_ID_PATTERN } from '$lib/conversation-id';
 
-export const conversationIdSchema = z
-	.string()
-	.regex(CONVERSATION_ID_PATTERN, 'invalid conversation id');
+export const conversationIdSchema = z.string().regex(CONVERSATION_ID_PATTERN, 'invalid conversation id');
 
 // Form id field. FormData sends it as a string; JS callers sometimes pass a
 // number directly (via `form.for(numericId)` etc.). Accept both at the input
 // boundary so `RemoteForm.for()` accepts the natural DB type.
-export const positiveIntFromString = z
-	.union([z.string(), z.number()])
-	.pipe(z.coerce.number().int().positive('Invalid id'));
+export const positiveIntFromString = z.union([z.string(), z.number()]).pipe(z.coerce.number().int().positive('Invalid id'));
 
 // RPC numeric id. JSON-encoded callers send a number; FormData callers
 // send a string. `z.coerce.number()` accepts both.
@@ -48,8 +44,7 @@ export const checkboxBoolean = z
 		return s === 'on' || s === 'true' || s === '1';
 	});
 
-export const trimmedNonEmpty = (msg = 'Required') =>
-	z.string().trim().min(1, msg);
+export const trimmedNonEmpty = (msg = 'Required') => z.string().trim().min(1, msg);
 
 // Optional trimmed string; empty / whitespace-only becomes null.
 export const trimmedOptionalOrNull = z

@@ -1,39 +1,7 @@
 <script lang="ts">
-	import type { PageData } from './$types';
-	import {
-		saveProvider,
-		deleteProviderAction,
-		saveProviderModel,
-		deleteProviderModel,
-		reorderProviderModel,
-		moveProviderModel,
-		addPresetProvider,
-		fetchPresetModels,
-		searchModelsDev,
-		importModelsFromDev,
-		searchOpenRouter,
-		importModelsFromOpenRouter,
-	} from '$lib/providers.remote';
-	import type { ModelsDevEntry } from '$lib/server/providers/modelsDev';
-	import type { OpenRouterEntry } from '$lib/server/providers/openRouter';
-	import { computeAutoPrefixUpdate } from '$lib/modelsDevPickerState';
-	import {
-		saveSetting,
-		addMcpServer,
-		removeMcpServer,
-		addSubAgent,
-		removeSubAgent,
-		toggleSubAgent,
-		addMemory,
-		removeMemory,
-		addStyle,
-		saveStyle,
-		removeStyle,
-		addMcpFromPreset,
-		disconnectMcpServer,
-	} from '$lib/settings.remote';
-	import { addTag, removeTag, renameTagForm } from '$lib/tags.remote';
-	import { addSchedule, removeSchedule, toggleSchedule, runScheduleNow } from '$lib/schedules.remote';
+	import { onMount } from 'svelte';
+	import { invalidateAll } from '$app/navigation';
+	import { page } from '$app/state';
 	import { addCustomTool, removeCustomTool, toggleCustomTool } from '$lib/custom-tools.remote';
 	import {
 		confirmOptimisticSubmit,
@@ -42,10 +10,42 @@
 		optimisticSubmit,
 		toastSubmit,
 	} from '$lib/form-actions';
-	import { page } from '$app/state';
-	import { invalidateAll } from '$app/navigation';
-	import { onMount } from 'svelte';
+	import { computeAutoPrefixUpdate } from '$lib/modelsDevPickerState';
+	import {
+		addPresetProvider,
+		deleteProviderAction,
+		deleteProviderModel,
+		fetchPresetModels,
+		importModelsFromDev,
+		importModelsFromOpenRouter,
+		moveProviderModel,
+		reorderProviderModel,
+		saveProvider,
+		saveProviderModel,
+		searchModelsDev,
+		searchOpenRouter,
+	} from '$lib/providers.remote';
+	import { addSchedule, removeSchedule, runScheduleNow, toggleSchedule } from '$lib/schedules.remote';
+	import type { ModelsDevEntry } from '$lib/server/providers/modelsDev';
+	import type { OpenRouterEntry } from '$lib/server/providers/openRouter';
 	import type { ProviderType, ReasoningType } from '$lib/server/providers/types';
+	import {
+		addMcpFromPreset,
+		addMcpServer,
+		addMemory,
+		addStyle,
+		addSubAgent,
+		disconnectMcpServer,
+		removeMcpServer,
+		removeMemory,
+		removeStyle,
+		removeSubAgent,
+		saveSetting,
+		saveStyle,
+		toggleSubAgent,
+	} from '$lib/settings.remote';
+	import { addTag, removeTag, renameTagForm } from '$lib/tags.remote';
+	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
 	const serverTheme = $derived(page.data.theme as 'system' | 'light' | 'dark');
@@ -59,12 +59,12 @@
 	// ----- Tab navigation -----
 	type TabId = 'general' | 'models' | 'connections' | 'agents' | 'schedules' | 'tools';
 	const tabs: { id: TabId; label: string; hint: string }[] = [
-		{ id: 'general', label: 'General', hint: 'Theme, prompts & limits' },
-		{ id: 'models', label: 'Models', hint: 'Providers & model catalog' },
-		{ id: 'connections', label: 'Connections', hint: 'MCP servers' },
-		{ id: 'agents', label: 'Agents', hint: 'Sub-agents, styles & memories' },
-		{ id: 'schedules', label: 'Schedules & Tags', hint: 'Recurring prompts & tags' },
-		{ id: 'tools', label: 'Tools', hint: 'Custom tools (Dynamic Workers)' },
+		{ hint: 'Theme, prompts & limits', id: 'general', label: 'General' },
+		{ hint: 'Providers & model catalog', id: 'models', label: 'Models' },
+		{ hint: 'MCP servers', id: 'connections', label: 'Connections' },
+		{ hint: 'Sub-agents, styles & memories', id: 'agents', label: 'Agents' },
+		{ hint: 'Recurring prompts & tags', id: 'schedules', label: 'Schedules & Tags' },
+		{ hint: 'Custom tools (Dynamic Workers)', id: 'tools', label: 'Tools' },
 	];
 	let activeTab = $state<TabId>('general');
 
@@ -326,13 +326,13 @@
 	function modelDragStart(e: DragEvent, providerId: string, modelId: string) {
 		dragModelId = modelId;
 		dragProviderId = providerId;
-		e.dataTransfer!.effectAllowed = 'move';
+		if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
 	}
 
 	function modelDragOver(e: DragEvent, providerId: string, modelId: string, models: ProviderModelLite[]) {
 		if (dragProviderId !== providerId || !dragModelId) return;
 		e.preventDefault();
-		e.dataTransfer!.dropEffect = 'move';
+		if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
 		const inTopHalf = e.clientY < rect.top + rect.height / 2;
 		dropProviderId = providerId;
@@ -356,9 +356,9 @@
 		// Skip when dropped on self (self-drag to own top half)
 		if (fromModelId === beforeId) return;
 		await moveProviderModel({
-			provider_id: providerId,
-			model_id: fromModelId,
 			before_model_id: beforeId ?? undefined,
+			model_id: fromModelId,
+			provider_id: providerId,
 		});
 		await invalidateAll();
 	}
@@ -508,10 +508,10 @@
 		// Delegate the state transition to a pure helper so it's regression-
 		// testable without a Svelte runtime — see modelsDevPickerState.test.ts.
 		const next = computeAutoPrefixUpdate({
-			providerType: modelsDevPickerProviderType,
+			currentPrefix: modelsDevIdPrefix,
 			filter: modelsDevProviderKeyFilter,
 			previousAutoFilter: modelsDevIdPrefixAutoFilter,
-			currentPrefix: modelsDevIdPrefix,
+			providerType: modelsDevPickerProviderType,
 		});
 		modelsDevIdPrefix = next.prefix;
 		modelsDevIdPrefixAutoFilter = next.autoFilter;
@@ -542,7 +542,7 @@
 	async function onFetchPresetModels() {
 		if (!selectedPreset) return;
 		try {
-			const models = await fetchPresetModels({ preset_id: selectedPreset, api_key: presetApiKey });
+			const models = await fetchPresetModels({ api_key: presetApiKey, preset_id: selectedPreset });
 			fetchedPresetModels = models.map((m) => ({ id: m.id, name: m.name }));
 			selectedPresetModels = new Set(models.map((m) => m.id));
 		} catch {
@@ -2054,7 +2054,7 @@
 			{:else}
 				<ul class="entity-list mb-3">
 					{#each visibleSubAgents as sa (sa.id)}
-						{@const enabled = optimisticSubAgentEnabled.has(sa.id) ? optimisticSubAgentEnabled.get(sa.id)! : sa.enabled}
+						{@const enabled = optimisticSubAgentEnabled.get(sa.id) ?? sa.enabled}
 						<li class="entity-row">
 							<div class="d-flex align-items-center gap-2 flex-fill min-w-0">
 								<form

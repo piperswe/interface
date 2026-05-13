@@ -11,16 +11,12 @@ import {
 
 describe('conversationIdSchema', () => {
 	it('accepts canonical UUIDs', () => {
-		expect(
-			conversationIdSchema.parse('a1b2c3d4-e5f6-7890-abcd-ef1234567890'),
-		).toBeTruthy();
+		expect(conversationIdSchema.parse('a1b2c3d4-e5f6-7890-abcd-ef1234567890')).toBeTruthy();
 	});
 
 	it('rejects non-UUID strings', () => {
 		expect(conversationIdSchema.safeParse('not-a-uuid').success).toBe(false);
-		expect(
-			conversationIdSchema.safeParse('------------------------------------').success,
-		).toBe(false);
+		expect(conversationIdSchema.safeParse('------------------------------------').success).toBe(false);
 	});
 });
 

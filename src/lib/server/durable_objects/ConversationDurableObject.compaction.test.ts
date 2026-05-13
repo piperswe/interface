@@ -15,22 +15,17 @@
 
 import { env, runInDurableObject } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createConversation } from '../conversations';
-import { createProvider } from '../providers/store';
-import { createModel } from '../providers/models';
-import { setSetting } from '../settings';
+import type { InfoPart } from '$lib/types/conversation';
+import { assertDefined } from '../../../../test/assert-defined';
 import { textTurn } from '../../../../test/fakes/FakeLLM';
-import {
-	readLLMCalls,
-	readState,
-	setOverride,
-	stubFor,
-	waitForState,
-} from './conversation/_test-helpers';
+import { createConversation } from '../conversations';
 import type { ChatRequest, StreamEvent } from '../llm/LLM';
 import * as routeMod from '../llm/route';
+import { createModel } from '../providers/models';
+import { createProvider } from '../providers/store';
+import { setSetting } from '../settings';
+import { readLLMCalls, readState, setOverride, stubFor, waitForState } from './conversation/_test-helpers';
 import type { ConversationStub } from './index';
-import type { InfoPart } from '$lib/types/conversation';
 
 // Used by ad-hoc seed helpers that need access to the underlying SqlStorage.
 type SeedRow = {
@@ -60,8 +55,8 @@ beforeEach(async () => {
 });
 
 async function registerFakeModel(maxContextLength: number): Promise<void> {
-	await createProvider(env, { id: 'fake', type: 'openai_compatible', apiKey: 'k' });
-	await createModel(env, 'fake', { id: 'model', name: 'Fake', maxContextLength });
+	await createProvider(env, { apiKey: 'k', id: 'fake', type: 'openai_compatible' });
+	await createModel(env, 'fake', { id: 'model', maxContextLength, name: 'Fake' });
 }
 
 // `compactContext()` calls `compactHistory(... {}, true)` with empty deps,
@@ -71,13 +66,13 @@ async function registerFakeModel(maxContextLength: number): Promise<void> {
 // the spy propagates into the DO's imports.
 function mockSummaryRoute(text: string): void {
 	async function* gen(): AsyncGenerator<StreamEvent> {
-		yield { type: 'text_delta', delta: text };
+		yield { delta: text, type: 'text_delta' };
 		yield { type: 'done' };
 	}
 	vi.spyOn(routeMod, 'routeLLMByGlobalId').mockResolvedValue({
+		chat: () => gen(),
 		model: 'fake/model',
 		providerID: 'mock',
-		chat: () => gen(),
 	} as never);
 }
 
@@ -105,12 +100,12 @@ async function seedMessages(stub: ConversationStub, rows: SeedRow[]): Promise<vo
 // pair is small ("recent q" / "recent a") so we can assert preservation.
 function bigPairs(filler: string, recentQ = 'recent q', recentA = 'recent a'): SeedRow[] {
 	return [
-		{ id: 'u0', role: 'user', content: 'q0 ' + filler, createdAt: 100 },
-		{ id: 'a0', role: 'assistant', content: 'a0 ' + filler, model: 'fake/model', createdAt: 101 },
-		{ id: 'u1', role: 'user', content: 'q1 ' + filler, createdAt: 102 },
-		{ id: 'a1', role: 'assistant', content: 'a1 ' + filler, model: 'fake/model', createdAt: 103 },
-		{ id: 'u2', role: 'user', content: recentQ, createdAt: 104 },
-		{ id: 'a2', role: 'assistant', content: recentA, model: 'fake/model', createdAt: 105 },
+		{ content: `q0 ${filler}`, createdAt: 100, id: 'u0', role: 'user' },
+		{ content: `a0 ${filler}`, createdAt: 101, id: 'a0', model: 'fake/model', role: 'assistant' },
+		{ content: `q1 ${filler}`, createdAt: 102, id: 'u1', role: 'user' },
+		{ content: `a1 ${filler}`, createdAt: 103, id: 'a1', model: 'fake/model', role: 'assistant' },
+		{ content: recentQ, createdAt: 104, id: 'u2', role: 'user' },
+		{ content: recentA, createdAt: 105, id: 'a2', model: 'fake/model', role: 'assistant' },
 	];
 }
 
@@ -134,8 +129,8 @@ describe('ConversationDurableObject.compactContext — preconditions', () => {
 		const stub = stubFor(id);
 		await registerFakeModel(2000);
 		await seedMessages(stub, [
-			{ id: 'u0', role: 'user', content: 'hi', createdAt: 100 },
-			{ id: 'a0', role: 'assistant', content: 'hello', model: 'fake/model', createdAt: 101 },
+			{ content: 'hi', createdAt: 100, id: 'u0', role: 'user' },
+			{ content: 'hello', createdAt: 101, id: 'a0', model: 'fake/model', role: 'assistant' },
 		]);
 		const result = await stub.compactContext(id);
 		expect(result).toEqual({ compacted: false, droppedCount: 0 });
@@ -147,8 +142,8 @@ describe('ConversationDurableObject.compactContext — preconditions', () => {
 		const id = await createConversation(env);
 		const stub = stubFor(id);
 		await seedMessages(stub, [
-			{ id: 'u0', role: 'user', content: 'hi', createdAt: 100 },
-			{ id: 'a0', role: 'assistant', content: 'hello', model: null, createdAt: 101 },
+			{ content: 'hi', createdAt: 100, id: 'u0', role: 'user' },
+			{ content: 'hello', createdAt: 101, id: 'a0', model: null, role: 'assistant' },
 		]);
 		const result = await stub.compactContext(id);
 		expect(result).toEqual({ compacted: false, droppedCount: 0 });
@@ -175,12 +170,13 @@ describe('ConversationDurableObject.compactContext — compaction succeeds', () 
 		// The new assistant row's parts should contain an info part with the
 		// "Context compacted: ..." prefix and the summary text.
 		const state = await readState(stub);
-		const summaryRow = state.messages.find((m) =>
-			m.parts?.some((p) => p.type === 'info' && p.text.startsWith('Context compacted:')),
-		);
+		const summaryRow = state.messages.find((m) => m.parts?.some((p) => p.type === 'info' && p.text.startsWith('Context compacted:')));
 		expect(summaryRow).toBeTruthy();
-		expect(summaryRow!.role).toBe('assistant');
-		const infoPart = summaryRow!.parts!.find((p): p is InfoPart => p.type === 'info')!;
+		assertDefined(summaryRow);
+		expect(summaryRow.role).toBe('assistant');
+		assertDefined(summaryRow.parts);
+		const infoPart = summaryRow.parts.find((p): p is InfoPart => p.type === 'info');
+		assertDefined(infoPart);
 		expect(infoPart.text).toContain(`summarized ${result.droppedCount} earlier messages`);
 		expect(infoPart.text).toContain('SUMMARY-OF-EARLIER-TURNS');
 	});
@@ -207,8 +203,12 @@ describe('ConversationDurableObject.compactContext — compaction succeeds', () 
 			const ids = surviving.map((r) => r.id);
 			expect(ids).toContain('u2');
 			expect(ids).toContain('a2');
-			expect(surviving.find((r) => r.id === 'u2')!.content).toBe('KEEP-Q');
-			expect(surviving.find((r) => r.id === 'a2')!.content).toBe('KEEP-A');
+			const u2 = surviving.find((r) => r.id === 'u2');
+			assertDefined(u2);
+			expect(u2.content).toBe('KEEP-Q');
+			const a2 = surviving.find((r) => r.id === 'a2');
+			assertDefined(a2);
+			expect(a2.content).toBe('KEEP-A');
 		});
 	});
 
@@ -257,9 +257,7 @@ describe('ConversationDurableObject.compactContext — compaction succeeds', () 
 		// Snapshot the soft-deleted ids before we add more material.
 		const deletedIdsAfterFirst = await runInDurableObject(stub, async (_instance, ctx) => {
 			return (
-				ctx.storage.sql
-					.exec('SELECT id FROM messages WHERE deleted_at IS NOT NULL ORDER BY id')
-					.toArray() as unknown as Array<{ id: string }>
+				ctx.storage.sql.exec('SELECT id FROM messages WHERE deleted_at IS NOT NULL ORDER BY id').toArray() as unknown as Array<{ id: string }>
 			).map((r) => r.id);
 		});
 		expect(deletedIdsAfterFirst.length).toBe(firstDropped);
@@ -267,12 +265,12 @@ describe('ConversationDurableObject.compactContext — compaction succeeds', () 
 		// Add a fresh batch of large pairs so a second compaction has work
 		// to do. Created_at strictly after the existing rows.
 		await seedMessages(stub, [
-			{ id: 'u3', role: 'user', content: 'q3 ' + filler, createdAt: 200 },
-			{ id: 'a3', role: 'assistant', content: 'a3 ' + filler, model: 'fake/model', createdAt: 201 },
-			{ id: 'u4', role: 'user', content: 'q4 ' + filler, createdAt: 202 },
-			{ id: 'a4', role: 'assistant', content: 'a4 ' + filler, model: 'fake/model', createdAt: 203 },
-			{ id: 'u5', role: 'user', content: 'recent q', createdAt: 204 },
-			{ id: 'a5', role: 'assistant', content: 'recent a', model: 'fake/model', createdAt: 205 },
+			{ content: `q3 ${filler}`, createdAt: 200, id: 'u3', role: 'user' },
+			{ content: `a3 ${filler}`, createdAt: 201, id: 'a3', model: 'fake/model', role: 'assistant' },
+			{ content: `q4 ${filler}`, createdAt: 202, id: 'u4', role: 'user' },
+			{ content: `a4 ${filler}`, createdAt: 203, id: 'a4', model: 'fake/model', role: 'assistant' },
+			{ content: 'recent q', createdAt: 204, id: 'u5', role: 'user' },
+			{ content: 'recent a', createdAt: 205, id: 'a5', model: 'fake/model', role: 'assistant' },
 		]);
 
 		const second = await stub.compactContext(id);
@@ -282,9 +280,7 @@ describe('ConversationDurableObject.compactContext — compaction succeeds', () 
 		// originally-deleted ids may have been "un-deleted" or counted again.
 		const deletedIdsAfterSecond = await runInDurableObject(stub, async (_instance, ctx) => {
 			return (
-				ctx.storage.sql
-					.exec('SELECT id FROM messages WHERE deleted_at IS NOT NULL ORDER BY id')
-					.toArray() as unknown as Array<{ id: string }>
+				ctx.storage.sql.exec('SELECT id FROM messages WHERE deleted_at IS NOT NULL ORDER BY id').toArray() as unknown as Array<{ id: string }>
 			).map((r) => r.id);
 		});
 		for (const id of deletedIdsAfterFirst) {
@@ -305,20 +301,18 @@ describe('ConversationDurableObject.compactContext — compaction succeeds', () 
 		const stub = stubFor(id);
 		// Don't register the model — fall back to the 128k default.
 		await seedMessages(stub, [
-			{ id: 'u0', role: 'user', content: 'q0', createdAt: 100 },
-			{ id: 'a0', role: 'assistant', content: 'a0', model: 'fake/model', createdAt: 101 },
-			{ id: 'u1', role: 'user', content: 'q1', createdAt: 102 },
-			{ id: 'a1', role: 'assistant', content: 'a1', model: 'fake/model', createdAt: 103 },
-			{ id: 'u2', role: 'user', content: 'q2', createdAt: 104 },
-			{ id: 'a2', role: 'assistant', content: 'a2', model: 'fake/model', createdAt: 105 },
+			{ content: 'q0', createdAt: 100, id: 'u0', role: 'user' },
+			{ content: 'a0', createdAt: 101, id: 'a0', model: 'fake/model', role: 'assistant' },
+			{ content: 'q1', createdAt: 102, id: 'u1', role: 'user' },
+			{ content: 'a1', createdAt: 103, id: 'a1', model: 'fake/model', role: 'assistant' },
+			{ content: 'q2', createdAt: 104, id: 'u2', role: 'user' },
+			{ content: 'a2', createdAt: 105, id: 'a2', model: 'fake/model', role: 'assistant' },
 		]);
 		const result = await stub.compactContext(id);
 		expect(result).toEqual({ compacted: false, droppedCount: 0 });
 		// And no info-part summary was inserted.
 		const state = await readState(stub);
-		const hasSummary = state.messages.some((m) =>
-			m.parts?.some((p) => p.type === 'info' && p.text.startsWith('Context compacted:')),
-		);
+		const hasSummary = state.messages.some((m) => m.parts?.some((p) => p.type === 'info' && p.text.startsWith('Context compacted:')));
 		expect(hasSummary).toBe(false);
 	});
 
@@ -328,20 +322,19 @@ describe('ConversationDurableObject.compactContext — compaction succeeds', () 
 		const id = await createConversation(env);
 		const stub = stubFor(id);
 		await registerFakeModel(2000);
-		await setOverride(stub, [
-			[{ type: 'error', message: 'boom' } as StreamEvent],
-		]);
+		await setOverride(stub, [[{ message: 'boom', type: 'error' } as StreamEvent]]);
 		const filler = 'lorem ipsum dolor sit amet '.repeat(80);
 		await seedMessages(stub, bigPairs(filler));
 
 		const result = await stub.compactContext(id);
 		expect(result.compacted).toBe(true);
 		const state = await readState(stub);
-		const summaryRow = state.messages.find((m) =>
-			m.parts?.some((p) => p.type === 'info' && p.text.startsWith('Context compacted:')),
-		);
+		const summaryRow = state.messages.find((m) => m.parts?.some((p) => p.type === 'info' && p.text.startsWith('Context compacted:')));
 		expect(summaryRow).toBeTruthy();
-		const infoPart = summaryRow!.parts!.find((p): p is InfoPart => p.type === 'info')!;
+		assertDefined(summaryRow);
+		assertDefined(summaryRow.parts);
+		const infoPart = summaryRow.parts.find((p): p is InfoPart => p.type === 'info');
+		assertDefined(infoPart);
 		// Raw fallback echoes the dropped transcript.
 		expect(infoPart.text).toMatch(/lorem ipsum/);
 	});
@@ -362,23 +355,23 @@ describe('ConversationDurableObject.#generate — auto-compaction', () => {
 		// assistant row's usage_json will be read for the cache-aware estimate.
 		const filler = 'lorem ipsum dolor sit amet '.repeat(80);
 		await seedMessages(stub, [
-			{ id: 'u0', role: 'user', content: 'q0 ' + filler, createdAt: 100 },
-			{ id: 'a0', role: 'assistant', content: 'a0 ' + filler, model: 'fake/model', createdAt: 101 },
-			{ id: 'u1', role: 'user', content: 'q1 ' + filler, createdAt: 102 },
-			{ id: 'a1', role: 'assistant', content: 'a1 ' + filler, model: 'fake/model', createdAt: 103 },
+			{ content: `q0 ${filler}`, createdAt: 100, id: 'u0', role: 'user' },
+			{ content: `a0 ${filler}`, createdAt: 101, id: 'a0', model: 'fake/model', role: 'assistant' },
+			{ content: `q1 ${filler}`, createdAt: 102, id: 'u1', role: 'user' },
+			{ content: `a1 ${filler}`, createdAt: 103, id: 'a1', model: 'fake/model', role: 'assistant' },
 			{
-				id: 'u2',
-				role: 'user',
 				content: 'kept q',
 				createdAt: 104,
+				id: 'u2',
+				role: 'user',
 			},
 			{
-				id: 'a2',
-				role: 'assistant',
 				content: 'kept a',
-				model: 'fake/model',
-				usage_json: JSON.stringify({ inputTokens: 1500 }), // > 50% of 2000
 				createdAt: 105,
+				id: 'a2',
+				model: 'fake/model',
+				role: 'assistant',
+				usage_json: JSON.stringify({ inputTokens: 1500 }), // > 50% of 2000
 			},
 		]);
 
@@ -404,21 +397,21 @@ describe('ConversationDurableObject.#generate — auto-compaction', () => {
 		expect(generateCall.messages[0].content).toContain('Previous conversation summary:');
 		expect(generateCall.messages[0].content).toContain('SUMMARY-OUT');
 		// Recent kept messages must still be present.
-		const flatContents = generateCall.messages.map((m) =>
-			typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
-		);
+		const flatContents = generateCall.messages.map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)));
 		expect(flatContents.some((c) => c.includes('kept a'))).toBe(true);
 		expect(flatContents.some((c) => c.includes('next question'))).toBe(true);
 
 		// The assistant message gains an info part announcing compaction.
 		const state = await readState(stub);
-		const last = state.messages.at(-1)!;
+		const last = state.messages.at(-1);
+		assertDefined(last);
 		expect(last.role).toBe('assistant');
 		expect(last.content).toBe('final reply');
 		const infoPart = last.parts?.find((p): p is InfoPart => p.type === 'info');
 		expect(infoPart).toBeTruthy();
-		expect(infoPart!.text).toContain('Context compacted:');
-		expect(infoPart!.text).toMatch(/summarized \d+ earlier messages/);
+		assertDefined(infoPart);
+		expect(infoPart.text).toContain('Context compacted:');
+		expect(infoPart.text).toMatch(/summarized \d+ earlier messages/);
 	});
 
 	it('threshold=0 disables auto-compaction even with a tiny context window', async () => {
@@ -429,12 +422,12 @@ describe('ConversationDurableObject.#generate — auto-compaction', () => {
 
 		const filler = 'lorem ipsum dolor sit amet '.repeat(80);
 		await seedMessages(stub, [
-			{ id: 'u0', role: 'user', content: 'q0 ' + filler, createdAt: 100 },
-			{ id: 'a0', role: 'assistant', content: 'a0 ' + filler, model: 'fake/model', createdAt: 101 },
-			{ id: 'u1', role: 'user', content: 'q1 ' + filler, createdAt: 102 },
-			{ id: 'a1', role: 'assistant', content: 'a1 ' + filler, model: 'fake/model', createdAt: 103 },
-			{ id: 'u2', role: 'user', content: 'q2 ' + filler, createdAt: 104 },
-			{ id: 'a2', role: 'assistant', content: 'a2 ' + filler, model: 'fake/model', createdAt: 105 },
+			{ content: `q0 ${filler}`, createdAt: 100, id: 'u0', role: 'user' },
+			{ content: `a0 ${filler}`, createdAt: 101, id: 'a0', model: 'fake/model', role: 'assistant' },
+			{ content: `q1 ${filler}`, createdAt: 102, id: 'u1', role: 'user' },
+			{ content: `a1 ${filler}`, createdAt: 103, id: 'a1', model: 'fake/model', role: 'assistant' },
+			{ content: `q2 ${filler}`, createdAt: 104, id: 'u2', role: 'user' },
+			{ content: `a2 ${filler}`, createdAt: 105, id: 'a2', model: 'fake/model', role: 'assistant' },
 		]);
 
 		// Only a single turn — if compaction tries to run we'd see a second
@@ -448,10 +441,9 @@ describe('ConversationDurableObject.#generate — auto-compaction', () => {
 		expect(calls).toHaveLength(1); // generate only, no summary call
 
 		const state = await readState(stub);
-		const last = state.messages.at(-1)!;
-		const hasCompactInfo = last.parts?.some(
-			(p) => p.type === 'info' && p.text.startsWith('Context compacted:'),
-		);
+		const last = state.messages.at(-1);
+		assertDefined(last);
+		const hasCompactInfo = last.parts?.some((p) => p.type === 'info' && p.text.startsWith('Context compacted:'));
 		expect(hasCompactInfo).toBeFalsy();
 	});
 
@@ -465,18 +457,18 @@ describe('ConversationDurableObject.#generate — auto-compaction', () => {
 		await setSetting(env, 'context_compaction_threshold', '50');
 
 		await seedMessages(stub, [
-			{ id: 'u0', role: 'user', content: 'q0', createdAt: 100 },
-			{ id: 'a0', role: 'assistant', content: 'a0', model: 'fake/model', createdAt: 101 },
-			{ id: 'u1', role: 'user', content: 'q1', createdAt: 102 },
-			{ id: 'a1', role: 'assistant', content: 'a1', model: 'fake/model', createdAt: 103 },
-			{ id: 'u2', role: 'user', content: 'q2', createdAt: 104 },
+			{ content: 'q0', createdAt: 100, id: 'u0', role: 'user' },
+			{ content: 'a0', createdAt: 101, id: 'a0', model: 'fake/model', role: 'assistant' },
+			{ content: 'q1', createdAt: 102, id: 'u1', role: 'user' },
+			{ content: 'a1', createdAt: 103, id: 'a1', model: 'fake/model', role: 'assistant' },
+			{ content: 'q2', createdAt: 104, id: 'u2', role: 'user' },
 			{
-				id: 'a2',
-				role: 'assistant',
 				content: 'a2',
-				model: 'fake/model',
-				usage_json: JSON.stringify({ inputTokens: 5000, cacheReadInputTokens: 4900 }),
 				createdAt: 105,
+				id: 'a2',
+				model: 'fake/model',
+				role: 'assistant',
+				usage_json: JSON.stringify({ cacheReadInputTokens: 4900, inputTokens: 5000 }),
 			},
 		]);
 
@@ -488,11 +480,10 @@ describe('ConversationDurableObject.#generate — auto-compaction', () => {
 		const calls = await readLLMCalls(stub);
 		expect(calls).toHaveLength(1);
 		const state = await readState(stub);
-		const last = state.messages.at(-1)!;
+		const last = state.messages.at(-1);
+		assertDefined(last);
 		expect(last.content).toBe('cached reply');
-		const hasCompactInfo = last.parts?.some(
-			(p) => p.type === 'info' && p.text.startsWith('Context compacted:'),
-		);
+		const hasCompactInfo = last.parts?.some((p) => p.type === 'info' && p.text.startsWith('Context compacted:'));
 		expect(hasCompactInfo).toBeFalsy();
 	});
 
@@ -505,21 +496,21 @@ describe('ConversationDurableObject.#generate — auto-compaction', () => {
 		await setSetting(env, 'context_compaction_threshold', '50');
 
 		await seedMessages(stub, [
-			{ id: 'u0', role: 'user', content: 'q0', createdAt: 100 },
-			{ id: 'a0', role: 'assistant', content: 'a0', model: 'fake/model', createdAt: 101 },
-			{ id: 'u1', role: 'user', content: 'q1', createdAt: 102 },
-			{ id: 'a1', role: 'assistant', content: 'a1', model: 'fake/model', createdAt: 103 },
-			{ id: 'u2', role: 'user', content: 'q2', createdAt: 104 },
+			{ content: 'q0', createdAt: 100, id: 'u0', role: 'user' },
+			{ content: 'a0', createdAt: 101, id: 'a0', model: 'fake/model', role: 'assistant' },
+			{ content: 'q1', createdAt: 102, id: 'u1', role: 'user' },
+			{ content: 'a1', createdAt: 103, id: 'a1', model: 'fake/model', role: 'assistant' },
+			{ content: 'q2', createdAt: 104, id: 'u2', role: 'user' },
 			{
-				id: 'a2',
-				role: 'assistant',
 				content: 'a2',
+				createdAt: 105,
+				id: 'a2',
 				model: 'fake/model',
+				role: 'assistant',
 				usage_json: JSON.stringify({
 					promptTokens: 1500,
 					promptTokensDetails: { cachedTokens: 0 },
 				}),
-				createdAt: 105,
 			},
 		]);
 
@@ -545,27 +536,27 @@ describe('ConversationDurableObject.#generate — auto-compaction', () => {
 
 		await seedMessages(stub, [
 			{
-				id: 'old0',
-				role: 'user',
 				content: 'OLD-SECRET',
 				createdAt: 50,
 				deletedAt: 60,
+				id: 'old0',
+				role: 'user',
 			},
 			{
-				id: 'old1',
-				role: 'assistant',
 				content: 'OLD-RESPONSE',
-				model: 'fake/model',
 				createdAt: 51,
 				deletedAt: 60,
-			},
-			{ id: 'u0', role: 'user', content: 'visible q', createdAt: 100 },
-			{
-				id: 'a0',
-				role: 'assistant',
-				content: 'visible a',
+				id: 'old1',
 				model: 'fake/model',
+				role: 'assistant',
+			},
+			{ content: 'visible q', createdAt: 100, id: 'u0', role: 'user' },
+			{
+				content: 'visible a',
 				createdAt: 101,
+				id: 'a0',
+				model: 'fake/model',
+				role: 'assistant',
 			},
 		]);
 
@@ -575,9 +566,7 @@ describe('ConversationDurableObject.#generate — auto-compaction', () => {
 
 		const calls = await readLLMCalls(stub);
 		expect(calls).toHaveLength(1);
-		const flat = calls[0].messages.map((m) =>
-			typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
-		);
+		const flat = calls[0].messages.map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)));
 		// Soft-deleted content must not have leaked back into the request.
 		expect(flat.some((c) => c.includes('OLD-SECRET'))).toBe(false);
 		expect(flat.some((c) => c.includes('OLD-RESPONSE'))).toBe(false);
@@ -593,18 +582,18 @@ describe('ConversationDurableObject.#generate — auto-compaction', () => {
 
 		const filler = 'lorem ipsum dolor sit amet '.repeat(80);
 		await seedMessages(stub, [
-			{ id: 'u0', role: 'user', content: 'q0 ' + filler, createdAt: 100 },
-			{ id: 'a0', role: 'assistant', content: 'a0 ' + filler, model: 'fake/model', createdAt: 101 },
-			{ id: 'u1', role: 'user', content: 'q1 ' + filler, createdAt: 102 },
-			{ id: 'a1', role: 'assistant', content: 'a1 ' + filler, model: 'fake/model', createdAt: 103 },
-			{ id: 'u2', role: 'user', content: 'q2 ' + filler, createdAt: 104 },
+			{ content: `q0 ${filler}`, createdAt: 100, id: 'u0', role: 'user' },
+			{ content: `a0 ${filler}`, createdAt: 101, id: 'a0', model: 'fake/model', role: 'assistant' },
+			{ content: `q1 ${filler}`, createdAt: 102, id: 'u1', role: 'user' },
+			{ content: `a1 ${filler}`, createdAt: 103, id: 'a1', model: 'fake/model', role: 'assistant' },
+			{ content: `q2 ${filler}`, createdAt: 104, id: 'u2', role: 'user' },
 			{
-				id: 'a2',
-				role: 'assistant',
-				content: 'a2 ' + filler,
-				model: 'fake/model',
-				usage_json: JSON.stringify({ inputTokens: 1500 }),
+				content: `a2 ${filler}`,
 				createdAt: 105,
+				id: 'a2',
+				model: 'fake/model',
+				role: 'assistant',
+				usage_json: JSON.stringify({ inputTokens: 1500 }),
 			},
 		]);
 

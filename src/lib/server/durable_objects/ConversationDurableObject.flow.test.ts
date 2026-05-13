@@ -5,19 +5,13 @@
 
 import { env, runInDurableObject } from 'cloudflare:test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createConversation } from '../conversations';
-import { createMcpServer } from '../mcp_servers';
-import { setSetting } from '../settings';
-import { textTurn, toolUseTurn } from '../../../../test/fakes/FakeLLM';
-import {
-	readLLMCalls,
-	readState,
-	setOverride,
-	stubFor,
-	waitForState,
-} from './conversation/_test-helpers';
-import type { ContentBlock } from '../llm/LLM';
 import type { ToolResultPart, ToolUsePart } from '$lib/types/conversation';
+import { assertDefined } from '../../../../test/assert-defined';
+import { textTurn, toolUseTurn } from '../../../../test/fakes/FakeLLM';
+import { createConversation } from '../conversations';
+import type { ContentBlock } from '../llm/LLM';
+import { createMcpServer } from '../mcp_servers';
+import { readLLMCalls, readState, setOverride, stubFor, waitForState } from './conversation/_test-helpers';
 
 afterEach(async () => {
 	vi.restoreAllMocks();
@@ -45,10 +39,7 @@ describe('ConversationDurableObject — full SSE + generate flow', () => {
 		// rows are seeded and `delta` for each text chunk during generation.
 		let buffer = '';
 		const deadline = Date.now() + 5000;
-		while (
-			Date.now() < deadline &&
-			!(buffer.includes('event: refresh') && buffer.includes('event: delta'))
-		) {
+		while (Date.now() < deadline && !(buffer.includes('event: refresh') && buffer.includes('event: delta'))) {
 			const { value, done } = await reader.read();
 			if (done) break;
 			if (value) buffer += decoder.decode(value, { stream: true });
@@ -60,7 +51,8 @@ describe('ConversationDurableObject — full SSE + generate flow', () => {
 
 		await waitForState(stub, (s) => s.messages.at(-1)?.status === 'complete', { timeoutMs: 2000 });
 		const state = await readState(stub);
-		const last = state.messages.at(-1)!;
+		const last = state.messages.at(-1);
+		assertDefined(last);
 		expect(last.role).toBe('assistant');
 		expect(last.content).toBe('done');
 	});
@@ -71,10 +63,7 @@ describe('ConversationDurableObject — multi-turn tool loop', () => {
 		const id = await createConversation(env);
 		const stub = stubFor(id);
 		// Turn 1: model asks to remember something. Turn 2: model emits final text.
-		await setOverride(stub, [
-			toolUseTurn('t1', 'remember', { content: 'I prefer brief replies' }).events,
-			textTurn('saved').events,
-		]);
+		await setOverride(stub, [toolUseTurn('t1', 'remember', { content: 'I prefer brief replies' }).events, textTurn('saved').events]);
 
 		await stub.addUserMessage(id, 'remember this', 'fake/model');
 		await waitForState(stub, (s) => s.messages.at(-1)?.status === 'complete', { timeoutMs: 5000 });
@@ -86,7 +75,8 @@ describe('ConversationDurableObject — multi-turn tool loop', () => {
 		const turn2 = calls[1];
 		const toolMsg = turn2.messages.find((m) => m.role === 'tool');
 		expect(toolMsg).toBeTruthy();
-		const blocks = (toolMsg!.content as ContentBlock[]).filter(
+		assertDefined(toolMsg);
+		const blocks = (toolMsg.content as ContentBlock[]).filter(
 			(b): b is Extract<ContentBlock, { type: 'tool_result' }> => b.type === 'tool_result',
 		);
 		expect(blocks.some((b) => b.toolUseId === 't1')).toBe(true);
@@ -114,42 +104,39 @@ describe('ConversationDurableObject — MCP tool integration', () => {
 			if (url === 'https://mcp.example.com/server' && body?.method === 'tools/list') {
 				return new Response(
 					JSON.stringify({
-						jsonrpc: '2.0',
 						id: body.id,
+						jsonrpc: '2.0',
 						result: {
 							tools: [
 								{
-									name: 'echo',
 									description: 'Echo input back',
 									inputSchema: {
-										type: 'object',
 										properties: { text: { type: 'string' } },
 										required: ['text'],
+										type: 'object',
 									},
+									name: 'echo',
 								},
 							],
 						},
 					}),
-					{ status: 200, headers: { 'content-type': 'application/json' } },
+					{ headers: { 'content-type': 'application/json' }, status: 200 },
 				);
 			}
 			if (url === 'https://mcp.example.com/server' && body?.method === 'tools/call') {
 				return new Response(
 					JSON.stringify({
-						jsonrpc: '2.0',
 						id: body.id,
-						result: { content: [{ type: 'text', text: 'echoed: hi MCP' }] },
+						jsonrpc: '2.0',
+						result: { content: [{ text: 'echoed: hi MCP', type: 'text' }] },
 					}),
-					{ status: 200, headers: { 'content-type': 'application/json' } },
+					{ headers: { 'content-type': 'application/json' }, status: 200 },
 				);
 			}
 			throw new Error(`unexpected fetch ${url} ${body?.method}`);
 		});
 
-		await setOverride(stub, [
-			toolUseTurn('m1', namespacedTool, { text: 'hi MCP' }).events,
-			textTurn('all done').events,
-		]);
+		await setOverride(stub, [toolUseTurn('m1', namespacedTool, { text: 'hi MCP' }).events, textTurn('all done').events]);
 
 		await stub.addUserMessage(id, 'use the MCP tool', 'fake/model');
 		const state = await waitForState(stub, (s) => s.messages.at(-1)?.status === 'complete', {
@@ -158,16 +145,15 @@ describe('ConversationDurableObject — MCP tool integration', () => {
 
 		// Two upstream MCP calls: list, then call.
 		expect(fetchSpy).toHaveBeenCalledTimes(2);
-		const bodies = fetchSpy.mock.calls.map(
-			(c) => JSON.parse((c[1] as RequestInit).body as string) as { method: string; params?: unknown },
-		);
+		const bodies = fetchSpy.mock.calls.map((c) => JSON.parse((c[1] as RequestInit).body as string) as { method: string; params?: unknown });
 		expect(bodies.map((b) => b.method)).toEqual(['tools/list', 'tools/call']);
 		const callParams = bodies[1].params as { name: string; arguments: { text: string } };
 		expect(callParams.name).toBe('echo');
 		expect(callParams.arguments).toEqual({ text: 'hi MCP' });
 
 		// Final assistant message has the tool_use + tool_result + text.
-		const last = state.messages.at(-1)!;
+		const last = state.messages.at(-1);
+		assertDefined(last);
 		const toolUse = last.parts?.find((p): p is ToolUsePart => p.type === 'tool_use');
 		const toolResult = last.parts?.find((p): p is ToolResultPart => p.type === 'tool_result');
 		expect(toolUse?.name).toBe(namespacedTool);
@@ -210,14 +196,10 @@ describe('ConversationDurableObject — compactContext', () => {
 		expect(result.droppedCount).toBeGreaterThan(0);
 
 		const state = await readState(stub);
-		const summary = state.messages.find((m) =>
-			m.parts?.some((p) => p.type === 'info' && p.text.includes('Context compacted')),
-		);
+		const summary = state.messages.find((m) => m.parts?.some((p) => p.type === 'info' && p.text.includes('Context compacted')));
 		expect(summary).toBeTruthy();
 		// At least the most-recent two exchanges (4 messages) are kept.
-		const remainingNonSummary = state.messages.filter(
-			(m) => !m.parts?.some((p) => p.type === 'info'),
-		);
+		const remainingNonSummary = state.messages.filter((m) => !m.parts?.some((p) => p.type === 'info'));
 		expect(remainingNonSummary.length).toBeGreaterThanOrEqual(4);
 	});
 
@@ -226,7 +208,7 @@ describe('ConversationDurableObject — compactContext', () => {
 		const stub = stubFor(id);
 		// Override with a turn that emits a delta but never `done` — leaves
 		// the DO in an inProgress state.
-		await setOverride(stub, [[{ type: 'text_delta', delta: 'partial' }]]);
+		await setOverride(stub, [[{ delta: 'partial', type: 'text_delta' }]]);
 		await stub.addUserMessage(id, 'hi', 'fake/model');
 		const result = await stub.compactContext(id);
 		expect(result).toEqual({ compacted: false, droppedCount: 0 });
@@ -238,7 +220,7 @@ describe('ConversationDurableObject — abort flow', () => {
 		const id = await createConversation(env);
 		const stub = stubFor(id);
 		// Slow turn: emits a delta but never finishes.
-		await setOverride(stub, [[{ type: 'text_delta', delta: 'half-done' }]]);
+		await setOverride(stub, [[{ delta: 'half-done', type: 'text_delta' }]]);
 		await stub.addUserMessage(id, 'go', 'fake/model');
 		// Wait until the assistant row exists and is streaming.
 		await waitForState(stub, (s) => s.messages.some((m) => m.role === 'assistant'), {
@@ -246,7 +228,8 @@ describe('ConversationDurableObject — abort flow', () => {
 		});
 		await stub.abortGeneration(id);
 		const state = await readState(stub);
-		const last = state.messages.at(-1)!;
+		const last = state.messages.at(-1);
+		assertDefined(last);
 		expect(last.role).toBe('assistant');
 		expect(last.status).toBe('complete');
 		expect(state.inProgress).toBeNull();

@@ -1,6 +1,6 @@
+import { error } from '@sveltejs/kit';
 import { listConversations } from '$lib/server/conversations';
 import { listTags, tagsForConversations } from '$lib/server/tags';
-import { error } from '@sveltejs/kit';
 import type { LayoutServerLoad } from './$types';
 
 // Layout-level load — runs on every request and feeds the sidebar's
@@ -12,7 +12,10 @@ export const load: LayoutServerLoad = async ({ platform, locals }) => {
 	const conversations = await listConversations(env);
 	const [tags, tagMap] = await Promise.all([
 		listTags(env),
-		tagsForConversations(env, conversations.map((c) => c.id)),
+		tagsForConversations(
+			env,
+			conversations.map((c) => c.id),
+		),
 	]);
 	const conversationTags: Record<string, number[]> = {};
 	for (const [convId, tagList] of tagMap) {
@@ -20,8 +23,8 @@ export const load: LayoutServerLoad = async ({ platform, locals }) => {
 	}
 	return {
 		conversations,
-		tags,
 		conversationTags,
+		tags,
 		theme: locals.theme,
 	};
 };

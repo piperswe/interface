@@ -1,13 +1,14 @@
 import { env } from 'cloudflare:test';
 import { afterEach, describe, expect, it } from 'vitest';
+import { assertDefined } from '../../../../test/assert-defined';
 import {
+	_assertValidEndpoint,
 	createProvider,
 	deleteProvider,
 	getProvider,
 	isValidProviderId,
 	listProviders,
 	updateProvider,
-	_assertValidEndpoint,
 } from './store';
 
 afterEach(async () => {
@@ -43,19 +44,19 @@ describe('isValidProviderId', () => {
 describe('createProvider + getProvider + listProviders', () => {
 	it('round-trips a provider with all optional fields set', async () => {
 		await createProvider(env, {
-			id: 'p1',
-			type: 'openai_compatible',
 			apiKey: 'sk-1',
 			endpoint: 'https://api.example/v1',
 			gatewayId: 'gw',
+			id: 'p1',
+			type: 'openai_compatible',
 		});
 		const row = await getProvider(env, 'p1');
 		expect(row).toMatchObject({
-			id: 'p1',
-			type: 'openai_compatible',
 			apiKey: 'sk-1',
 			endpoint: 'https://api.example/v1',
 			gatewayId: 'gw',
+			id: 'p1',
+			type: 'openai_compatible',
 		});
 		expect(row?.createdAt).toBeGreaterThan(0);
 		expect(row?.updatedAt).toBe(row?.createdAt);
@@ -98,10 +99,10 @@ describe('createProvider + getProvider + listProviders', () => {
 describe('updateProvider', () => {
 	it('patches individual fields without disturbing others', async () => {
 		await createProvider(env, {
-			id: 'p1',
-			type: 'openai_compatible',
 			apiKey: 'sk-1',
 			endpoint: 'https://api.example/v1',
+			id: 'p1',
+			type: 'openai_compatible',
 		});
 		await updateProvider(env, 'p1', { apiKey: 'sk-2' });
 		const after = await getProvider(env, 'p1');
@@ -110,7 +111,7 @@ describe('updateProvider', () => {
 	});
 
 	it('clears nullable fields when explicitly set to null', async () => {
-		await createProvider(env, { id: 'p1', type: 'openai_compatible', apiKey: 'sk-1', endpoint: 'https://x/v1' });
+		await createProvider(env, { apiKey: 'sk-1', endpoint: 'https://x/v1', id: 'p1', type: 'openai_compatible' });
 		await updateProvider(env, 'p1', { apiKey: null, endpoint: null, gatewayId: null });
 		const after = await getProvider(env, 'p1');
 		expect(after?.apiKey).toBeNull();
@@ -119,7 +120,7 @@ describe('updateProvider', () => {
 	});
 
 	it('is a no-op when input is empty', async () => {
-		await createProvider(env, { id: 'p1', type: 'anthropic', apiKey: 'sk-1' });
+		await createProvider(env, { apiKey: 'sk-1', id: 'p1', type: 'anthropic' });
 		const before = await getProvider(env, 'p1');
 		await updateProvider(env, 'p1', {});
 		const after = await getProvider(env, 'p1');
@@ -129,16 +130,18 @@ describe('updateProvider', () => {
 	});
 
 	it('bumps updated_at when at least one field changes', async () => {
-		await createProvider(env, { id: 'p1', type: 'anthropic', apiKey: 'sk-1' });
+		await createProvider(env, { apiKey: 'sk-1', id: 'p1', type: 'anthropic' });
 		const before = await getProvider(env, 'p1');
 		await new Promise((r) => setTimeout(r, 5));
 		await updateProvider(env, 'p1', { apiKey: 'sk-2' });
 		const after = await getProvider(env, 'p1');
-		expect(after!.updatedAt).toBeGreaterThan(before!.updatedAt);
+		assertDefined(after);
+		assertDefined(before);
+		expect(after.updatedAt).toBeGreaterThan(before.updatedAt);
 	});
 
 	it('is scoped by user_id', async () => {
-		await createProvider(env, { id: 'p1', type: 'anthropic', apiKey: 'sk-1' }, 1);
+		await createProvider(env, { apiKey: 'sk-1', id: 'p1', type: 'anthropic' }, 1);
 		await updateProvider(env, 'p1', { apiKey: 'hijacked' }, 2); // wrong user
 		expect((await getProvider(env, 'p1', 1))?.apiKey).toBe('sk-1');
 	});
@@ -151,7 +154,7 @@ describe('deleteProvider', () => {
 		expect(await getProvider(env, 'p1')).toBeNull();
 	});
 
-	it('is scoped by user_id (refuses to delete another user\'s row)', async () => {
+	it("is scoped by user_id (refuses to delete another user's row)", async () => {
 		// providers.id is globally unique so the same id can't exist under
 		// two users. Verify the `user_id` guard still prevents a wrong-user
 		// caller from deleting an existing row.

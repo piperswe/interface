@@ -2,7 +2,7 @@ import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
 import { z } from 'zod';
 import { safeValidate } from '$lib/zod-utils';
-import { ipv4OctetsArePrivate, ipv4MappedOctets } from '../url-guard';
+import { ipv4MappedOctets, ipv4OctetsArePrivate } from '../url-guard';
 import type { Tool, ToolContext, ToolExecutionResult } from './registry';
 
 const MAX_BYTES = 256 * 1024;
@@ -27,13 +27,7 @@ export function _hostIsPrivate(hostname: string): boolean {
 	// IPv6 literal — workerd surfaces these as bracketed.
 	if (host.startsWith('[') || host.includes(':')) {
 		const bare = host.replace(/^\[/, '').replace(/\]$/, '');
-		if (
-			bare === '::1' ||
-			bare === '::' ||
-			bare.startsWith('fc') ||
-			bare.startsWith('fd') ||
-			bare.startsWith('fe80:')
-		) {
+		if (bare === '::1' || bare === '::' || bare.startsWith('fc') || bare.startsWith('fd') || bare.startsWith('fe80:')) {
 			return true;
 		}
 		const mapped = ipv4MappedOctets(bare);
@@ -51,28 +45,28 @@ function urlIsSafe(url: URL): boolean {
 }
 
 const inputArgsSchema = z.object({
-	url: z.string(),
 	max_bytes: z.number().optional(),
 	readability: z.boolean().optional(),
+	url: z.string(),
 });
 
 const fetchUrlInputSchema = {
-	type: 'object',
 	properties: {
-		url: { type: 'string', format: 'uri', description: 'Absolute URL to fetch.' },
 		max_bytes: {
-			type: 'integer',
-			minimum: 1,
-			maximum: MAX_BYTES,
 			description: `Optional cap (default ${MAX_BYTES}). Bodies larger than this are truncated.`,
+			maximum: MAX_BYTES,
+			minimum: 1,
+			type: 'integer',
 		},
 		readability: {
-			type: 'boolean',
 			description:
-				'When the response is HTML, extract the article body via Readability (Mozilla\'s reader-mode engine) and return its plain text. Defaults to true. Set to false to receive the raw HTML.',
+				"When the response is HTML, extract the article body via Readability (Mozilla's reader-mode engine) and return its plain text. Defaults to true. Set to false to receive the raw HTML.",
+			type: 'boolean',
 		},
+		url: { description: 'Absolute URL to fetch.', format: 'uri', type: 'string' },
 	},
 	required: ['url'],
+	type: 'object',
 } as const;
 
 function isHtml(contentType: string | null): boolean {
@@ -121,15 +115,15 @@ function extractWithReadability(html: string, url: string): { content: string; t
 
 export const fetchUrlTool: Tool = {
 	definition: {
-		name: 'fetch_url',
 		description:
 			'Fetch the contents of a URL over HTTP(S). For HTML pages the article body is extracted with Readability by default (compact, model-friendly text). Pass `readability: false` to receive raw HTML instead. Useful for retrieving the contents of a specific known URL.',
 		inputSchema: fetchUrlInputSchema,
+		name: 'fetch_url',
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
 		const validated = safeValidate(inputArgsSchema, input);
 		if (!validated.ok) {
-			return { content: `Invalid input: ${validated.error}`, isError: true, errorCode: 'invalid_input' };
+			return { content: `Invalid input: ${validated.error}`, errorCode: 'invalid_input', isError: true };
 		}
 		const args = validated.value;
 		let parsed: URL;
@@ -194,9 +188,9 @@ export const fetchUrlTool: Tool = {
 			}
 
 			const truncated = hitCap
-				? body.slice(0, cap) + `\n…[truncated, original ≥${originalBytes} bytes]`
+				? `${body.slice(0, cap)}\n…[truncated, original ≥${originalBytes} bytes]`
 				: body.length > cap
-					? body.slice(0, cap) + `\n…[truncated, original ${body.length} bytes]`
+					? `${body.slice(0, cap)}\n…[truncated, original ${body.length} bytes]`
 					: body;
 			const header = `HTTP ${res.status} ${res.statusText} (${contentType ?? 'unknown'}; mode=${mode})`;
 			return {
@@ -212,14 +206,11 @@ export const fetchUrlTool: Tool = {
 // Read the response body up to `cap` bytes and stop. Avoids loading hostile
 // or huge origins into memory: we cancel the underlying reader as soon as
 // the cap is reached.
-async function readBodyWithCap(
-	res: Response,
-	cap: number,
-): Promise<{ text: string; originalBytes: number; hitCap: boolean }> {
+async function readBodyWithCap(res: Response, cap: number): Promise<{ text: string; originalBytes: number; hitCap: boolean }> {
 	if (!res.body) {
 		const text = await res.text();
 		const hitCap = text.length > cap;
-		return { text: hitCap ? text.slice(0, cap) : text, originalBytes: text.length, hitCap };
+		return { hitCap, originalBytes: text.length, text: hitCap ? text.slice(0, cap) : text };
 	}
 	const reader = res.body.getReader();
 	const decoder = new TextDecoder();
@@ -253,5 +244,5 @@ async function readBodyWithCap(
 			/* ignore */
 		}
 	}
-	return { text, originalBytes: bytes, hitCap };
+	return { hitCap, originalBytes: bytes, text };
 }

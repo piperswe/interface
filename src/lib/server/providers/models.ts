@@ -1,9 +1,9 @@
 // D1 CRUD for provider_models. A model's global ID is `{provider_id}/{model_id}`.
 
 import { now as nowMs } from '../clock';
+import { getProvider } from './store';
 import type { ProviderModel, ReasoningType, ResolvedModel } from './types';
 import { buildGlobalModelId, parseGlobalModelId } from './types';
-import { getProvider } from './store';
 
 const SINGLE_USER_ID = 1;
 
@@ -27,17 +27,17 @@ const MODEL_COLUMNS =
 
 function rowToModel(r: ModelRow): ProviderModel {
 	return {
-		id: r.id,
-		providerId: r.provider_id,
-		name: r.name,
-		description: r.description,
-		maxContextLength: r.max_context_length,
-		reasoningType: (r.reasoning_type as ReasoningType | null) ?? null,
-		inputCostPerMillionTokens: r.input_cost_per_million_tokens,
-		outputCostPerMillionTokens: r.output_cost_per_million_tokens,
-		supportsImageInput: !!r.supports_image_input,
-		sortOrder: r.sort_order,
 		createdAt: r.created_at,
+		description: r.description,
+		id: r.id,
+		inputCostPerMillionTokens: r.input_cost_per_million_tokens,
+		maxContextLength: r.max_context_length,
+		name: r.name,
+		outputCostPerMillionTokens: r.output_cost_per_million_tokens,
+		providerId: r.provider_id,
+		reasoningType: (r.reasoning_type as ReasoningType | null) ?? null,
+		sortOrder: r.sort_order,
+		supportsImageInput: !!r.supports_image_input,
 		updatedAt: r.updated_at,
 	};
 }
@@ -81,7 +81,7 @@ export async function getResolvedModel(env: Env, globalId: string, userId: numbe
 	const { providerId, modelId } = parseGlobalModelId(globalId);
 	const [provider, model] = await Promise.all([getProvider(env, providerId, userId), getModel(env, providerId, modelId, userId)]);
 	if (!provider || !model) return null;
-	return { globalId, provider, model };
+	return { globalId, model, provider };
 }
 
 export type CreateModelInput = {
@@ -133,9 +133,9 @@ export async function updateModel(
 	const fields: string[] = [];
 	const values: (string | number | null)[] = [];
 
-	if ('name' in input) {
+	if (input.name !== undefined) {
 		fields.push('name = ?');
-		values.push(input.name!);
+		values.push(input.name);
 	}
 	if ('description' in input) {
 		fields.push('description = ?');
@@ -213,9 +213,7 @@ export async function moveModelToPosition(
 		insertIdx = idx === -1 ? withoutModel.length : idx;
 	}
 	withoutModel.splice(insertIdx, 0, dragged);
-	await Promise.all(
-		withoutModel.map((m, idx) => updateModel(env, providerId, m.id, { sortOrder: idx }, userId)),
-	);
+	await Promise.all(withoutModel.map((m, idx) => updateModel(env, providerId, m.id, { sortOrder: idx }, userId)));
 }
 
 /** Swap sort_order between two models in the same provider. */

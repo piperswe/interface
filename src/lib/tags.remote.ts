@@ -1,13 +1,6 @@
-import { command, form, getRequestEvent } from '$app/server';
 import { error, redirect } from '@sveltejs/kit';
 import { z } from 'zod';
-import {
-	addTagToConversation,
-	createTag,
-	deleteTag,
-	removeTagFromConversation,
-	renameTag,
-} from '$lib/server/tags';
+import { command, form, getRequestEvent } from '$app/server';
 import {
 	conversationIdSchema,
 	positiveIntFlexible,
@@ -16,6 +9,7 @@ import {
 	trimmedNonEmpty,
 	trimmedOptionalOrNull,
 } from '$lib/server/remote-schemas';
+import { addTagToConversation, createTag, deleteTag, removeTagFromConversation, renameTag } from '$lib/server/tags';
 
 function getEnv(): Env {
 	const event = getRequestEvent();
@@ -25,13 +19,13 @@ function getEnv(): Env {
 
 export const addTag = form(
 	z.object({
-		name: trimmedNonEmpty('Tag name is required'),
 		color: trimmedOptionalOrNull,
+		name: trimmedNonEmpty('Tag name is required'),
 		redirectTo: safeRedirectPath('/settings'),
 	}),
 	async ({ name, color, redirectTo }) => {
 		try {
-			await createTag(getEnv(), { name, color });
+			await createTag(getEnv(), { color, name });
 		} catch (e) {
 			error(400, e instanceof Error ? e.message : String(e));
 		}
@@ -41,13 +35,13 @@ export const addTag = form(
 
 export const renameTagForm = form(
 	z.object({
+		color: trimmedOptionalOrNull,
 		id: positiveIntFromString,
 		name: trimmedOptionalOrNull,
-		color: trimmedOptionalOrNull,
 	}),
 	async ({ id, name, color }) => {
 		try {
-			await renameTag(getEnv(), id, { name: name ?? undefined, color });
+			await renameTag(getEnv(), id, { color, name: name ?? undefined });
 		} catch (e) {
 			error(400, e instanceof Error ? e.message : String(e));
 		}
@@ -55,20 +49,17 @@ export const renameTagForm = form(
 	},
 );
 
-export const removeTag = form(
-	z.object({ id: positiveIntFromString }),
-	async ({ id }) => {
-		await deleteTag(getEnv(), id);
-		redirect(303, '/settings');
-	},
-);
+export const removeTag = form(z.object({ id: positiveIntFromString }), async ({ id }) => {
+	await deleteTag(getEnv(), id);
+	redirect(303, '/settings');
+});
 
 // Quick-tag command from the conversation header. Idempotent.
 export const tagConversation = command(
 	z.object({
+		attached: z.boolean(),
 		conversationId: conversationIdSchema,
 		tagId: positiveIntFlexible,
-		attached: z.boolean(),
 	}),
 	async ({ conversationId, tagId, attached }) => {
 		const env = getEnv();
@@ -83,20 +74,18 @@ export const tagConversation = command(
 // when the unique-name constraint fires.
 export const createAndTagConversation = command(
 	z.object({
+		color: z.string().nullable().optional(),
 		conversationId: conversationIdSchema,
 		name: trimmedNonEmpty('Tag name is required'),
-		color: z.string().nullable().optional(),
 	}),
 	async ({ conversationId, name, color }) => {
 		const env = getEnv();
 		let tagId: number;
 		try {
-			tagId = await createTag(env, { name, color: color ?? null });
+			tagId = await createTag(env, { color: color ?? null, name });
 		} catch {
 			// Race or duplicate: look up the existing tag id.
-			const row = await env.DB.prepare('SELECT id FROM tags WHERE user_id = 1 AND name = ?')
-				.bind(name)
-				.first<{ id: number }>();
+			const row = await env.DB.prepare('SELECT id FROM tags WHERE user_id = 1 AND name = ?').bind(name).first<{ id: number }>();
 			if (!row) error(500, 'failed to create or look up tag');
 			tagId = row.id;
 		}

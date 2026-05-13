@@ -2,16 +2,16 @@ import type { Handle } from '@sveltejs/kit';
 import { getSetting } from '$lib/server/settings';
 
 const SECURE_HEADERS: Record<string, string> = {
+	'Cross-Origin-Opener-Policy': 'same-origin',
+	'Cross-Origin-Resource-Policy': 'same-origin',
+	'Origin-Agent-Cluster': '?1',
+	'Permissions-Policy': '',
 	'Referrer-Policy': 'no-referrer',
+	'Strict-Transport-Security': 'max-age=15552000; includeSubDomains',
 	'X-Content-Type-Options': 'nosniff',
-	'X-Frame-Options': 'SAMEORIGIN',
 	'X-DNS-Prefetch-Control': 'off',
 	'X-Download-Options': 'noopen',
-	'Strict-Transport-Security': 'max-age=15552000; includeSubDomains',
-	'Cross-Origin-Resource-Policy': 'same-origin',
-	'Cross-Origin-Opener-Policy': 'same-origin',
-	'Permissions-Policy': '',
-	'Origin-Agent-Cluster': '?1',
+	'X-Frame-Options': 'SAMEORIGIN',
 };
 
 function isTheme(v: string | null | undefined): v is App.Locals['theme'] {
@@ -30,7 +30,7 @@ async function readTheme(env: Env): Promise<App.Locals['theme']> {
 	if (themeCache && now - themeCache.fetchedAt < THEME_TTL_MS) return themeCache.value;
 	const stored = await getSetting(env, 'theme');
 	const value = isTheme(stored) ? stored : 'system';
-	themeCache = { value, fetchedAt: now };
+	themeCache = { fetchedAt: now, value };
 	return value;
 }
 

@@ -1,15 +1,16 @@
 import { error, redirect } from '@sveltejs/kit';
-import { getMcpServer, setMcpServerOauthClient } from '$lib/server/mcp_servers';
 import {
 	buildAuthorizationUrl,
+	type DiscoveredOauthEndpoints,
 	discoverEndpoints,
 	dynamicallyRegister,
 	generateCodeVerifier,
 	generateState,
-	s256Challenge,
 	OauthDiscoveryError,
+	s256Challenge,
 } from '$lib/server/mcp/oauth';
 import { persistAuthState, pruneExpiredAuthState } from '$lib/server/mcp/oauth_store';
+import { getMcpServer, setMcpServerOauthClient } from '$lib/server/mcp_servers';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ params, url, platform }) => {
@@ -27,7 +28,7 @@ export const GET: RequestHandler = async ({ params, url, platform }) => {
 	let oauth = server.oauth;
 	if (!oauth?.clientId || !oauth.authorizationEndpoint || !oauth.tokenEndpoint) {
 		// Discover endpoints on first connect (or after a registration reset).
-		let discovered;
+		let discovered: DiscoveredOauthEndpoints;
 		try {
 			discovered = await discoverEndpoints(server.url);
 		} catch (e) {
@@ -53,26 +54,27 @@ export const GET: RequestHandler = async ({ params, url, platform }) => {
 			clientId = reg.clientId;
 			clientSecret = reg.clientSecret;
 		}
+		if (!clientId) error(500, 'failed to obtain OAuth client id');
 		await setMcpServerOauthClient(env, id, {
-			authorizationServer: discovered.authorizationServer,
 			authorizationEndpoint: discovered.authorizationEndpoint,
-			tokenEndpoint: discovered.tokenEndpoint,
-			registrationEndpoint: discovered.registrationEndpoint,
-			clientId: clientId!,
+			authorizationServer: discovered.authorizationServer,
+			clientId,
 			clientSecret: clientSecret,
+			registrationEndpoint: discovered.registrationEndpoint,
 			scopes: discovered.scopes,
+			tokenEndpoint: discovered.tokenEndpoint,
 		});
 		oauth = {
-			authorizationServer: discovered.authorizationServer,
+			accessToken: null,
 			authorizationEndpoint: discovered.authorizationEndpoint,
-			tokenEndpoint: discovered.tokenEndpoint,
-			registrationEndpoint: discovered.registrationEndpoint,
+			authorizationServer: discovered.authorizationServer,
 			clientId,
 			clientSecret,
-			scopes: discovered.scopes,
-			accessToken: null,
-			refreshToken: null,
 			expiresAt: null,
+			refreshToken: null,
+			registrationEndpoint: discovered.registrationEndpoint,
+			scopes: discovered.scopes,
+			tokenEndpoint: discovered.tokenEndpoint,
 		};
 	}
 
@@ -80,16 +82,18 @@ export const GET: RequestHandler = async ({ params, url, platform }) => {
 	const codeChallenge = await s256Challenge(codeVerifier);
 	const state = generateState();
 	const redirectUri = `${url.origin}/settings/mcp/${id}/callback`;
-	await persistAuthState(env, { state, serverId: id, codeVerifier, redirectUri });
+	await persistAuthState(env, { codeVerifier, redirectUri, serverId: id, state });
 
+	const { authorizationEndpoint: authEndpoint, clientId: oauthClientId } = oauth;
+	if (!authEndpoint || !oauthClientId) error(500, 'OAuth client missing required fields');
 	const authUrl = buildAuthorizationUrl({
-		authorizationEndpoint: oauth.authorizationEndpoint!,
-		clientId: oauth.clientId!,
-		redirectUri,
-		state,
+		authorizationEndpoint: authEndpoint,
+		clientId: oauthClientId,
 		codeChallenge,
-		scopes: oauth.scopes,
+		redirectUri,
 		resource: server.url,
+		scopes: oauth.scopes,
+		state,
 	});
 	redirect(303, authUrl);
 };

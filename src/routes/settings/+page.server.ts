@@ -1,30 +1,30 @@
 import { error } from '@sveltejs/kit';
-import { listMcpServers } from '$lib/server/mcp_servers';
+import { listConversations } from '$lib/server/conversations';
 import { listCustomTools } from '$lib/server/custom_tools';
+import { MCP_SERVER_PRESETS } from '$lib/server/mcp/presets';
+import { listMcpServers } from '$lib/server/mcp_servers';
+import { listMemories } from '$lib/server/memories';
+import { listAllModels } from '$lib/server/providers/models';
+import { PROVIDER_PRESETS } from '$lib/server/providers/presets';
+import { listProviders } from '$lib/server/providers/store';
+import { listBackends } from '$lib/server/sandbox';
+import { listSchedules } from '$lib/server/schedules';
 import {
 	describeSecretKeys,
 	getContextCompactionSummaryTokens,
 	getContextCompactionThreshold,
 	getKagiCostPer1000Searches,
+	getSandboxBackendId,
+	getSetting,
 	getSystemPrompt,
 	getTtsVoice,
 	getUserBio,
-	getSetting,
 	getWorkspaceIoMode,
-	getSandboxBackendId,
 } from '$lib/server/settings';
-import { listBackends } from '$lib/server/sandbox';
-import { TTS_VOICES } from '$lib/server/tts';
-import { listSubAgents } from '$lib/server/sub_agents';
-import { listProviders } from '$lib/server/providers/store';
-import { listAllModels } from '$lib/server/providers/models';
-import { listMemories } from '$lib/server/memories';
 import { listStyles } from '$lib/server/styles';
+import { listSubAgents } from '$lib/server/sub_agents';
 import { listTags } from '$lib/server/tags';
-import { listSchedules } from '$lib/server/schedules';
-import { listConversations } from '$lib/server/conversations';
-import { PROVIDER_PRESETS } from '$lib/server/providers/presets';
-import { MCP_SERVER_PRESETS } from '$lib/server/mcp/presets';
+import { TTS_VOICES } from '$lib/server/tts';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ platform }) => {
@@ -74,35 +74,35 @@ export const load: PageServerLoad = async ({ platform }) => {
 		listCustomTools(env),
 	]);
 	const sandboxBackends = listBackends().map((b) => ({
-		id: b.id,
 		available: b.isAvailable(env),
+		id: b.id,
 	}));
 	return {
-		secretKeys: describeSecretKeys(env),
-		mcpServers,
+		contextCompactionSummaryTokens: summaryTokens,
+		contextCompactionThreshold: threshold,
+		conversations,
+		customTools,
+		defaultModel: defaultModel ?? '',
+		hasWorkerLoader: !!env.RUN_JS_LOADER,
+		kagiCostPer1000Searches,
 		mcpPresets: MCP_SERVER_PRESETS,
-		subAgents,
-		providers,
+		mcpServers,
+		memories,
 		models: allModels,
 		presets: PROVIDER_PRESETS,
-		contextCompactionThreshold: threshold,
-		contextCompactionSummaryTokens: summaryTokens,
-		systemPrompt: systemPrompt ?? '',
-		userBio: userBio ?? '',
-		defaultModel: defaultModel ?? '',
-		titleModel: titleModel ?? '',
-		memories,
-		styles,
-		tags,
-		schedules,
-		conversations,
-		kagiCostPer1000Searches,
-		ttsVoice,
-		ttsVoices: TTS_VOICES,
-		workspaceIoMode,
+		providers,
 		sandboxBackend,
 		sandboxBackends,
-		customTools,
-		hasWorkerLoader: !!env.RUN_JS_LOADER,
+		schedules,
+		secretKeys: describeSecretKeys(env),
+		styles,
+		subAgents,
+		systemPrompt: systemPrompt ?? '',
+		tags,
+		titleModel: titleModel ?? '',
+		ttsVoice,
+		ttsVoices: TTS_VOICES,
+		userBio: userBio ?? '',
+		workspaceIoMode,
 	};
 };

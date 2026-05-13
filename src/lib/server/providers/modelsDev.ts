@@ -7,9 +7,9 @@
 
 import { z } from 'zod';
 import { validateOrThrow } from '$lib/zod-utils';
+import { inferReasoningType } from './fetch';
 import type { CreateModelInput } from './models';
 import type { ReasoningType } from './types';
-import { inferReasoningType } from './fetch';
 
 const MODELS_DEV_URL = 'https://models.dev/api.json';
 const CACHE_TTL_SECONDS = 3600;
@@ -39,26 +39,26 @@ const modelsDevModalitiesSchema = z
 
 const modelsDevModelSchema = z
 	.object({
-		id: z.string().optional(),
-		name: z.string(),
 		attachment: z.boolean().optional(),
-		reasoning: z.boolean().optional(),
-		tool_call: z.boolean().optional(),
-		open_weights: z.boolean().optional(),
-		release_date: z.string().optional(),
-		last_updated: z.string().optional(),
-		knowledge: z.string().optional(),
 		cost: modelsDevCostSchema.optional(),
+		id: z.string().optional(),
+		knowledge: z.string().optional(),
+		last_updated: z.string().optional(),
 		limit: modelsDevLimitSchema.optional(),
 		modalities: modelsDevModalitiesSchema.optional(),
+		name: z.string(),
+		open_weights: z.boolean().optional(),
+		reasoning: z.boolean().optional(),
+		release_date: z.string().optional(),
+		tool_call: z.boolean().optional(),
 	})
 	.passthrough();
 
 const modelsDevProviderSchema = z
 	.object({
 		id: z.string().optional(),
-		name: z.string().optional(),
 		models: z.record(modelsDevModelSchema),
+		name: z.string().optional(),
 	})
 	.passthrough();
 
@@ -84,8 +84,8 @@ type FetchInitWithCf = RequestInit & { cf?: { cacheTtl?: number; cacheEverything
 
 export async function fetchModelsDevCatalog(): Promise<ModelsDevEntry[]> {
 	const init: FetchInitWithCf = {
+		cf: { cacheEverything: true, cacheTtl: CACHE_TTL_SECONDS },
 		headers: { Accept: 'application/json' },
-		cf: { cacheTtl: CACHE_TTL_SECONDS, cacheEverything: true },
 	};
 	const res = await fetch(MODELS_DEV_URL, init as RequestInit);
 	if (!res.ok) throw new Error(`models.dev API error: ${res.status}`);
@@ -97,40 +97,37 @@ export async function fetchModelsDevCatalog(): Promise<ModelsDevEntry[]> {
 		const providerName = provider.name ?? providerKey;
 		for (const [modelKey, model] of Object.entries(provider.models)) {
 			entries.push({
-				providerKey,
-				providerName,
-				modelId: model.id ?? modelKey,
-				name: model.name,
 				contextLength: model.limit?.context ?? DEFAULT_CONTEXT_LENGTH,
 				inputCost: model.cost?.input ?? null,
+				knowledge: model.knowledge ?? null,
+				modelId: model.id ?? modelKey,
+				name: model.name,
+				openWeights: model.open_weights ?? false,
 				outputCost: model.cost?.output ?? null,
+				providerKey,
+				providerName,
+				releaseDate: model.release_date ?? null,
 				supportsImageInput: (model.modalities?.input ?? []).includes('image'),
 				supportsReasoning: model.reasoning ?? false,
 				supportsToolCall: model.tool_call ?? false,
-				openWeights: model.open_weights ?? false,
-				releaseDate: model.release_date ?? null,
-				knowledge: model.knowledge ?? null,
 			});
 		}
 	}
 	return entries;
 }
 
-export function mapToCreateModelInput(
-	entry: ModelsDevEntry,
-	opts: { idPrefix?: string; sortOrder?: number } = {},
-): CreateModelInput {
+export function mapToCreateModelInput(entry: ModelsDevEntry, opts: { idPrefix?: string; sortOrder?: number } = {}): CreateModelInput {
 	const id = (opts.idPrefix ?? '') + entry.modelId;
 	return {
-		id,
-		name: entry.name,
 		description: buildDescription(entry),
-		maxContextLength: entry.contextLength,
-		reasoningType: entry.supportsReasoning ? resolveReasoning(entry.providerKey, entry.modelId) : null,
+		id,
 		inputCostPerMillionTokens: entry.inputCost,
+		maxContextLength: entry.contextLength,
+		name: entry.name,
 		outputCostPerMillionTokens: entry.outputCost,
-		supportsImageInput: entry.supportsImageInput,
+		reasoningType: entry.supportsReasoning ? resolveReasoning(entry.providerKey, entry.modelId) : null,
 		sortOrder: opts.sortOrder ?? 0,
+		supportsImageInput: entry.supportsImageInput,
 	};
 }
 

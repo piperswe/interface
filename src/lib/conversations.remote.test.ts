@@ -17,12 +17,8 @@ const setThinkingBudget = remote.setThinkingBudget as unknown as AnyArgs;
 const setConversationSystemPrompt = remote.setConversationSystemPrompt as unknown as AnyArgs;
 const setConversationStyle = remote.setConversationStyle as unknown as AnyArgs;
 const unarchive = remote.unarchive as unknown as AnyArgs;
-import {
-	createConversation,
-	getConversation,
-	listArchivedConversations,
-	listConversations,
-} from './server/conversations';
+
+import { createConversation, getConversation, listArchivedConversations, listConversations } from './server/conversations';
 
 beforeEach(() => {
 	setMockRequestEvent({ platform: { env } });
@@ -74,10 +70,7 @@ describe('archive / unarchive', () => {
 
 	it('archive respects an explicit redirectTo', async () => {
 		const id = await createConversation(env);
-		await expectRedirect(
-			archive({ conversationId: id, redirectTo: '/archive' }) as Promise<unknown>,
-			'/archive',
-		);
+		await expectRedirect(archive({ conversationId: id, redirectTo: '/archive' }) as Promise<unknown>, '/archive');
 		expect(await listConversations(env)).toEqual([]);
 	});
 
@@ -112,27 +105,16 @@ describe('destroy', () => {
 describe('sendMessage', () => {
 	it('rejects empty content', async () => {
 		const id = await createConversation(env);
-		await expectError(
-			sendMessage({ conversationId: id, content: '   ', model: 'm/test' }) as Promise<unknown>,
-			400,
-			/empty/,
-		);
+		await expectError(sendMessage({ content: '   ', conversationId: id, model: 'm/test' }) as Promise<unknown>, 400, /empty/);
 	});
 
 	it('rejects missing model', async () => {
 		const id = await createConversation(env);
-		await expectError(
-			sendMessage({ conversationId: id, content: 'hi', model: '' }) as Promise<unknown>,
-			400,
-			/missing model/,
-		);
+		await expectError(sendMessage({ content: 'hi', conversationId: id, model: '' }) as Promise<unknown>, 400, /missing model/);
 	});
 
 	it('rejects malformed conversation ids', async () => {
-		await expectError(
-			sendMessage({ conversationId: 'bad', content: 'hi', model: 'm/test' }) as Promise<unknown>,
-			400,
-		);
+		await expectError(sendMessage({ content: 'hi', conversationId: 'bad', model: 'm/test' }) as Promise<unknown>, 400);
 	});
 });
 
@@ -145,24 +127,21 @@ describe('regenerateTitle', () => {
 describe('setThinkingBudget', () => {
 	it('persists the budget on the conversation row', async () => {
 		const id = await createConversation(env);
-		await setThinkingBudget({ conversationId: id, budget: 4096 });
+		await setThinkingBudget({ budget: 4096, conversationId: id });
 		const row = await getConversation(env, id);
 		expect(row?.thinking_budget).toBe(4096);
 	});
 
 	it('clears the budget when null is passed', async () => {
 		const id = await createConversation(env);
-		await setThinkingBudget({ conversationId: id, budget: 4096 });
-		await setThinkingBudget({ conversationId: id, budget: null });
+		await setThinkingBudget({ budget: 4096, conversationId: id });
+		await setThinkingBudget({ budget: null, conversationId: id });
 		const row = await getConversation(env, id);
 		expect(row?.thinking_budget).toBeNull();
 	});
 
 	it('rejects malformed ids', async () => {
-		await expectError(
-			setThinkingBudget({ conversationId: 'bad', budget: 1 }) as Promise<unknown>,
-			400,
-		);
+		await expectError(setThinkingBudget({ budget: 1, conversationId: 'bad' }) as Promise<unknown>, 400);
 	});
 });
 
@@ -183,10 +162,7 @@ describe('setConversationSystemPrompt', () => {
 	});
 
 	it('rejects malformed ids', async () => {
-		await expectError(
-			setConversationSystemPrompt({ conversationId: 'bad', prompt: 'x' }) as Promise<unknown>,
-			400,
-		);
+		await expectError(setConversationSystemPrompt({ conversationId: 'bad', prompt: 'x' }) as Promise<unknown>, 400);
 	});
 });
 
@@ -207,10 +183,7 @@ describe('setConversationStyle', () => {
 	});
 
 	it('rejects malformed ids', async () => {
-		await expectError(
-			setConversationStyle({ conversationId: 'bad', styleId: 1 }) as Promise<unknown>,
-			400,
-		);
+		await expectError(setConversationStyle({ conversationId: 'bad', styleId: 1 }) as Promise<unknown>, 400);
 	});
 });
 

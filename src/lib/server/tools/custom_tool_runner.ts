@@ -1,6 +1,6 @@
-import type { Tool, ToolContext, ToolExecutionResult } from './registry';
 import type { CustomToolRow } from '../custom_tools';
 import { parseInputSchema, parseSecretsJson } from '../custom_tools';
+import type { Tool, ToolContext, ToolExecutionResult } from './registry';
 
 const HOST_COMPAT_DATE = '2026-04-22';
 const DEFAULT_CPU_MS = 10_000;
@@ -16,7 +16,7 @@ const DEFAULT_SUBREQUESTS = 50;
 // the cap on what an agent could plausibly write. There is no length budget
 // on the cache key.
 async function buildCacheKey(row: CustomToolRow): Promise<string> {
-	const data = new TextEncoder().encode(row.source + '\0' + (row.secretsJson ?? ''));
+	const data = new TextEncoder().encode(`${row.source}\0${row.secretsJson ?? ''}`);
 	const hashBuf = await crypto.subtle.digest('SHA-256', data);
 	const hashHex = Array.from(new Uint8Array(hashBuf))
 		.map((b) => b.toString(16).padStart(2, '0'))
@@ -31,17 +31,17 @@ export function customToolNamespacedName(row: CustomToolRow): string {
 export function buildCustomTool(row: CustomToolRow): Tool {
 	return {
 		definition: {
-			name: customToolNamespacedName(row),
 			description: row.description,
 			inputSchema: parseInputSchema(row.inputSchema),
+			name: customToolNamespacedName(row),
 		},
 		async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
 			const loader = ctx.env.RUN_JS_LOADER;
 			if (!loader) {
 				return {
 					content: 'RUN_JS_LOADER binding is not configured.',
-					isError: true,
 					errorCode: 'execution_failure',
+					isError: true,
 				};
 			}
 			const env = parseSecretsJson(row.secretsJson);
@@ -50,10 +50,10 @@ export function buildCustomTool(row: CustomToolRow): Tool {
 				const stub = loader.get(cacheKey, () => ({
 					compatibilityDate: HOST_COMPAT_DATE,
 					compatibilityFlags: ['nodejs_compat'],
-					mainModule: 'tool.js',
-					modules: { 'tool.js': { js: row.source } },
 					env,
 					limits: { cpuMs: DEFAULT_CPU_MS, subRequests: DEFAULT_SUBREQUESTS },
+					mainModule: 'tool.js',
+					modules: { 'tool.js': { js: row.source } },
 				}));
 				const entrypoint = stub.getEntrypoint() as unknown as { run(input: unknown): Promise<unknown> };
 				const result = await entrypoint.run(input);
@@ -61,8 +61,8 @@ export function buildCustomTool(row: CustomToolRow): Tool {
 			} catch (e) {
 				return {
 					content: e instanceof Error ? `${e.name}: ${e.message}` : String(e),
-					isError: true,
 					errorCode: 'execution_failure',
+					isError: true,
 				};
 			}
 		},
@@ -91,8 +91,8 @@ function formatResult(result: unknown): ToolExecutionResult {
 	} catch (e) {
 		return {
 			content: `(unable to serialise return value: ${e instanceof Error ? e.message : String(e)})`,
-			isError: true,
 			errorCode: 'execution_failure',
+			isError: true,
 		};
 	}
 }

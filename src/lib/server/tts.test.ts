@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_TTS_VOICE, extractSpeakableText, isValidTtsVoice, splitForTts, TTS_VOICES } from './tts';
 import type { MessagePart } from '$lib/types/conversation';
+import { DEFAULT_TTS_VOICE, extractSpeakableText, isValidTtsVoice, splitForTts, TTS_VOICES } from './tts';
 
 describe('extractSpeakableText', () => {
 	it('falls back to plain content when parts is undefined', () => {
@@ -9,13 +9,13 @@ describe('extractSpeakableText', () => {
 
 	it('joins only text and info parts, skipping thinking and tool blocks', () => {
 		const parts: MessagePart[] = [
-			{ type: 'thinking', text: 'internal monologue' },
-			{ type: 'text', text: 'First line.' },
-			{ type: 'tool_use', id: 't1', name: 'web_search', input: {} },
-			{ type: 'tool_result', toolUseId: 't1', content: 'big blob', isError: false },
-			{ type: 'text', text: 'Second line.' },
-			{ type: 'citations', citations: [{ url: 'https://example.com', title: 'ex' }] },
-			{ type: 'info', text: 'note' },
+			{ text: 'internal monologue', type: 'thinking' },
+			{ text: 'First line.', type: 'text' },
+			{ id: 't1', input: {}, name: 'web_search', type: 'tool_use' },
+			{ content: 'big blob', isError: false, toolUseId: 't1', type: 'tool_result' },
+			{ text: 'Second line.', type: 'text' },
+			{ citations: [{ title: 'ex', url: 'https://example.com' }], type: 'citations' },
+			{ text: 'note', type: 'info' },
 		];
 		const got = extractSpeakableText({ content: '', parts });
 		expect(got).toContain('First line.');
@@ -57,9 +57,7 @@ describe('extractSpeakableText', () => {
 	});
 
 	it('returns empty string when there are no speakable parts and no content', () => {
-		const parts: MessagePart[] = [
-			{ type: 'tool_use', id: 't1', name: 'x', input: {} },
-		];
+		const parts: MessagePart[] = [{ id: 't1', input: {}, name: 'x', type: 'tool_use' }];
 		expect(extractSpeakableText({ content: '', parts })).toBe('');
 	});
 });
@@ -71,7 +69,7 @@ describe('splitForTts', () => {
 	});
 
 	it('keeps every chunk under the cap', () => {
-		const text = ('Sentence one. Sentence two? Sentence three! ' + 'word '.repeat(500)).trim();
+		const text = `Sentence one. Sentence two? Sentence three! ${'word '.repeat(500)}`.trim();
 		const got = splitForTts(text, 200);
 		expect(got.length).toBeGreaterThan(1);
 		for (const c of got) expect(c.length).toBeLessThanOrEqual(200);
@@ -79,8 +77,8 @@ describe('splitForTts', () => {
 
 	it('prefers sentence terminators when splitting', () => {
 		// Build text with a clear sentence boundary near the cap.
-		const a = 'a'.repeat(150) + '. ';
-		const b = 'b'.repeat(150) + '. ';
+		const a = `${'a'.repeat(150)}. `;
+		const b = `${'b'.repeat(150)}. `;
 		const got = splitForTts(a + b, 200);
 		expect(got[0].endsWith('.')).toBe(true);
 		// Regression: the first chunk shouldn't contain any of the second

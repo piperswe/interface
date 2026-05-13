@@ -1,7 +1,8 @@
 import { env } from 'cloudflare:test';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createConversation } from '../conversations';
+import { assertDefined } from '../../../../test/assert-defined';
 import { textTurn } from '../../../../test/fakes/FakeLLM';
+import { createConversation } from '../conversations';
 import { readLLMCalls, setOverride, stubFor, waitForState } from './conversation/_test-helpers';
 import type { ConversationStub } from './index';
 
@@ -54,7 +55,8 @@ describe('ConversationDurableObject — system prompt assembly', () => {
 			`INSERT INTO styles (user_id, name, system_prompt, created_at, updated_at)
 			 VALUES (1, 'Concise', 'STYLE_TEXT', 1, 1) RETURNING id`,
 		).first<{ id: number }>();
-		await stub.setStyle(id, styleResult!.id);
+		assertDefined(styleResult);
+		await stub.setStyle(id, styleResult.id);
 		await stub.setSystemPrompt(id, 'BASE_OVERRIDE');
 		await setOverride(stub, [textTurn('ok').events]);
 		await stub.addUserMessage(id, 'hi', 'fake/model');
@@ -85,9 +87,7 @@ describe('ConversationDurableObject — system prompt assembly', () => {
 	it('user_bio is appended', async () => {
 		const id = await createConversation(env);
 		const stub = stubFor(id);
-		await env.DB.prepare(
-			`INSERT OR REPLACE INTO settings (user_id, key, value, updated_at) VALUES (1, 'user_bio', 'BIO_TEXT', 1)`,
-		).run();
+		await env.DB.prepare(`INSERT OR REPLACE INTO settings (user_id, key, value, updated_at) VALUES (1, 'user_bio', 'BIO_TEXT', 1)`).run();
 		await setOverride(stub, [textTurn('ok').events]);
 		await stub.addUserMessage(id, 'hi', 'fake/model');
 		await waitForState(stub, (s) => s.messages.at(-1)?.status === 'complete');

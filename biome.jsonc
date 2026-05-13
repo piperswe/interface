@@ -1,0 +1,151 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.4.15/schema.json",
+	"assist": {
+		"actions": {
+			"source": {
+				"organizeImports": "on",
+				"useSortedKeys": "on"
+			}
+		},
+		"enabled": true
+	},
+	"files": {
+		"includes": [
+			"**",
+			"!!**/.svelte-kit",
+			"!!**/.wrangler",
+			"!!**/build",
+			"!!**/dist",
+			"!!**/coverage",
+			"!!**/node_modules",
+			"!!**/static",
+			"!!**/.DS_Store",
+			"!!worker-configuration.d.ts",
+			"!!package-lock.json"
+		]
+	},
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab",
+		"indentWidth": 1,
+		"lineEnding": "lf",
+		"lineWidth": 140
+	},
+	"html": {
+		// Opt into Biome v2.3+ full support for Vue/Svelte/Astro.
+		// https://biomejs.dev/blog/biome-v2-3/#full-support-for-vue-svelte-and-astro
+		"experimentalFullSupportEnabled": true
+	},
+	"javascript": {
+		"formatter": {
+			"quoteStyle": "single",
+			"semicolons": "always",
+			"trailingCommas": "all"
+		}
+	},
+	"linter": {
+		"enabled": true,
+		// Strict: every rule group set to "error". Specific rules below are
+		// downgraded only where they fundamentally conflict with the
+		// framework/runtime conventions used in this repo. Each "off" must
+		// carry a one-line justification — do not disable rules silently.
+		"rules": {
+			"a11y": "error",
+			"complexity": {
+				// Same: subjective cognitive-complexity score.
+				"noExcessiveCognitiveComplexity": "off",
+				// Subjective metric; flagged 100+ legitimate functions
+				// (DO request handlers, tool dispatchers). Reviewers
+				// catch real complexity better than a line counter.
+				"noExcessiveLinesPerFunction": "off",
+				"recommended": true
+			},
+			"correctness": {
+				// Scripts and tests intentionally import from `node:*`
+				// (build tooling, test setup). Workers code never does.
+				"noNodejsModules": "off",
+				"recommended": true
+			},
+			"performance": {
+				// Sequential awaits in loops are correct for ordered
+				// side-effects (migrations, tool calls in turn order).
+				// We rely on review to catch unintended sequential I/O.
+				"noAwaitInLoops": "off",
+				"recommended": true
+			},
+			"recommended": true,
+			"security": {
+				// Triggers on high-entropy identifiers — including test
+				// describe() blocks and TypeScript type names. Real
+				// secrets are managed via Worker secret bindings, not
+				// source.
+				"noSecrets": "off",
+				"recommended": true
+			},
+			"style": {
+				// SvelteKit routes (`+page.svelte`, `+server.ts`) and
+				// service workers require default exports.
+				"noDefaultExport": "off",
+				// IP octets, RFC byte values, test setTimeout durations,
+				// HTTP status codes — extracting these to constants
+				// reduces readability. Reviewer judgement instead.
+				"noMagicNumbers": "off",
+				"recommended": true,
+				// SvelteKit uses `+page.svelte`, `+layout.server.ts`,
+				// `[id]/+server.ts`. Components use PascalCase by Svelte
+				// convention. None of these fit Biome's options.
+				"useFilenamingConvention": "off",
+				// Database column names (snake_case, propagate via D1
+				// row types) and Cloudflare Worker env bindings
+				// (SCREAMING_SNAKE_CASE) appear as property names. The
+				// rule has no per-context exemption that fits.
+				"useNamingConvention": "off"
+			},
+			"suspicious": {
+				// console.warn / console.error are how Workers and
+				// Durable Objects surface ops messages via `wrangler
+				// tail`. console.log remains banned.
+				"noConsole": {
+					"level": "error",
+					"options": { "allow": ["warn", "error"] }
+				},
+				"recommended": true
+			}
+		}
+	},
+	"overrides": [
+		{
+			// Biome's experimental Svelte support doesn't track variable
+			// references inside the template body, so noUnusedVariables /
+			// noUnusedImports would rename or remove identifiers used by
+			// the markup. Re-enable once upstream parses templates fully.
+			"includes": ["**/*.svelte"],
+			"linter": {
+				"rules": {
+					"correctness": {
+						"noUnusedFunctionParameters": "off",
+						"noUnusedImports": "off",
+						"noUnusedVariables": "off"
+					}
+				}
+			}
+		},
+		{
+			// Build/dev scripts are Node CLIs whose stdout is the user-facing
+			// channel — console.log is the API, not a leak.
+			"includes": ["scripts/**", "node-loader.mjs"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noConsole": "off"
+					}
+				}
+			}
+		}
+	],
+	"vcs": {
+		"clientKind": "git",
+		"enabled": true,
+		"useIgnoreFile": true
+	}
+}

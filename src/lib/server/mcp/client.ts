@@ -1,26 +1,26 @@
 import { z } from 'zod';
-import { validateOrThrow, parseJsonWith } from '$lib/zod-utils';
+import { parseJsonWith, validateOrThrow } from '$lib/zod-utils';
 import type { McpJsonRpcRequest, McpJsonRpcResponse, McpToolCallResult, McpToolDescriptor } from './types';
 
 const mcpJsonRpcResponseSchema = z.union([
 	z
 		.object({
-			jsonrpc: z.literal('2.0'),
 			id: z.union([z.number(), z.string()]),
+			jsonrpc: z.literal('2.0'),
 			result: z.unknown(),
 		})
 		.passthrough(),
 	z
 		.object({
-			jsonrpc: z.literal('2.0'),
-			id: z.union([z.number(), z.string()]),
 			error: z
 				.object({
 					code: z.number(),
-					message: z.string(),
 					data: z.unknown().optional(),
+					message: z.string(),
 				})
 				.passthrough(),
+			id: z.union([z.number(), z.string()]),
+			jsonrpc: z.literal('2.0'),
 		})
 		.passthrough(),
 ]);
@@ -33,9 +33,9 @@ const mcpListToolsResultSchema = z
 			.array(
 				z
 					.object({
-						name: z.string(),
 						description: z.string().optional(),
 						inputSchema: z.object({}).passthrough().optional(),
+						name: z.string(),
 					})
 					.passthrough(),
 			)
@@ -47,12 +47,12 @@ const mcpToolCallResultSchema = z
 	.object({
 		content: z.array(
 			z.union([
-				z.object({ type: z.literal('text'), text: z.string() }).passthrough(),
+				z.object({ text: z.string(), type: z.literal('text') }).passthrough(),
 				z
 					.object({
-						type: z.literal('image'),
 						data: z.string(),
 						mimeType: z.string(),
+						type: z.literal('image'),
 					})
 					.passthrough(),
 			]),
@@ -103,22 +103,14 @@ export class McpHttpClient {
 	async listTools(): Promise<McpToolDescriptor[]> {
 		const raw = await this.#request('tools/list', {});
 		if (raw == null) return [];
-		const result = validateOrThrow(
-			mcpListToolsResultSchema,
-			raw,
-			`MCP tools/list result from ${this.#url}`,
-		);
+		const result = validateOrThrow(mcpListToolsResultSchema, raw, `MCP tools/list result from ${this.#url}`);
 		return (result.tools ?? []) as McpToolDescriptor[];
 	}
 
 	async callTool(name: string, args: unknown): Promise<McpToolCallResult> {
-		const raw = await this.#request('tools/call', { name, arguments: args });
+		const raw = await this.#request('tools/call', { arguments: args, name });
 		if (raw == null) return { content: [], isError: true };
-		return validateOrThrow(
-			mcpToolCallResultSchema,
-			raw,
-			`MCP tools/call result for "${name}" from ${this.#url}`,
-		) as McpToolCallResult;
+		return validateOrThrow(mcpToolCallResultSchema, raw, `MCP tools/call result for "${name}" from ${this.#url}`) as McpToolCallResult;
 	}
 
 	async #buildHeaders(force: boolean): Promise<Headers> {
@@ -127,8 +119,8 @@ export class McpHttpClient {
 		// keys, so an `auth_json` containing `authorization` (lowercase) would
 		// shadow our uppercase `Authorization`. `Headers.set` is canonical.
 		const headers = new Headers({
-			'Content-Type': 'application/json',
 			Accept: 'application/json, text/event-stream',
+			'Content-Type': 'application/json',
 		});
 		if (this.#auth) {
 			for (const [name, value] of Object.entries(this.#auth)) {
@@ -147,15 +139,15 @@ export class McpHttpClient {
 
 	async #request(method: string, params: unknown): Promise<unknown> {
 		const id = this.#nextId++;
-		const body: McpJsonRpcRequest = { jsonrpc: '2.0', id, method, params };
+		const body: McpJsonRpcRequest = { id, jsonrpc: '2.0', method, params };
 		const bodyJson = JSON.stringify(body);
 		let headers = await this.#buildHeaders(false);
-		let res = await fetch(this.#url, { method: 'POST', headers, body: bodyJson, signal: this.#signal });
+		let res = await fetch(this.#url, { body: bodyJson, headers, method: 'POST', signal: this.#signal });
 		// One retry on 401 with a forced token refresh — covers servers that
 		// invalidate access tokens before our cached expiry.
 		if (res.status === 401 && this.#getAccessToken) {
 			headers = await this.#buildHeaders(true);
-			res = await fetch(this.#url, { method: 'POST', headers, body: bodyJson, signal: this.#signal });
+			res = await fetch(this.#url, { body: bodyJson, headers, method: 'POST', signal: this.#signal });
 		}
 		if (res.status === 401) {
 			throw new McpAuthError(`MCP server requires authorization (${this.#url})`);
@@ -164,11 +156,7 @@ export class McpHttpClient {
 		const ct = res.headers.get('content-type') ?? '';
 		const response = ct.includes('text/event-stream')
 			? await readSseSingleResponse(res)
-			: (validateOrThrow(
-					mcpJsonRpcResponseSchema,
-					await res.json(),
-					`MCP JSON-RPC response from ${this.#url}`,
-				) as McpJsonRpcResponse);
+			: (validateOrThrow(mcpJsonRpcResponseSchema, await res.json(), `MCP JSON-RPC response from ${this.#url}`) as McpJsonRpcResponse);
 		if ('error' in response) throw new Error(response.error.message);
 		return response.result;
 	}
@@ -194,9 +182,7 @@ async function readSseSingleResponse(res: Response): Promise<McpJsonRpcResponse>
 			} catch {
 				/* ignore */
 			}
-			throw new Error(
-				`MCP SSE frame exceeded ${MAX_SSE_BUFFER_BYTES} bytes without a delimiter`,
-			);
+			throw new Error(`MCP SSE frame exceeded ${MAX_SSE_BUFFER_BYTES} bytes without a delimiter`);
 		}
 		const newlineIdx = buffer.indexOf('\n\n');
 		if (newlineIdx !== -1) {

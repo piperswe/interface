@@ -7,12 +7,7 @@ import { safeValidate } from '$lib/zod-utils';
 
 const transcribeResponseSchema = z.object({ text: z.string().optional() }).passthrough();
 
-const PREFERRED_MIME_TYPES = [
-	'audio/webm;codecs=opus',
-	'audio/webm',
-	'audio/mp4',
-	'audio/ogg;codecs=opus',
-];
+const PREFERRED_MIME_TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
 
 export function isSpeechRecognitionSupported(): boolean {
 	if (typeof window === 'undefined') return false;
@@ -60,9 +55,7 @@ export class Recorder {
 		if (mime === null) throw new Error('MediaRecorder not supported');
 		this.mimeType = mime;
 		this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-		this.recorder = mime
-			? new MediaRecorder(this.stream, { mimeType: mime })
-			: new MediaRecorder(this.stream);
+		this.recorder = mime ? new MediaRecorder(this.stream, { mimeType: mime }) : new MediaRecorder(this.stream);
 		this.chunks = [];
 		this.recorder.addEventListener('dataavailable', (e) => {
 			if (e.data && e.data.size > 0) this.chunks.push(e.data);
@@ -110,9 +103,9 @@ export class Recorder {
 
 export async function transcribe(blob: Blob): Promise<string> {
 	const res = await fetch('/transcribe', {
-		method: 'POST',
-		headers: { 'Content-Type': blob.type || 'audio/webm' },
 		body: blob,
+		headers: { 'Content-Type': blob.type || 'audio/webm' },
+		method: 'POST',
 	});
 	if (!res.ok) {
 		const detail = await res.text().catch(() => `${res.status}`);

@@ -1,8 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { Messages } from '@anthropic-ai/sdk/resources/messages/messages';
+import { formatError } from './errors';
 import type LLM from './LLM';
 import type { CacheControl, ChatRequest, ContentBlock, Message, StreamEvent, ToolDefinition } from './LLM';
-import { formatError } from './errors';
 
 // Anthropic adapter. Honors:
 //   - thinking: ChatRequest.thinking → Anthropic `thinking` param.
@@ -52,13 +52,11 @@ export class AnthropicLLM implements LLM {
 				.filter((m) => m.role === 'system')
 				.map((m) => (typeof m.content === 'string' ? m.content : m.content.map((b) => (b.type === 'text' ? b.text : '')).join('')))
 				.filter((s) => s.length > 0);
-			const combinedSystemPrompt = [request.systemPrompt, ...inlineSystem]
-				.filter((s): s is string => !!s && s.length > 0)
-				.join('\n\n');
+			const combinedSystemPrompt = [request.systemPrompt, ...inlineSystem].filter((s): s is string => !!s && s.length > 0).join('\n\n');
 			const params: Messages.MessageCreateParamsStreaming = {
-				model: this.model,
 				max_tokens: request.maxTokens ?? DEFAULT_MAX_TOKENS,
 				messages: toAnthropicMessages(request.messages),
+				model: this.model,
 				stream: true,
 			};
 			const system = toAnthropicSystem(combinedSystemPrompt || undefined, request.cacheControl);
@@ -71,11 +69,11 @@ export class AnthropicLLM implements LLM {
 			// when both are set (callers should pick one); `reasoning.max_tokens`
 			// is the unified shape used by the OpenRouter path.
 			if (request.thinking?.type === 'enabled') {
-				params.thinking = { type: 'enabled', budget_tokens: request.thinking.budgetTokens };
+				params.thinking = { budget_tokens: request.thinking.budgetTokens, type: 'enabled' };
 			} else if (request.thinking?.type === 'disabled') {
 				params.thinking = { type: 'disabled' };
 			} else if (request.reasoning?.type === 'max_tokens') {
-				params.thinking = { type: 'enabled', budget_tokens: request.reasoning.maxTokens };
+				params.thinking = { budget_tokens: request.reasoning.maxTokens, type: 'enabled' };
 			}
 			if (request.temperature !== undefined) params.temperature = request.temperature;
 
@@ -91,36 +89,36 @@ export class AnthropicLLM implements LLM {
 				} else if (ev.type === 'content_block_start') {
 					if (ev.content_block.type === 'tool_use') {
 						partialToolUses.set(ev.index, {
+							args: '',
 							id: ev.content_block.id,
 							name: ev.content_block.name,
-							args: '',
 						});
-						yield { type: 'tool_call_delta', id: ev.content_block.id, name: ev.content_block.name };
+						yield { id: ev.content_block.id, name: ev.content_block.name, type: 'tool_call_delta' };
 					} else if (ev.content_block.type === 'thinking') {
 						openThinking.add(ev.index);
 					}
 				} else if (ev.type === 'content_block_delta') {
 					const d = ev.delta;
 					if (d.type === 'text_delta') {
-						yield { type: 'text_delta', delta: d.text };
+						yield { delta: d.text, type: 'text_delta' };
 					} else if (d.type === 'thinking_delta') {
-						yield { type: 'thinking_delta', delta: d.thinking };
+						yield { delta: d.thinking, type: 'thinking_delta' };
 					} else if (d.type === 'signature_delta') {
 						// Anthropic delivers the thinking-block signature as a single
 						// non-incremental delta. Forward it so the caller can attach
 						// it to the matching `ThinkingPart` for round-trip on the
 						// next turn.
 						if (openThinking.has(ev.index) && d.signature) {
-							yield { type: 'thinking_signature', signature: d.signature };
+							yield { signature: d.signature, type: 'thinking_signature' };
 						}
 					} else if (d.type === 'input_json_delta') {
 						const partial = partialToolUses.get(ev.index);
 						if (partial) {
 							partial.args += d.partial_json;
 							yield {
-								type: 'tool_call_delta',
-								id: partial.id,
 								argumentsDelta: d.partial_json,
+								id: partial.id,
+								type: 'tool_call_delta',
 							};
 						}
 					}
@@ -133,7 +131,7 @@ export class AnthropicLLM implements LLM {
 						} catch {
 							input = { _raw: partial.args };
 						}
-						yield { type: 'tool_call', id: partial.id, name: partial.name, input };
+						yield { id: partial.id, input, name: partial.name, type: 'tool_call' };
 						partialToolUses.delete(ev.index);
 					}
 					openThinking.delete(ev.index);
@@ -155,7 +153,7 @@ export class AnthropicLLM implements LLM {
 			};
 			yield { type: 'done', ...(stopReason ? { finishReason: stopReason } : {}) };
 		} catch (e) {
-			yield { type: 'error', message: formatError(e) };
+			yield { message: formatError(e), type: 'error' };
 		}
 	}
 }
@@ -165,25 +163,25 @@ function toAnthropicMessages(messages: Message[]): Messages.MessageParam[] {
 		.filter((m) => m.role === 'user' || m.role === 'assistant' || m.role === 'tool')
 		.map((m) => {
 			if (m.role === 'tool') {
-				const blocks = typeof m.content === 'string' ? [{ type: 'text' as const, text: m.content }] : m.content;
-				return { role: 'user' as const, content: blocksToAnthropic(blocks) };
+				const blocks = typeof m.content === 'string' ? [{ text: m.content, type: 'text' as const }] : m.content;
+				return { content: blocksToAnthropic(blocks), role: 'user' as const };
 			}
-			const content = typeof m.content === 'string' ? [{ type: 'text' as const, text: m.content }] : m.content;
-			return { role: m.role as 'user' | 'assistant', content: blocksToAnthropic(content) };
+			const content = typeof m.content === 'string' ? [{ text: m.content, type: 'text' as const }] : m.content;
+			return { content: blocksToAnthropic(content), role: m.role as 'user' | 'assistant' };
 		});
 }
 
 function blocksToAnthropic(blocks: ContentBlock[]): Messages.ContentBlockParam[] {
 	return blocks
 		.map((b): Messages.ContentBlockParam | null => {
-			if (b.type === 'text') return { type: 'text', text: b.text };
+			if (b.type === 'text') return { text: b.text, type: 'text' };
 			if (b.type === 'image') {
 				return {
+					source: { data: b.data, media_type: b.mimeType as 'image/jpeg', type: 'base64' },
 					type: 'image',
-					source: { type: 'base64', media_type: b.mimeType as 'image/jpeg', data: b.data },
 				};
 			}
-			if (b.type === 'tool_use') return { type: 'tool_use', id: b.id, name: b.name, input: b.input };
+			if (b.type === 'tool_use') return { id: b.id, input: b.input, name: b.name, type: 'tool_use' };
 			if (b.type === 'tool_result') {
 				// `content` may be a plain string or an array of text/image
 				// blocks (multimodal tool returns). Anthropic's tool_result
@@ -194,19 +192,19 @@ function blocksToAnthropic(blocks: ContentBlock[]): Messages.ContentBlockParam[]
 						: b.content.map((blk) =>
 								blk.type === 'image'
 									? {
-											type: 'image' as const,
 											source: {
-												type: 'base64' as const,
-												media_type: blk.mimeType as 'image/jpeg',
 												data: blk.data,
+												media_type: blk.mimeType as 'image/jpeg',
+												type: 'base64' as const,
 											},
+											type: 'image' as const,
 										}
-									: { type: 'text' as const, text: blk.text },
+									: { text: blk.text, type: 'text' as const },
 							);
 				return {
-					type: 'tool_result',
-					tool_use_id: b.toolUseId,
 					content,
+					tool_use_id: b.toolUseId,
+					type: 'tool_result',
 					...(b.isError ? { is_error: true } : {}),
 				};
 			}
@@ -216,7 +214,7 @@ function blocksToAnthropic(blocks: ContentBlock[]): Messages.ContentBlockParam[]
 				// strips them before this adapter runs, so this is defense in depth
 				// for legacy rows or test fixtures.
 				if (!b.signature) return null;
-				return { type: 'thinking', thinking: b.text, signature: b.signature };
+				return { signature: b.signature, thinking: b.text, type: 'thinking' };
 			}
 			// `file` blocks: Anthropic supports document blocks (PDF) — Phase 4 P0.6
 			// will wire those properly. Drop here for now.
@@ -231,7 +229,7 @@ function toAnthropicSystem(
 ): Messages.MessageCreateParams['system'] {
 	if (!systemPrompt) return undefined;
 	if (cacheControl?.type === 'ephemeral') {
-		return [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }];
+		return [{ cache_control: { type: 'ephemeral' }, text: systemPrompt, type: 'text' }];
 	}
 	return systemPrompt;
 }
@@ -240,9 +238,9 @@ function toAnthropicTools(tools: ToolDefinition[], cacheControl: CacheControl | 
 	return tools.map((t, i): Messages.ToolUnion => {
 		const isLast = i === tools.length - 1;
 		const tool: Messages.Tool = {
-			name: t.name,
 			description: t.description,
 			input_schema: t.inputSchema as Messages.Tool.InputSchema,
+			name: t.name,
 		};
 		if (isLast && cacheControl?.type === 'ephemeral') {
 			tool.cache_control = { type: 'ephemeral' };

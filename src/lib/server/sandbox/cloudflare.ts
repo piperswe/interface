@@ -8,8 +8,8 @@
 // reader signal but does NOT await `reader.cancel()`, because cancel
 // propagation across the Sandbox-DO RPC boundary can hang.
 
-import { getSandbox, parseSSEStream } from '@cloudflare/sandbox';
 import type { Sandbox, ExecEvent as SdkExecEvent } from '@cloudflare/sandbox';
+import { getSandbox, parseSSEStream } from '@cloudflare/sandbox';
 import type {
 	ExecEvent,
 	ExecOptions,
@@ -42,9 +42,9 @@ export async function _listExposedPorts(
 	const result = await sandbox.getExposedPorts(hostname);
 	const ports = Array.isArray(result) ? result : ((result as { ports?: unknown[] }).ports ?? []);
 	return (ports as Array<{ port: number; url: string; name?: string }>).map((p) => ({
+		name: p.name,
 		port: p.port,
 		url: p.url,
-		name: p.name,
 	}));
 }
 
@@ -52,11 +52,11 @@ function mapSdkEvent(ev: SdkExecEvent): ExecEvent | null {
 	switch (ev.type) {
 		case 'stdout':
 		case 'stderr':
-			return { type: ev.type, data: ev.data ?? '' };
+			return { data: ev.data ?? '', type: ev.type };
 		case 'complete':
-			return { type: 'complete', exitCode: ev.exitCode ?? 0 };
+			return { exitCode: ev.exitCode ?? 0, type: 'complete' };
 		case 'error':
-			return { type: 'error', data: ev.data, error: ev.error };
+			return { data: ev.data, error: ev.error, type: 'error' };
 		default:
 			// 'start' (and any future SDK-only event types) — the consumer
 			// in `tools/sandbox.ts` doesn't branch on them. Drop.
@@ -107,10 +107,10 @@ class CloudflareSandboxInstance implements SandboxInstance {
 	async exec(cmd: string, opts: ExecOptions = {}): Promise<ExecResult> {
 		const result = await this.#sandbox().exec(cmd, opts);
 		return {
-			success: result.success,
 			exitCode: result.exitCode,
-			stdout: result.stdout,
 			stderr: result.stderr,
+			stdout: result.stdout,
+			success: result.success,
 		};
 	}
 
@@ -123,10 +123,7 @@ class CloudflareSandboxInstance implements SandboxInstance {
 		return makeExecStream(stream);
 	}
 
-	async runCode(
-		code: string,
-		opts: { language: RunCodeLanguage; timeout?: number },
-	): Promise<RunCodeResult> {
+	async runCode(code: string, opts: { language: RunCodeLanguage; timeout?: number }): Promise<RunCodeResult> {
 		return (await this.#sandbox().runCode(code, opts)) as RunCodeResult;
 	}
 
@@ -160,10 +157,7 @@ class CloudflareSandboxInstance implements SandboxInstance {
 	}
 
 	async getExposedPorts(hostname: string): Promise<ExposedPort[]> {
-		return _listExposedPorts(
-			this.#sandbox() as unknown as { getExposedPorts: (h: string) => Promise<unknown> },
-			hostname,
-		);
+		return _listExposedPorts(this.#sandbox() as unknown as { getExposedPorts: (h: string) => Promise<unknown> }, hostname);
 	}
 
 	async destroy(): Promise<void> {
@@ -183,11 +177,11 @@ class CloudflareSandboxInstance implements SandboxInstance {
 }
 
 export const cloudflareBackend: SandboxBackend = {
+	get(env: Env, conversationId: string): SandboxInstance {
+		return new CloudflareSandboxInstance(env, conversationId);
+	},
 	id: 'cloudflare',
 	isAvailable(env: Env): boolean {
 		return !!env.SANDBOX;
-	},
-	get(env: Env, conversationId: string): SandboxInstance {
-		return new CloudflareSandboxInstance(env, conversationId);
 	},
 };

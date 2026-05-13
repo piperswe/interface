@@ -55,15 +55,15 @@ function parseTools(json: string | null): string[] | null {
 
 function rowToSubAgent(r: Row): SubAgentRow {
 	return {
-		id: r.id,
-		name: r.name,
-		description: r.description,
-		systemPrompt: r.system_prompt,
-		model: r.model,
-		maxIterations: r.max_iterations,
 		allowedTools: parseTools(r.tools_json),
-		enabled: r.enabled === 1,
 		createdAt: r.created_at,
+		description: r.description,
+		enabled: r.enabled === 1,
+		id: r.id,
+		maxIterations: r.max_iterations,
+		model: r.model,
+		name: r.name,
+		systemPrompt: r.system_prompt,
 		updatedAt: r.updated_at,
 	};
 }
@@ -92,11 +92,7 @@ export async function getSubAgent(env: Env, id: number): Promise<SubAgentRow | n
 	return row ? rowToSubAgent(row) : null;
 }
 
-export async function getSubAgentByName(
-	env: Env,
-	name: string,
-	userId: number = SINGLE_USER_ID,
-): Promise<SubAgentRow | null> {
+export async function getSubAgentByName(env: Env, name: string, userId: number = SINGLE_USER_ID): Promise<SubAgentRow | null> {
 	const row = await env.DB.prepare(
 		`SELECT id, name, description, system_prompt, model, max_iterations, tools_json, enabled, created_at, updated_at
 		 FROM sub_agents WHERE user_id = ? AND name = ?`,
@@ -115,15 +111,9 @@ export type CreateSubAgentInput = {
 	allowedTools?: string[] | null;
 };
 
-export async function createSubAgent(
-	env: Env,
-	input: CreateSubAgentInput,
-	userId: number = SINGLE_USER_ID,
-): Promise<number> {
+export async function createSubAgent(env: Env, input: CreateSubAgentInput, userId: number = SINGLE_USER_ID): Promise<number> {
 	if (!isValidSubAgentName(input.name)) {
-		throw new Error(
-			'Sub-agent name must start with a letter and contain only lowercase letters, digits, underscores, or hyphens.',
-		);
+		throw new Error('Sub-agent name must start with a letter and contain only lowercase letters, digits, underscores, or hyphens.');
 	}
 	if (!input.description.trim()) throw new Error('Description is required');
 	if (!input.systemPrompt.trim()) throw new Error('System prompt is required');
@@ -151,22 +141,11 @@ export async function createSubAgent(
 
 export type UpdateSubAgentInput = Partial<CreateSubAgentInput> & { enabled?: boolean };
 
-export async function updateSubAgent(
-	env: Env,
-	id: number,
-	input: UpdateSubAgentInput,
-	userId: number = SINGLE_USER_ID,
-): Promise<void> {
-	const existing = await env.DB.prepare(
-		`SELECT id FROM sub_agents WHERE id = ? AND user_id = ?`,
-	)
-		.bind(id, userId)
-		.first<{ id: number }>();
+export async function updateSubAgent(env: Env, id: number, input: UpdateSubAgentInput, userId: number = SINGLE_USER_ID): Promise<void> {
+	const existing = await env.DB.prepare(`SELECT id FROM sub_agents WHERE id = ? AND user_id = ?`).bind(id, userId).first<{ id: number }>();
 	if (!existing) return;
 	if (input.name !== undefined && !isValidSubAgentName(input.name)) {
-		throw new Error(
-			'Sub-agent name must start with a letter and contain only lowercase letters, digits, underscores, or hyphens.',
-		);
+		throw new Error('Sub-agent name must start with a letter and contain only lowercase letters, digits, underscores, or hyphens.');
 	}
 	const sets: string[] = [];
 	const values: unknown[] = [];
@@ -211,11 +190,6 @@ export async function deleteSubAgent(env: Env, id: number, userId: number = SING
 	await env.DB.prepare('DELETE FROM sub_agents WHERE id = ? AND user_id = ?').bind(id, userId).run();
 }
 
-export async function setSubAgentEnabled(
-	env: Env,
-	id: number,
-	enabled: boolean,
-	userId: number = SINGLE_USER_ID,
-): Promise<void> {
+export async function setSubAgentEnabled(env: Env, id: number, enabled: boolean, userId: number = SINGLE_USER_ID): Promise<void> {
 	await updateSubAgent(env, id, { enabled }, userId);
 }

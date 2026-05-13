@@ -5,9 +5,9 @@ import { buildResultsMap, groupParts } from './parts';
 describe('buildResultsMap', () => {
 	it('indexes tool_result parts by toolUseId', () => {
 		const parts: MessagePart[] = [
-			{ type: 'tool_use', id: 'a', name: 'x', input: {} },
-			{ type: 'tool_result', toolUseId: 'a', content: 'ok', isError: false },
-			{ type: 'tool_result', toolUseId: 'b', content: 'fail', isError: true },
+			{ id: 'a', input: {}, name: 'x', type: 'tool_use' },
+			{ content: 'ok', isError: false, toolUseId: 'a', type: 'tool_result' },
+			{ content: 'fail', isError: true, toolUseId: 'b', type: 'tool_result' },
 		];
 		const m = buildResultsMap(parts);
 		expect(m.get('a')?.content).toBe('ok');
@@ -15,32 +15,32 @@ describe('buildResultsMap', () => {
 		expect(m.has('c')).toBe(false);
 	});
 	it('returns an empty map for parts with no results', () => {
-		const m = buildResultsMap([{ type: 'text', text: 'hi' }]);
+		const m = buildResultsMap([{ text: 'hi', type: 'text' }]);
 		expect(m.size).toBe(0);
 	});
 });
 
 describe('groupParts', () => {
 	it('keeps text parts standalone', () => {
-		const parts: MessagePart[] = [{ type: 'text', text: 'hello' }];
+		const parts: MessagePart[] = [{ text: 'hello', type: 'text' }];
 		const groups = groupParts(parts, false, new Map());
 		expect(groups).toHaveLength(1);
 		expect(groups[0].kind).toBe('standalone');
 	});
 	it('drops empty text parts', () => {
-		const parts: MessagePart[] = [{ type: 'text', text: '' }];
+		const parts: MessagePart[] = [{ text: '', type: 'text' }];
 		expect(groupParts(parts, false, new Map())).toHaveLength(0);
 	});
 	it('keeps a single non-output part standalone', () => {
-		const parts: MessagePart[] = [{ type: 'thinking', text: 'hmm' }];
+		const parts: MessagePart[] = [{ text: 'hmm', type: 'thinking' }];
 		const groups = groupParts(parts, true, new Map());
 		expect(groups).toHaveLength(1);
 		expect(groups[0].kind).toBe('standalone');
 	});
 	it('bundles two consecutive non-output parts', () => {
 		const parts: MessagePart[] = [
-			{ type: 'thinking', text: 'hmm' },
-			{ type: 'tool_use', id: 't1', name: 'x', input: {} },
+			{ text: 'hmm', type: 'thinking' },
+			{ id: 't1', input: {}, name: 'x', type: 'tool_use' },
 		];
 		const groups = groupParts(parts, false, new Map());
 		expect(groups).toHaveLength(1);
@@ -52,8 +52,8 @@ describe('groupParts', () => {
 	});
 	it('marks bundles with active streaming thinking as hasActive', () => {
 		const parts: MessagePart[] = [
-			{ type: 'tool_use', id: 't1', name: 'x', input: {} },
-			{ type: 'thinking', text: 'still thinking' },
+			{ id: 't1', input: {}, name: 'x', type: 'tool_use' },
+			{ text: 'still thinking', type: 'thinking' },
 		];
 		const groups = groupParts(parts, true, new Map());
 		expect(groups[0].kind).toBe('bundle');
@@ -63,8 +63,8 @@ describe('groupParts', () => {
 	});
 	it('marks bundles with pending tool calls as hasActive while streaming', () => {
 		const parts: MessagePart[] = [
-			{ type: 'thinking', text: 'about to call' },
-			{ type: 'tool_use', id: 't1', name: 'x', input: {} },
+			{ text: 'about to call', type: 'thinking' },
+			{ id: 't1', input: {}, name: 'x', type: 'tool_use' },
 		];
 		const groups = groupParts(parts, true, new Map());
 		if (groups[0].kind === 'bundle') {
@@ -73,10 +73,10 @@ describe('groupParts', () => {
 	});
 	it('does not mark a bundle active once tool results are present', () => {
 		const parts: MessagePart[] = [
-			{ type: 'thinking', text: 'pre' },
-			{ type: 'tool_use', id: 't1', name: 'x', input: {} },
+			{ text: 'pre', type: 'thinking' },
+			{ id: 't1', input: {}, name: 'x', type: 'tool_use' },
 		];
-		const results = buildResultsMap([{ type: 'tool_result', toolUseId: 't1', content: 'ok', isError: false }]);
+		const results = buildResultsMap([{ content: 'ok', isError: false, toolUseId: 't1', type: 'tool_result' }]);
 		const groups = groupParts(parts, true, results);
 		if (groups[0].kind === 'bundle') {
 			expect(groups[0].hasActive).toBe(false);
@@ -84,18 +84,18 @@ describe('groupParts', () => {
 	});
 	it('flushes a bundle when an output part appears between non-output parts', () => {
 		const parts: MessagePart[] = [
-			{ type: 'thinking', text: 'pre' },
-			{ type: 'tool_use', id: 't1', name: 'x', input: {} },
-			{ type: 'text', text: 'answer' },
-			{ type: 'thinking', text: 'reflection' },
+			{ text: 'pre', type: 'thinking' },
+			{ id: 't1', input: {}, name: 'x', type: 'tool_use' },
+			{ text: 'answer', type: 'text' },
+			{ text: 'reflection', type: 'thinking' },
 		];
 		const groups = groupParts(parts, false, new Map());
 		expect(groups.map((g) => g.kind)).toEqual(['bundle', 'standalone', 'standalone']);
 	});
 	it('marks bundles with no tool_use as not mixed', () => {
 		const parts: MessagePart[] = [
-			{ type: 'thinking', text: 'a' },
-			{ type: 'thinking', text: 'b' },
+			{ text: 'a', type: 'thinking' },
+			{ text: 'b', type: 'thinking' },
 		];
 		const groups = groupParts(parts, false, new Map());
 		expect(groups[0].kind).toBe('bundle');
@@ -105,12 +105,10 @@ describe('groupParts', () => {
 	});
 	it('keeps a bundle active when a tool result is still streaming', () => {
 		const parts: MessagePart[] = [
-			{ type: 'thinking', text: 'pre' },
-			{ type: 'tool_use', id: 't1', name: 'x', input: {} },
+			{ text: 'pre', type: 'thinking' },
+			{ id: 't1', input: {}, name: 'x', type: 'tool_use' },
 		];
-		const results = buildResultsMap([
-			{ type: 'tool_result', toolUseId: 't1', content: 'partial…', isError: false, streaming: true },
-		]);
+		const results = buildResultsMap([{ content: 'partial…', isError: false, streaming: true, toolUseId: 't1', type: 'tool_result' }]);
 		const groups = groupParts(parts, true, results);
 		expect(groups[0].kind).toBe('bundle');
 		if (groups[0].kind === 'bundle') {
@@ -119,9 +117,9 @@ describe('groupParts', () => {
 	});
 	it('uses a stable key based only on the first part index', () => {
 		const parts: MessagePart[] = [
-			{ type: 'thinking', text: 'a' },
-			{ type: 'tool_use', id: 't1', name: 'x', input: {} },
-			{ type: 'tool_result', toolUseId: 't1', content: 'ok', isError: false },
+			{ text: 'a', type: 'thinking' },
+			{ id: 't1', input: {}, name: 'x', type: 'tool_use' },
+			{ content: 'ok', isError: false, toolUseId: 't1', type: 'tool_result' },
 		];
 		const groups = groupParts(parts, false, buildResultsMap(parts));
 		expect(groups[0].kind).toBe('bundle');
@@ -131,11 +129,11 @@ describe('groupParts', () => {
 	});
 	it('marks only the last bundle as isLast', () => {
 		const parts: MessagePart[] = [
-			{ type: 'thinking', text: 'pre' },
-			{ type: 'tool_use', id: 't1', name: 'x', input: {} },
-			{ type: 'text', text: 'answer' },
-			{ type: 'thinking', text: 'a' },
-			{ type: 'tool_use', id: 't2', name: 'y', input: {} },
+			{ text: 'pre', type: 'thinking' },
+			{ id: 't1', input: {}, name: 'x', type: 'tool_use' },
+			{ text: 'answer', type: 'text' },
+			{ text: 'a', type: 'thinking' },
+			{ id: 't2', input: {}, name: 'y', type: 'tool_use' },
 		];
 		const groups = groupParts(parts, false, new Map());
 		const bundles = groups.filter((g) => g.kind === 'bundle');
@@ -145,8 +143,8 @@ describe('groupParts', () => {
 	});
 	it('marks the only bundle as isLast', () => {
 		const parts: MessagePart[] = [
-			{ type: 'thinking', text: 'a' },
-			{ type: 'tool_use', id: 't1', name: 'x', input: {} },
+			{ text: 'a', type: 'thinking' },
+			{ id: 't1', input: {}, name: 'x', type: 'tool_use' },
 		];
 		const groups = groupParts(parts, true, new Map());
 		expect(groups[0].kind).toBe('bundle');
@@ -156,10 +154,10 @@ describe('groupParts', () => {
 	});
 	it('keeps a citations part standalone and flushes the preceding bundle', () => {
 		const parts: MessagePart[] = [
-			{ type: 'thinking', text: 'pre' },
-			{ type: 'tool_use', id: 't1', name: 'web_search', input: {} },
-			{ type: 'tool_result', toolUseId: 't1', content: 'ok', isError: false },
-			{ type: 'citations', citations: [{ url: 'https://example.com', title: 'Example' }] },
+			{ text: 'pre', type: 'thinking' },
+			{ id: 't1', input: {}, name: 'web_search', type: 'tool_use' },
+			{ content: 'ok', isError: false, toolUseId: 't1', type: 'tool_result' },
+			{ citations: [{ title: 'Example', url: 'https://example.com' }], type: 'citations' },
 		];
 		const groups = groupParts(parts, false, buildResultsMap(parts));
 		expect(groups.map((g) => g.kind)).toEqual(['bundle', 'standalone']);

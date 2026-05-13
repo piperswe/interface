@@ -1,5 +1,5 @@
-import type { Tool, ToolContext, ToolExecutionResult } from './registry';
 import {
+	type CustomToolRow,
 	createCustomTool,
 	getCustomTool,
 	getCustomToolByName,
@@ -7,6 +7,7 @@ import {
 	secretKeys,
 	updateCustomTool,
 } from '../custom_tools';
+import type { Tool, ToolContext, ToolExecutionResult } from './registry';
 
 const TOOL_AUTHOR_GUIDE = `Tool source must be a complete ES module that exports a default WorkerEntrypoint subclass with an async run(input) method, e.g.:
 
@@ -24,19 +25,19 @@ The return value of run() is JSON-serialized and shown back to the agent. Throwi
 
 export const listCustomToolsTool: Tool = {
 	definition: {
-		name: 'list_custom_tools',
 		description:
 			'List all user-defined custom tools (id, name, description, enabled). Use this before create_custom_tool to avoid name collisions, or to find an existing tool to update.',
-		inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+		inputSchema: { additionalProperties: false, properties: {}, type: 'object' },
+		name: 'list_custom_tools',
 	},
 	async execute(ctx: ToolContext): Promise<ToolExecutionResult> {
 		const tools = await listCustomTools(ctx.env);
 		if (tools.length === 0) return { content: 'No custom tools defined yet.' };
 		const summary = tools.map((t) => ({
-			id: t.id,
-			name: t.name,
 			description: t.description,
 			enabled: t.enabled,
+			id: t.id,
+			name: t.name,
 		}));
 		return { content: JSON.stringify(summary, null, 2) };
 	},
@@ -44,20 +45,20 @@ export const listCustomToolsTool: Tool = {
 
 export const getCustomToolTool: Tool = {
 	definition: {
-		name: 'get_custom_tool',
 		description:
 			"Read a custom tool's full definition (source, input_schema, description, secret keys). Pass either id or name. Secret values are redacted — only the key names are returned.",
 		inputSchema: {
-			type: 'object',
 			properties: {
-				id: { type: 'integer', description: 'Tool id (preferred).' },
-				name: { type: 'string', description: 'Tool name (alternative to id).' },
+				id: { description: 'Tool id (preferred).', type: 'integer' },
+				name: { description: 'Tool name (alternative to id).', type: 'string' },
 			},
+			type: 'object',
 		},
+		name: 'get_custom_tool',
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
 		const args = (input ?? {}) as { id?: number; name?: string };
-		let row;
+		let row: CustomToolRow | null;
 		if (typeof args.id === 'number') {
 			row = await getCustomTool(ctx.env, args.id);
 		} else if (typeof args.name === 'string' && args.name) {
@@ -65,23 +66,23 @@ export const getCustomToolTool: Tool = {
 		} else {
 			return {
 				content: 'Provide either `id` or `name`.',
-				isError: true,
 				errorCode: 'invalid_input',
+				isError: true,
 			};
 		}
 		if (!row) {
-			return { content: 'Custom tool not found.', isError: true, errorCode: 'not_found' };
+			return { content: 'Custom tool not found.', errorCode: 'not_found', isError: true };
 		}
 		return {
 			content: JSON.stringify(
 				{
-					id: row.id,
-					name: row.name,
 					description: row.description,
 					enabled: row.enabled,
+					id: row.id,
 					input_schema: safeParseJson(row.inputSchema),
-					source: row.source,
+					name: row.name,
 					secret_keys: secretKeys(row.secretsJson),
+					source: row.source,
 				},
 				null,
 				2,
@@ -92,38 +93,37 @@ export const getCustomToolTool: Tool = {
 
 export const createCustomToolTool: Tool = {
 	definition: {
-		name: 'create_custom_tool',
-		description:
-			`Create a new custom tool the agent can call on subsequent turns. The new tool is NOT available in the current turn — finish your reply and the user will see it on the next call. ${TOOL_AUTHOR_GUIDE}`,
+		description: `Create a new custom tool the agent can call on subsequent turns. The new tool is NOT available in the current turn — finish your reply and the user will see it on the next call. ${TOOL_AUTHOR_GUIDE}`,
 		inputSchema: {
-			type: 'object',
-			required: ['name', 'description', 'source', 'input_schema'],
 			properties: {
-				name: {
-					type: 'string',
-					description:
-						'Tool name (snake_case, must start with a letter, no `mcp_` or `custom_` prefix, no collision with built-in tools).',
-				},
 				description: {
-					type: 'string',
 					description: 'Short description shown to the LLM. Be specific about what the tool does and when to use it.',
-				},
-				source: {
 					type: 'string',
-					description: 'Full ES module source — see the format above.',
 				},
 				input_schema: {
+					description:
+						"JSON Schema for the tool's `input` argument. Must be a JSON Schema object (typically `{type:'object', properties:{...}}`).",
 					type: 'object',
-					description: "JSON Schema for the tool's `input` argument. Must be a JSON Schema object (typically `{type:'object', properties:{...}}`).",
+				},
+				name: {
+					description: 'Tool name (snake_case, must start with a letter, no `mcp_` or `custom_` prefix, no collision with built-in tools).',
+					type: 'string',
 				},
 				secrets: {
-					type: 'object',
-					description:
-						'Optional map of API keys / secrets passed as the loaded worker\'s `env`. The user can edit these in the UI — prefer asking the user to provide them rather than hardcoding.',
 					additionalProperties: { type: 'string' },
+					description:
+						"Optional map of API keys / secrets passed as the loaded worker's `env`. The user can edit these in the UI — prefer asking the user to provide them rather than hardcoding.",
+					type: 'object',
+				},
+				source: {
+					description: 'Full ES module source — see the format above.',
+					type: 'string',
 				},
 			},
+			required: ['name', 'description', 'source', 'input_schema'],
+			type: 'object',
 		},
+		name: 'create_custom_tool',
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
 		const args = (input ?? {}) as {
@@ -134,30 +134,26 @@ export const createCustomToolTool: Tool = {
 			secrets?: Record<string, unknown>;
 		};
 		if (!args.name || typeof args.name !== 'string') {
-			return { content: '`name` is required.', isError: true, errorCode: 'invalid_input' };
+			return { content: '`name` is required.', errorCode: 'invalid_input', isError: true };
 		}
 		if (!args.description || typeof args.description !== 'string') {
-			return { content: '`description` is required.', isError: true, errorCode: 'invalid_input' };
+			return { content: '`description` is required.', errorCode: 'invalid_input', isError: true };
 		}
 		if (!args.source || typeof args.source !== 'string') {
-			return { content: '`source` is required.', isError: true, errorCode: 'invalid_input' };
+			return { content: '`source` is required.', errorCode: 'invalid_input', isError: true };
 		}
 		if (args.input_schema === undefined || args.input_schema === null) {
-			return { content: '`input_schema` is required.', isError: true, errorCode: 'invalid_input' };
+			return { content: '`input_schema` is required.', errorCode: 'invalid_input', isError: true };
 		}
-		const inputSchemaJson =
-			typeof args.input_schema === 'string' ? args.input_schema : JSON.stringify(args.input_schema);
-		const secretsJson =
-			args.secrets && typeof args.secrets === 'object'
-				? JSON.stringify(args.secrets)
-				: null;
+		const inputSchemaJson = typeof args.input_schema === 'string' ? args.input_schema : JSON.stringify(args.input_schema);
+		const secretsJson = args.secrets && typeof args.secrets === 'object' ? JSON.stringify(args.secrets) : null;
 		try {
 			const id = await createCustomTool(ctx.env, {
-				name: args.name,
 				description: args.description,
-				source: args.source,
 				inputSchema: inputSchemaJson,
+				name: args.name,
 				secretsJson,
+				source: args.source,
 			});
 			return {
 				content: `Created custom tool #${id} "${args.name}". It will appear in your tool list on the next turn as \`custom_${id}_${args.name}\`.`,
@@ -165,8 +161,8 @@ export const createCustomToolTool: Tool = {
 		} catch (e) {
 			return {
 				content: e instanceof Error ? e.message : String(e),
-				isError: true,
 				errorCode: 'invalid_input',
+				isError: true,
 			};
 		}
 	},
@@ -174,26 +170,25 @@ export const createCustomToolTool: Tool = {
 
 export const updateCustomToolTool: Tool = {
 	definition: {
-		name: 'update_custom_tool',
 		description: `Update one or more fields of an existing custom tool. The change applies on the next turn. ${TOOL_AUTHOR_GUIDE}`,
 		inputSchema: {
-			type: 'object',
-			required: ['id'],
 			properties: {
-				id: { type: 'integer' },
-				name: { type: 'string' },
 				description: { type: 'string' },
-				source: { type: 'string' },
-				input_schema: { type: 'object' },
-				secrets: {
-					type: 'object',
-					description:
-						'Replace the secrets blob entirely. Pass an empty object to clear. Omit to leave secrets unchanged.',
-					additionalProperties: { type: 'string' },
-				},
 				enabled: { type: 'boolean' },
+				id: { type: 'integer' },
+				input_schema: { type: 'object' },
+				name: { type: 'string' },
+				secrets: {
+					additionalProperties: { type: 'string' },
+					description: 'Replace the secrets blob entirely. Pass an empty object to clear. Omit to leave secrets unchanged.',
+					type: 'object',
+				},
+				source: { type: 'string' },
 			},
+			required: ['id'],
+			type: 'object',
 		},
+		name: 'update_custom_tool',
 	},
 	async execute(ctx: ToolContext, input: unknown): Promise<ToolExecutionResult> {
 		const args = (input ?? {}) as {
@@ -206,42 +201,36 @@ export const updateCustomToolTool: Tool = {
 			enabled?: boolean;
 		};
 		if (typeof args.id !== 'number') {
-			return { content: '`id` is required.', isError: true, errorCode: 'invalid_input' };
+			return { content: '`id` is required.', errorCode: 'invalid_input', isError: true };
 		}
 		const patch: Parameters<typeof updateCustomTool>[2] = {};
 		if (args.name !== undefined) {
 			if (typeof args.name !== 'string') {
-				return { content: '`name` must be a string.', isError: true, errorCode: 'invalid_input' };
+				return { content: '`name` must be a string.', errorCode: 'invalid_input', isError: true };
 			}
 			patch.name = args.name;
 		}
 		if (args.description !== undefined) {
 			if (typeof args.description !== 'string') {
-				return { content: '`description` must be a string.', isError: true, errorCode: 'invalid_input' };
+				return { content: '`description` must be a string.', errorCode: 'invalid_input', isError: true };
 			}
 			patch.description = args.description;
 		}
 		if (args.source !== undefined) {
 			if (typeof args.source !== 'string') {
-				return { content: '`source` must be a string.', isError: true, errorCode: 'invalid_input' };
+				return { content: '`source` must be a string.', errorCode: 'invalid_input', isError: true };
 			}
 			patch.source = args.source;
 		}
 		if (args.input_schema !== undefined) {
-			patch.inputSchema =
-				typeof args.input_schema === 'string'
-					? args.input_schema
-					: JSON.stringify(args.input_schema);
+			patch.inputSchema = typeof args.input_schema === 'string' ? args.input_schema : JSON.stringify(args.input_schema);
 		}
 		if (args.secrets !== undefined) {
-			patch.secretsJson =
-				args.secrets && typeof args.secrets === 'object'
-					? JSON.stringify(args.secrets)
-					: null;
+			patch.secretsJson = args.secrets && typeof args.secrets === 'object' ? JSON.stringify(args.secrets) : null;
 		}
 		if (args.enabled !== undefined) {
 			if (typeof args.enabled !== 'boolean') {
-				return { content: '`enabled` must be a boolean.', isError: true, errorCode: 'invalid_input' };
+				return { content: '`enabled` must be a boolean.', errorCode: 'invalid_input', isError: true };
 			}
 			patch.enabled = args.enabled;
 		}
@@ -251,8 +240,8 @@ export const updateCustomToolTool: Tool = {
 		} catch (e) {
 			return {
 				content: e instanceof Error ? e.message : String(e),
-				isError: true,
 				errorCode: 'invalid_input',
+				isError: true,
 			};
 		}
 	},
@@ -266,9 +255,4 @@ function safeParseJson(s: string): unknown {
 	}
 }
 
-export const customToolMetaTools: Tool[] = [
-	listCustomToolsTool,
-	getCustomToolTool,
-	createCustomToolTool,
-	updateCustomToolTool,
-];
+export const customToolMetaTools: Tool[] = [listCustomToolsTool, getCustomToolTool, createCustomToolTool, updateCustomToolTool];

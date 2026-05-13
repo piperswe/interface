@@ -1,13 +1,14 @@
 <script lang="ts" module>
 	import { buildResultsMap, groupParts } from './parts';
+
 	export { buildResultsMap, groupParts };
 </script>
 
 <script lang="ts">
 	import type { MessageRow } from '$lib/types/conversation';
 	import Artifact from './Artifact.svelte';
-	import MetaPanel from './MetaPanel.svelte';
 	import MessagePart from './MessagePart.svelte';
+	import MetaPanel from './MetaPanel.svelte';
 	import SpeakButton from './SpeakButton.svelte';
 	import WorkBundle from './WorkBundle.svelte';
 
@@ -44,7 +45,7 @@
 
 {#if timestamp !== undefined && message.role === 'user'}
 	<time class="message-timestamp" datetime={new Date(timestamp).toISOString()}>
-		{new Date(timestamp).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}
+		{new Date(timestamp).toLocaleString(undefined, { day: 'numeric', hour: 'numeric', minute: '2-digit', month: 'short', year: 'numeric' })}
 	</time>
 {/if}
 <div id={`m-${message.id}`} class="message d-flex flex-column gap-1" data-message-id={message.id} data-role={message.role} data-status={message.status}>
@@ -114,8 +115,8 @@
 	/* `.content` is rendered both here (no-parts fallback) and inside
 	 * `MessagePart.svelte` (text parts). Mark these styles `:global()` so
 	 * the same look applies in both places without duplication. */
-	.message[data-role='user'] :global(> .content),
-	.message[data-role='user'] :global(> .content + .content) {
+	.message[data-role='user'] > :global(.content),
+	.message[data-role='user'] > :global(.content + .content) {
 		background: var(--user-bg);
 		border-radius: 18px 18px 4px 18px;
 		padding: 0.6rem 0.95rem;
@@ -123,13 +124,14 @@
 		color: var(--fg);
 	}
 
-	.message[data-role='assistant'] :global(> .content),
-	.message[data-role='assistant'] :global(> details),
-	.message[data-role='assistant'] :global(> .tool-call),
-	.message[data-role='assistant'] :global(> .artifacts) {
+	.message[data-role='assistant'] > :global(.content),
+	.message[data-role='assistant'] > :global(details),
+	.message[data-role='assistant'] > :global(.tool-call),
+	.message[data-role='assistant'] > :global(.artifacts) {
 		width: 100%;
 	}
 
+	/* biome-ignore lint/style/noDescendingSpecificity: sets unrelated properties (word-break) to the scoped :global(.content) rules above that set background — no override hazard. */
 	:global(.content) {
 		word-break: break-word;
 		overflow-wrap: anywhere;

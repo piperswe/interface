@@ -34,9 +34,9 @@ export const GET: RequestHandler = async ({ params, url, platform }) => {
 	let cursor: string | undefined;
 	do {
 		const page = await bucket.list({
-			prefix: listPrefix,
-			delimiter: '/',
 			cursor,
+			delimiter: '/',
+			prefix: listPrefix,
 		});
 		for (const sub of page.delimitedPrefixes ?? []) {
 			// "conversations/{id}/foo/bar/" -> "/workspace/foo/bar"

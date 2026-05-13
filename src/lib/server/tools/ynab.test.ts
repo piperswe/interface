@@ -2,7 +2,7 @@ import { env } from 'cloudflare:test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createYnabTools } from './ynab';
 
-const ctx = { env, conversationId: 'c', assistantMessageId: 'a', modelId: 'p/m' };
+const ctx = { assistantMessageId: 'a', conversationId: 'c', env, modelId: 'p/m' };
 
 function findTool(name: string) {
 	const tool = createYnabTools('test-token').find((t) => t.definition.name === name);
@@ -12,8 +12,8 @@ function findTool(name: string) {
 
 function jsonResponse(body: unknown, init?: ResponseInit): Response {
 	return new Response(JSON.stringify(body), {
-		status: 200,
 		headers: { 'content-type': 'application/json' },
+		status: 200,
 		...init,
 	});
 }
@@ -61,12 +61,12 @@ describe('ynab_list_budgets', () => {
 					default_plan: { id: 'b-default', name: 'Default' },
 					plans: [
 						{
-							id: 'b1',
-							name: 'My Plan',
-							last_modified_on: '2026-05-01T00:00:00Z',
+							currency_format: { currency_symbol: '$', iso_code: 'USD' },
 							first_month: '2025-01-01',
+							id: 'b1',
+							last_modified_on: '2026-05-01T00:00:00Z',
 							last_month: '2026-12-01',
-							currency_format: { iso_code: 'USD', currency_symbol: '$' },
+							name: 'My Plan',
 						},
 					],
 				},
@@ -78,7 +78,7 @@ describe('ynab_list_budgets', () => {
 			budgets: Array<{ id: string; name: string; currency: { iso_code: string } }>;
 		};
 		expect(parsed.default_budget_id).toBe('b-default');
-		expect(parsed.budgets[0]).toMatchObject({ id: 'b1', name: 'My Plan', currency: { iso_code: 'USD' } });
+		expect(parsed.budgets[0]).toMatchObject({ currency: { iso_code: 'USD' }, id: 'b1', name: 'My Plan' });
 		expect(parsed.budgets[0]).not.toHaveProperty('accounts');
 	});
 });
@@ -96,17 +96,17 @@ describe('ynab_list_accounts', () => {
 				data: {
 					accounts: [
 						{
+							balance: 123450,
+							balance_formatted: '$123.45',
+							cleared_balance: 100000,
+							closed: false,
+							deleted: false,
 							id: 'a1',
 							name: 'Checking',
-							type: 'checking',
 							on_budget: true,
-							closed: false,
-							balance: 123450,
-							cleared_balance: 100000,
-							uncleared_balance: 23450,
 							transfer_payee_id: 'p1',
-							deleted: false,
-							balance_formatted: '$123.45',
+							type: 'checking',
+							uncleared_balance: 23450,
 						},
 					],
 				},
@@ -114,15 +114,15 @@ describe('ynab_list_accounts', () => {
 		);
 		const result = await findTool('ynab_list_accounts').execute(ctx, { budget_id: 'last-used' });
 		const parsed = JSON.parse(result.content as string) as Array<{ id: string; balance_milliunits: number }>;
-		expect(parsed[0]).toMatchObject({ id: 'a1', balance_milliunits: 123450 });
+		expect(parsed[0]).toMatchObject({ balance_milliunits: 123450, id: 'a1' });
 	});
 
 	it('surfaces YNAB API errors', async () => {
 		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-			new Response(JSON.stringify({ error: { id: '401', detail: 'Unauthorized' } }), {
+			new Response(JSON.stringify({ error: { detail: 'Unauthorized', id: '401' } }), {
+				headers: { 'content-type': 'application/json' },
 				status: 401,
 				statusText: 'Unauthorized',
-				headers: { 'content-type': 'application/json' },
 			}),
 		);
 		const result = await findTool('ynab_list_accounts').execute(ctx, { budget_id: 'x' });
@@ -138,46 +138,46 @@ describe('ynab_list_categories', () => {
 				data: {
 					category_groups: [
 						{
-							id: 'g1',
-							name: 'Visible',
-							hidden: false,
-							deleted: false,
 							categories: [
 								{
-									id: 'c1',
-									category_group_id: 'g1',
-									name: 'Groceries',
-									hidden: false,
-									budgeted: 50000,
 									activity: -25000,
 									balance: 25000,
+									budgeted: 50000,
+									category_group_id: 'g1',
 									deleted: false,
+									hidden: false,
+									id: 'c1',
+									name: 'Groceries',
 								},
 								{
-									id: 'c2',
-									category_group_id: 'g1',
-									name: 'Hidden',
-									hidden: true,
-									budgeted: 0,
 									activity: 0,
 									balance: 0,
+									budgeted: 0,
+									category_group_id: 'g1',
 									deleted: false,
+									hidden: true,
+									id: 'c2',
+									name: 'Hidden',
 								},
 							],
+							deleted: false,
+							hidden: false,
+							id: 'g1',
+							name: 'Visible',
 						},
 						{
+							categories: [],
+							deleted: false,
+							hidden: true,
 							id: 'g2',
 							name: 'HiddenGroup',
-							hidden: true,
-							deleted: false,
-							categories: [],
 						},
 						{
+							categories: [],
+							deleted: true,
+							hidden: false,
 							id: 'g3',
 							name: 'Deleted',
-							hidden: false,
-							deleted: true,
-							categories: [],
 						},
 					],
 				},
@@ -194,8 +194,8 @@ describe('ynab_list_categories', () => {
 describe('ynab_list_transactions', () => {
 	it('rejects multiple scope filters', async () => {
 		const result = await findTool('ynab_list_transactions').execute(ctx, {
-			budget_id: 'b1',
 			account_id: 'a1',
+			budget_id: 'b1',
 			category_id: 'c1',
 		});
 		expect(result.isError).toBe(true);
@@ -208,38 +208,38 @@ describe('ynab_list_transactions', () => {
 				data: {
 					transactions: [
 						{
-							id: 't1',
-							date: '2026-04-30',
-							amount: -12340,
-							cleared: 'cleared',
-							approved: true,
 							account_id: 'a1',
 							account_name: 'Checking',
+							amount: -12340,
+							approved: true,
 							category_name: 'Groceries',
-							subtransactions: [],
+							cleared: 'cleared',
+							date: '2026-04-30',
 							deleted: false,
+							id: 't1',
+							subtransactions: [],
 						},
 						{
-							id: 't2',
-							date: '2026-04-25',
-							amount: -5000,
-							cleared: 'cleared',
-							approved: true,
 							account_id: 'a1',
 							account_name: 'Checking',
-							subtransactions: [],
+							amount: -5000,
+							approved: true,
+							cleared: 'cleared',
+							date: '2026-04-25',
 							deleted: true,
+							id: 't2',
+							subtransactions: [],
 						},
 					],
 				},
 			}),
 		);
 		const result = await findTool('ynab_list_transactions').execute(ctx, {
-			budget_id: 'b1',
 			account_id: 'a1',
+			budget_id: 'b1',
+			limit: 10,
 			since_date: '2026-04-01',
 			type: 'unapproved',
-			limit: 10,
 		});
 		expect(result.isError).toBeFalsy();
 		const url = (fetchMock.mock.calls[0] as [string, RequestInit])[0];
@@ -265,26 +265,26 @@ describe('ynab_create_transaction', () => {
 		const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
 			jsonResponse({
 				data: {
-					transaction_ids: ['t-new'],
 					transaction: {
-						id: 't-new',
-						date: '2026-05-01',
-						amount: -12340,
-						cleared: 'uncleared',
-						approved: true,
 						account_id: 'a1',
 						account_name: 'Checking',
-						subtransactions: [],
+						amount: -12340,
+						approved: true,
+						cleared: 'uncleared',
+						date: '2026-05-01',
 						deleted: false,
+						id: 't-new',
+						subtransactions: [],
 					},
+					transaction_ids: ['t-new'],
 				},
 			}),
 		);
 		const result = await findTool('ynab_create_transaction').execute(ctx, {
-			budget_id: 'b1',
 			account_id: 'a1',
-			date: '2026-05-01',
 			amount: -12.34,
+			budget_id: 'b1',
+			date: '2026-05-01',
 			payee_name: 'Coffee Shop',
 		});
 		expect(result.isError).toBeFalsy();
@@ -299,25 +299,25 @@ describe('ynab_create_transaction', () => {
 		const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
 			jsonResponse({
 				data: {
-					transaction_ids: ['t-new'],
 					transaction: {
-						id: 't-new',
-						date: '2026-05-01',
-						amount: -7777,
-						cleared: 'uncleared',
-						approved: true,
 						account_id: 'a1',
 						account_name: 'Checking',
-						subtransactions: [],
+						amount: -7777,
+						approved: true,
+						cleared: 'uncleared',
+						date: '2026-05-01',
 						deleted: false,
+						id: 't-new',
+						subtransactions: [],
 					},
+					transaction_ids: ['t-new'],
 				},
 			}),
 		);
 		await findTool('ynab_create_transaction').execute(ctx, {
-			budget_id: 'b1',
 			account_id: 'a1',
 			amount_milliunits: -7777,
+			budget_id: 'b1',
 		});
 		const init = (fetchMock.mock.calls[0] as [string, RequestInit])[1];
 		const body = JSON.parse(init.body as string) as { transaction: { amount: number } };
@@ -326,8 +326,8 @@ describe('ynab_create_transaction', () => {
 
 	it('errors when neither amount form is supplied', async () => {
 		const result = await findTool('ynab_create_transaction').execute(ctx, {
-			budget_id: 'b1',
 			account_id: 'a1',
+			budget_id: 'b1',
 		});
 		expect(result.isError).toBe(true);
 		expect(result.content).toMatch(/amount/);
@@ -340,23 +340,23 @@ describe('ynab_update_category_budgeted', () => {
 			jsonResponse({
 				data: {
 					category: {
-						id: 'c1',
-						category_group_id: 'g1',
-						name: 'Groceries',
-						hidden: false,
-						budgeted: 200000,
 						activity: 0,
 						balance: 200000,
+						budgeted: 200000,
+						category_group_id: 'g1',
 						deleted: false,
+						hidden: false,
+						id: 'c1',
+						name: 'Groceries',
 					},
 				},
 			}),
 		);
 		const result = await findTool('ynab_update_category_budgeted').execute(ctx, {
-			budget_id: 'b1',
-			month: '2026-05-01',
-			category_id: 'c1',
 			amount: 200,
+			budget_id: 'b1',
+			category_id: 'c1',
+			month: '2026-05-01',
 		});
 		expect(result.isError).toBeFalsy();
 		const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];

@@ -1,15 +1,11 @@
 import { env } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { MessagePart } from '$lib/types/conversation';
-import {
-	isBlobSentinel,
-	offloadLargeBlobs,
-	partsFromJson,
-	partsToJson,
-	resolveBlobRefs,
-} from './blob-store';
+import { assertDefined } from '../../../../../test/assert-defined';
+import { isBlobSentinel, offloadLargeBlobs, partsFromJson, partsToJson, resolveBlobRefs } from './blob-store';
 
-const bucket = env.WORKSPACE_BUCKET!;
+assertDefined(env.WORKSPACE_BUCKET, 'WORKSPACE_BUCKET binding required');
+const bucket = env.WORKSPACE_BUCKET;
 
 async function clearBlobs(): Promise<void> {
 	const list = await bucket.list({ prefix: 'blobs/' });
@@ -38,14 +34,14 @@ describe('blob-store', () => {
 		const small = bigBase64(1024); // 1 KB < threshold
 		const parts: MessagePart[] = [
 			{
-				type: 'tool_result',
-				toolUseId: 't1',
 				content: [
-					{ type: 'text', text: 'loaded' },
-					{ type: 'image', mimeType: 'image/png', data: big },
-					{ type: 'image', mimeType: 'image/png', data: small },
+					{ text: 'loaded', type: 'text' },
+					{ data: big, mimeType: 'image/png', type: 'image' },
+					{ data: small, mimeType: 'image/png', type: 'image' },
 				],
 				isError: false,
+				toolUseId: 't1',
+				type: 'tool_result',
 			},
 		];
 		const offloaded = await offloadLargeBlobs(parts, env);
@@ -53,7 +49,7 @@ describe('blob-store', () => {
 		if (tr.type !== 'tool_result' || typeof tr.content === 'string') throw new Error('shape');
 		const blocks = tr.content;
 		expect(blocks).toHaveLength(3);
-		expect(blocks[0]).toEqual({ type: 'text', text: 'loaded' });
+		expect(blocks[0]).toEqual({ text: 'loaded', type: 'text' });
 		const bigBlock = blocks[1];
 		const smallBlock = blocks[2];
 		if (bigBlock.type !== 'image' || smallBlock.type !== 'image') throw new Error('shape');
@@ -65,19 +61,20 @@ describe('blob-store', () => {
 	it('round-trips through partsToJson/partsFromJson preserving image bytes', async () => {
 		const big = bigBase64(400 * 1024);
 		const parts: MessagePart[] = [
-			{ type: 'text', text: 'before image' },
+			{ text: 'before image', type: 'text' },
 			{
-				type: 'tool_result',
-				toolUseId: 't1',
-				content: [{ type: 'image', mimeType: 'image/jpeg', data: big }],
+				content: [{ data: big, mimeType: 'image/jpeg', type: 'image' }],
 				isError: false,
+				toolUseId: 't1',
+				type: 'tool_result',
 			},
 		];
 		const json = await partsToJson(parts, env);
 		expect(json).not.toBeNull();
+		assertDefined(json);
 		// The persisted JSON must NOT contain the full base64 payload — that's
 		// the whole point of offloading.
-		expect(json!.length).toBeLessThan(big.length);
+		expect(json.length).toBeLessThan(big.length);
 		expect(json).toContain('r2-blob:');
 		const restored = await partsFromJson(json, env);
 		expect(restored).toEqual(parts);
@@ -87,18 +84,18 @@ describe('blob-store', () => {
 		const big = bigBase64(300 * 1024);
 		const parts1: MessagePart[] = [
 			{
-				type: 'tool_result',
-				toolUseId: 't1',
-				content: [{ type: 'image', mimeType: 'image/png', data: big }],
+				content: [{ data: big, mimeType: 'image/png', type: 'image' }],
 				isError: false,
+				toolUseId: 't1',
+				type: 'tool_result',
 			},
 		];
 		const parts2: MessagePart[] = [
 			{
-				type: 'tool_result',
-				toolUseId: 't2',
-				content: [{ type: 'image', mimeType: 'image/png', data: big }],
+				content: [{ data: big, mimeType: 'image/png', type: 'image' }],
 				isError: false,
+				toolUseId: 't2',
+				type: 'tool_result',
 			},
 		];
 		await offloadLargeBlobs(parts1, env);
@@ -111,10 +108,10 @@ describe('blob-store', () => {
 		const big = bigBase64(300 * 1024);
 		const parts: MessagePart[] = [
 			{
-				type: 'tool_result',
-				toolUseId: 't1',
-				content: [{ type: 'image', mimeType: 'image/png', data: big }],
+				content: [{ data: big, mimeType: 'image/png', type: 'image' }],
 				isError: false,
+				toolUseId: 't1',
+				type: 'tool_result',
 			},
 		];
 		const cache = new Set<string>();
@@ -131,12 +128,12 @@ describe('blob-store', () => {
 
 	it('returns the input array unchanged when there are no large blobs', async () => {
 		const parts: MessagePart[] = [
-			{ type: 'text', text: 'hi' },
+			{ text: 'hi', type: 'text' },
 			{
-				type: 'tool_result',
-				toolUseId: 't1',
-				content: [{ type: 'image', mimeType: 'image/png', data: 'AAAA' }],
+				content: [{ data: 'AAAA', mimeType: 'image/png', type: 'image' }],
 				isError: false,
+				toolUseId: 't1',
+				type: 'tool_result',
 			},
 		];
 		const out = await offloadLargeBlobs(parts, env);
@@ -147,10 +144,10 @@ describe('blob-store', () => {
 		const big = bigBase64(300 * 1024);
 		const parts: MessagePart[] = [
 			{
-				type: 'tool_result',
-				toolUseId: 't1',
-				content: [{ type: 'image', mimeType: 'image/png', data: big }],
+				content: [{ data: big, mimeType: 'image/png', type: 'image' }],
 				isError: false,
+				toolUseId: 't1',
+				type: 'tool_result',
 			},
 		];
 		const once = await offloadLargeBlobs(parts, env);
@@ -164,12 +161,10 @@ describe('blob-store', () => {
 		// page still loads.
 		const parts: MessagePart[] = [
 			{
-				type: 'tool_result',
-				toolUseId: 't1',
-				content: [
-					{ type: 'image', mimeType: 'image/png', data: 'r2-blob:deadbeefcafebabe' },
-				],
+				content: [{ data: 'r2-blob:deadbeefcafebabe', mimeType: 'image/png', type: 'image' }],
 				isError: false,
+				toolUseId: 't1',
+				type: 'tool_result',
 			},
 		];
 		const resolved = await resolveBlobRefs(parts, env);
@@ -190,9 +185,7 @@ describe('blob-store', () => {
 	});
 
 	it('does not touch tool_result blocks whose content is a plain string', async () => {
-		const parts: MessagePart[] = [
-			{ type: 'tool_result', toolUseId: 't1', content: 'plain text result', isError: false },
-		];
+		const parts: MessagePart[] = [{ content: 'plain text result', isError: false, toolUseId: 't1', type: 'tool_result' }];
 		const json = await partsToJson(parts, env);
 		expect(json).not.toContain('r2-blob:');
 		const restored = await partsFromJson(json, env);
@@ -203,10 +196,10 @@ describe('blob-store', () => {
 		const big = bigBase64(300 * 1024);
 		const parts: MessagePart[] = [
 			{
-				type: 'tool_result',
-				toolUseId: 't1',
-				content: [{ type: 'image', mimeType: 'image/png', data: big }],
+				content: [{ data: big, mimeType: 'image/png', type: 'image' }],
 				isError: false,
+				toolUseId: 't1',
+				type: 'tool_result',
 			},
 		];
 		// Without a bucket the offload is a no-op; callers retain legacy

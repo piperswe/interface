@@ -1,7 +1,7 @@
 <script lang="ts">
-	import type { MessagePart, MetaSnapshot } from '$lib/types/conversation';
-	import { fmtMs, fmtNumber, fmtUsd } from '$lib/formatters';
 	import { computeCost, countWebSearches } from '$lib/cost';
+	import { fmtMs, fmtNumber, fmtUsd } from '$lib/formatters';
+	import type { MessagePart, MetaSnapshot } from '$lib/types/conversation';
 
 	let {
 		snapshot,
@@ -18,14 +18,14 @@
 		kagiCostPer1000Searches?: number;
 	} = $props();
 
-	const ttftMs = $derived(snapshot && snapshot.firstTokenAt && snapshot.startedAt ? snapshot.firstTokenAt - snapshot.startedAt : 0);
+	const ttftMs = $derived(snapshot?.firstTokenAt && snapshot.startedAt ? snapshot.firstTokenAt - snapshot.startedAt : 0);
 	const webSearchCount = $derived(countWebSearches(parts));
 	const cost = $derived(
 		computeCost({
-			usage: snapshot?.usage ?? null,
-			model: modelPricing,
-			webSearchCount,
 			kagiCostPer1000Searches,
+			model: modelPricing,
+			usage: snapshot?.usage ?? null,
+			webSearchCount,
 		}),
 	);
 

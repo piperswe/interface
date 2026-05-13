@@ -1,11 +1,11 @@
 import { env } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createModel } from '../providers/models';
+import { createProvider } from '../providers/store';
+import { setSetting } from '../settings';
 import { compactHistory } from './context';
 import type { ChatRequest, Message, StreamEvent } from './LLM';
 import * as routeMod from './route';
-import { createProvider } from '../providers/store';
-import { createModel } from '../providers/models';
-import { setSetting } from '../settings';
 
 afterEach(async () => {
 	vi.restoreAllMocks();
@@ -21,26 +21,26 @@ beforeEach(async () => {
 });
 
 async function setupModel(contextLength: number) {
-	await createProvider(env, { id: 'test', type: 'openai_compatible', apiKey: 'sk-test', endpoint: 'https://api.openai.com/v1' });
-	await createModel(env, 'test', { id: 'model', name: 'Test', maxContextLength: contextLength });
+	await createProvider(env, { apiKey: 'sk-test', endpoint: 'https://api.openai.com/v1', id: 'test', type: 'openai_compatible' });
+	await createModel(env, 'test', { id: 'model', maxContextLength: contextLength, name: 'Test' });
 }
 
 function mockSummary(text: string) {
 	async function* gen(): AsyncGenerator<StreamEvent> {
-		yield { type: 'text_delta', delta: text };
+		yield { delta: text, type: 'text_delta' };
 		yield { type: 'done' };
 	}
 	vi.spyOn(routeMod, 'routeLLMByGlobalId').mockResolvedValue({
+		chat: () => gen(),
 		model: 'test/model',
 		providerID: 'mock',
-		chat: () => gen(),
 	} as never);
 }
 
 describe('compactHistory', () => {
 	it('is a no-op when threshold is 0', async () => {
 		await setSetting(env, 'context_compaction_threshold', '0');
-		const messages: Message[] = [{ role: 'user', content: 'hi' }];
+		const messages: Message[] = [{ content: 'hi', role: 'user' }];
 		const out = await compactHistory(messages, 'test/model', env, null);
 		expect(out.wasCompacted).toBe(false);
 		expect(out.messages).toEqual(messages);
@@ -49,7 +49,7 @@ describe('compactHistory', () => {
 	it('is a no-op when the estimated token count fits', async () => {
 		await setSetting(env, 'context_compaction_threshold', '80');
 		await setupModel(1_000_000);
-		const messages: Message[] = [{ role: 'user', content: 'hi' }];
+		const messages: Message[] = [{ content: 'hi', role: 'user' }];
 		const out = await compactHistory(messages, 'test/model', env, null);
 		expect(out.wasCompacted).toBe(false);
 	});
@@ -59,8 +59,8 @@ describe('compactHistory', () => {
 		await setupModel(100); // tiny — anything is "over budget"
 		mockSummary('SUMMARY');
 		const messages: Message[] = [
-			{ role: 'user', content: 'q1' },
-			{ role: 'assistant', content: 'a1' },
+			{ content: 'q1', role: 'user' },
+			{ content: 'a1', role: 'assistant' },
 		];
 		const out = await compactHistory(messages, 'test/model', env, null);
 		expect(out.wasCompacted).toBe(false);
@@ -74,12 +74,12 @@ describe('compactHistory', () => {
 		// Build six messages with enough text to definitely overflow 50% of 2000 tokens.
 		const big = 'lorem ipsum dolor sit amet '.repeat(80); // ~2150 chars → ~590 tokens
 		const messages: Message[] = [
-			{ role: 'user', content: big + ' u1' },
-			{ role: 'assistant', content: big + ' a1' },
-			{ role: 'user', content: big + ' u2' },
-			{ role: 'assistant', content: big + ' a2' },
-			{ role: 'user', content: 'recent question' },
-			{ role: 'assistant', content: 'recent answer' },
+			{ content: `${big} u1`, role: 'user' },
+			{ content: `${big} a1`, role: 'assistant' },
+			{ content: `${big} u2`, role: 'user' },
+			{ content: `${big} a2`, role: 'assistant' },
+			{ content: 'recent question', role: 'user' },
+			{ content: 'recent answer', role: 'assistant' },
 		];
 		const out = await compactHistory(messages, 'test/model', env, null);
 		expect(out.wasCompacted).toBe(true);
@@ -95,12 +95,12 @@ describe('compactHistory', () => {
 		await setupModel(2000);
 		mockSummary('SUMMARY');
 		const messages: Message[] = [
-			{ role: 'user', content: 'tiny' },
-			{ role: 'assistant', content: 'tiny' },
-			{ role: 'user', content: 'tiny' },
-			{ role: 'assistant', content: 'tiny' },
-			{ role: 'user', content: 'tiny' },
-			{ role: 'assistant', content: 'tiny' },
+			{ content: 'tiny', role: 'user' },
+			{ content: 'tiny', role: 'assistant' },
+			{ content: 'tiny', role: 'user' },
+			{ content: 'tiny', role: 'assistant' },
+			{ content: 'tiny', role: 'user' },
+			{ content: 'tiny', role: 'assistant' },
 		];
 		// lastUsage says 5000 input tokens — that's way over 50% of 2000 (1000).
 		const out = await compactHistory(messages, 'test/model', env, { inputTokens: 5000 });
@@ -111,21 +111,21 @@ describe('compactHistory', () => {
 		await setSetting(env, 'context_compaction_threshold', '50');
 		await setupModel(2000);
 		async function* erroring(): AsyncGenerator<StreamEvent> {
-			yield { type: 'error', message: 'boom' };
+			yield { message: 'boom', type: 'error' };
 		}
 		vi.spyOn(routeMod, 'routeLLMByGlobalId').mockResolvedValue({
+			chat: () => erroring(),
 			model: 'test/model',
 			providerID: 'mock',
-			chat: () => erroring(),
 		} as never);
 		const big = 'lorem ipsum dolor sit amet '.repeat(80);
 		const messages: Message[] = [
-			{ role: 'user', content: big + ' u1' },
-			{ role: 'assistant', content: big + ' a1' },
-			{ role: 'user', content: big + ' u2' },
-			{ role: 'assistant', content: big + ' a2' },
-			{ role: 'user', content: 'recent' },
-			{ role: 'assistant', content: 'recent' },
+			{ content: `${big} u1`, role: 'user' },
+			{ content: `${big} a1`, role: 'assistant' },
+			{ content: `${big} u2`, role: 'user' },
+			{ content: `${big} a2`, role: 'assistant' },
+			{ content: 'recent', role: 'user' },
+			{ content: 'recent', role: 'assistant' },
 		];
 		const out = await compactHistory(messages, 'test/model', env, null);
 		expect(out.wasCompacted).toBe(true);
@@ -139,12 +139,12 @@ describe('compactHistory', () => {
 		mockSummary('SUMMARY');
 		const big = 'lorem ipsum '.repeat(200);
 		const messages: Message[] = [
-			{ role: 'user', content: [{ type: 'text', text: big }] },
-			{ role: 'assistant', content: [{ type: 'text', text: big }] },
-			{ role: 'user', content: [{ type: 'text', text: big }] },
-			{ role: 'assistant', content: [{ type: 'text', text: big }] },
-			{ role: 'user', content: 'recent' },
-			{ role: 'assistant', content: 'recent' },
+			{ content: [{ text: big, type: 'text' }], role: 'user' },
+			{ content: [{ text: big, type: 'text' }], role: 'assistant' },
+			{ content: [{ text: big, type: 'text' }], role: 'user' },
+			{ content: [{ text: big, type: 'text' }], role: 'assistant' },
+			{ content: 'recent', role: 'user' },
+			{ content: 'recent', role: 'assistant' },
 		];
 		const out = await compactHistory(messages, 'test/model', env, null);
 		expect(out.wasCompacted).toBe(true);
@@ -160,17 +160,17 @@ describe('compactHistory', () => {
 		const bigResult = 'x'.repeat(2000);
 		const messages: Message[] = [
 			{
+				content: [{ id: 't1', input: { q: 'a' }, name: 'search', type: 'tool_use' }],
 				role: 'assistant',
-				content: [{ type: 'tool_use', id: 't1', name: 'search', input: { q: 'a' } }],
 			},
-			{ role: 'tool', content: [{ type: 'tool_result', toolUseId: 't1', content: bigResult }] },
+			{ content: [{ content: bigResult, toolUseId: 't1', type: 'tool_result' }], role: 'tool' },
 			{
+				content: [{ id: 't2', input: { q: 'b' }, name: 'search', type: 'tool_use' }],
 				role: 'assistant',
-				content: [{ type: 'tool_use', id: 't2', name: 'search', input: { q: 'b' } }],
 			},
-			{ role: 'tool', content: [{ type: 'tool_result', toolUseId: 't2', content: bigResult }] },
-			{ role: 'user', content: 'final' },
-			{ role: 'assistant', content: 'done' },
+			{ content: [{ content: bigResult, toolUseId: 't2', type: 'tool_result' }], role: 'tool' },
+			{ content: 'final', role: 'user' },
+			{ content: 'done', role: 'assistant' },
 		];
 		const out = await compactHistory(messages, 'test/model', env, null);
 		expect(out.wasCompacted).toBe(true);
@@ -185,16 +185,16 @@ describe('compactHistory', () => {
 		await setSetting(env, 'context_compaction_threshold', '50');
 		await setupModel(4000);
 		const messages: Message[] = [
-			{ role: 'user', content: 'q1' },
-			{ role: 'assistant', content: 'a1' },
-			{ role: 'user', content: 'q2' },
-			{ role: 'assistant', content: 'a2' },
-			{ role: 'user', content: 'q3' },
-			{ role: 'assistant', content: 'a3' },
+			{ content: 'q1', role: 'user' },
+			{ content: 'a1', role: 'assistant' },
+			{ content: 'q2', role: 'user' },
+			{ content: 'a2', role: 'assistant' },
+			{ content: 'q3', role: 'user' },
+			{ content: 'a3', role: 'assistant' },
 		];
 		const out = await compactHistory(messages, 'test/model', env, {
-			inputTokens: 5000,
 			cacheReadInputTokens: 4900,
+			inputTokens: 5000,
 		});
 		expect(out.wasCompacted).toBe(false);
 	});
@@ -205,12 +205,12 @@ describe('compactHistory', () => {
 		mockSummary('THE-SUMMARY');
 		const big = 'lorem ipsum dolor sit amet '.repeat(80);
 		const messages: Message[] = [
-			{ role: 'user', content: big },
-			{ role: 'assistant', content: big },
-			{ role: 'user', content: big },
-			{ role: 'assistant', content: big },
-			{ role: 'user', content: 'recent q' },
-			{ role: 'assistant', content: 'recent a' },
+			{ content: big, role: 'user' },
+			{ content: big, role: 'assistant' },
+			{ content: big, role: 'user' },
+			{ content: big, role: 'assistant' },
+			{ content: 'recent q', role: 'user' },
+			{ content: 'recent a', role: 'assistant' },
 		];
 		const out = await compactHistory(messages, 'test/model', env, null);
 		expect(out.wasCompacted).toBe(true);
@@ -225,12 +225,12 @@ describe('compactHistory', () => {
 		mockSummary('SUMMARY');
 		const big = 'lorem ipsum dolor sit amet '.repeat(80);
 		const messages: Message[] = [
-			{ role: 'user', content: big },
-			{ role: 'assistant', content: big },
-			{ role: 'user', content: big },
-			{ role: 'assistant', content: big },
-			{ role: 'user', content: 'recent q' },
-			{ role: 'assistant', content: 'recent a' },
+			{ content: big, role: 'user' },
+			{ content: big, role: 'assistant' },
+			{ content: big, role: 'user' },
+			{ content: big, role: 'assistant' },
+			{ content: 'recent q', role: 'user' },
+			{ content: 'recent a', role: 'assistant' },
 		];
 		const out = await compactHistory(messages, 'test/model', env, null);
 		expect(out.wasCompacted).toBe(true);
@@ -244,14 +244,14 @@ describe('compactHistory', () => {
 		mockSummary('SUMMARY');
 		const big = 'lorem ipsum dolor sit amet '.repeat(80);
 		const messages: Message[] = [
-			{ role: 'user', content: 'old q1 ' + big },
-			{ role: 'assistant', content: 'old a1 ' + big },
-			{ role: 'user', content: 'old q2 ' + big },
-			{ role: 'assistant', content: 'old a2 ' + big },
-			{ role: 'user', content: 'kept q3' },
-			{ role: 'assistant', content: 'kept a3' },
-			{ role: 'user', content: 'kept q4' },
-			{ role: 'assistant', content: 'kept a4' },
+			{ content: `old q1 ${big}`, role: 'user' },
+			{ content: `old a1 ${big}`, role: 'assistant' },
+			{ content: `old q2 ${big}`, role: 'user' },
+			{ content: `old a2 ${big}`, role: 'assistant' },
+			{ content: 'kept q3', role: 'user' },
+			{ content: 'kept a3', role: 'assistant' },
+			{ content: 'kept q4', role: 'user' },
+			{ content: 'kept a4', role: 'assistant' },
 		];
 		const out = await compactHistory(messages, 'test/model', env, null);
 		expect(out.wasCompacted).toBe(true);
@@ -272,10 +272,10 @@ describe('compactHistory', () => {
 		mockSummary('SUMMARY');
 		const big = 'lorem ipsum '.repeat(50);
 		const messages: Message[] = [
-			{ role: 'user', content: big },
-			{ role: 'assistant', content: big },
-			{ role: 'user', content: big },
-			{ role: 'assistant', content: big },
+			{ content: big, role: 'user' },
+			{ content: big, role: 'assistant' },
+			{ content: big, role: 'user' },
+			{ content: big, role: 'assistant' },
 		];
 		const out = await compactHistory(messages, 'test/model', env, null);
 		expect(out.wasCompacted).toBe(false);
@@ -291,11 +291,11 @@ describe('compactHistory', () => {
 		mockSummary('SUMMARY');
 		const big = 'lorem ipsum '.repeat(80);
 		const messages: Message[] = [
-			{ role: 'user', content: 'm0 ' + big },
-			{ role: 'assistant', content: 'm1 ' + big },
-			{ role: 'user', content: 'm2 ' + big },
-			{ role: 'assistant', content: 'm3 ' + big },
-			{ role: 'user', content: 'm4 ' + big },
+			{ content: `m0 ${big}`, role: 'user' },
+			{ content: `m1 ${big}`, role: 'assistant' },
+			{ content: `m2 ${big}`, role: 'user' },
+			{ content: `m3 ${big}`, role: 'assistant' },
+			{ content: `m4 ${big}`, role: 'user' },
 		];
 		const out = await compactHistory(messages, 'test/model', env, null);
 		expect(out.wasCompacted).toBe(true);
@@ -303,12 +303,7 @@ describe('compactHistory', () => {
 		expect(out.droppedCount).toBe(1);
 		// Last four must equal the original last four.
 		const tail = out.messages.slice(-4);
-		expect(tail.map((m) => m.content)).toEqual([
-			messages[1].content,
-			messages[2].content,
-			messages[3].content,
-			messages[4].content,
-		]);
+		expect(tail.map((m) => m.content)).toEqual([messages[1].content, messages[2].content, messages[3].content, messages[4].content]);
 	});
 
 	it('forwards the configured summary token budget to the summarization LLM', async () => {
@@ -318,22 +313,22 @@ describe('compactHistory', () => {
 		const calls: ChatRequest[] = [];
 		async function* gen(req: ChatRequest): AsyncGenerator<StreamEvent> {
 			calls.push(req);
-			yield { type: 'text_delta', delta: 'SUMMARY' };
+			yield { delta: 'SUMMARY', type: 'text_delta' };
 			yield { type: 'done' };
 		}
 		vi.spyOn(routeMod, 'routeLLMByGlobalId').mockResolvedValue({
+			chat: (req: ChatRequest) => gen(req),
 			model: 'test/model',
 			providerID: 'mock',
-			chat: (req: ChatRequest) => gen(req),
 		} as never);
 		const big = 'lorem ipsum dolor sit amet '.repeat(80);
 		const messages: Message[] = [
-			{ role: 'user', content: big },
-			{ role: 'assistant', content: big },
-			{ role: 'user', content: big },
-			{ role: 'assistant', content: big },
-			{ role: 'user', content: 'recent' },
-			{ role: 'assistant', content: 'recent' },
+			{ content: big, role: 'user' },
+			{ content: big, role: 'assistant' },
+			{ content: big, role: 'user' },
+			{ content: big, role: 'assistant' },
+			{ content: 'recent', role: 'user' },
+			{ content: 'recent', role: 'assistant' },
 		];
 		const out = await compactHistory(messages, 'test/model', env, null);
 		expect(out.wasCompacted).toBe(true);
@@ -353,21 +348,21 @@ describe('compactHistory', () => {
 			throw new Error('should not be reached');
 		});
 		const injected = vi.fn(async () => ({
-			model: 'test/model',
-			providerID: 'inj',
 			chat: async function* () {
-				yield { type: 'text_delta', delta: 'INJECTED' } as StreamEvent;
+				yield { delta: 'INJECTED', type: 'text_delta' } as StreamEvent;
 				yield { type: 'done' } as StreamEvent;
 			},
+			model: 'test/model',
+			providerID: 'inj',
 		}));
 		const big = 'lorem ipsum dolor sit amet '.repeat(80);
 		const messages: Message[] = [
-			{ role: 'user', content: big },
-			{ role: 'assistant', content: big },
-			{ role: 'user', content: big },
-			{ role: 'assistant', content: big },
-			{ role: 'user', content: 'recent' },
-			{ role: 'assistant', content: 'recent' },
+			{ content: big, role: 'user' },
+			{ content: big, role: 'assistant' },
+			{ content: big, role: 'user' },
+			{ content: big, role: 'assistant' },
+			{ content: 'recent', role: 'user' },
+			{ content: 'recent', role: 'assistant' },
 		];
 		const out = await compactHistory(messages, 'test/model', env, null, {
 			llm: injected as never,
@@ -387,12 +382,12 @@ describe('compactHistory', () => {
 		mockSummary('FORCED-SUMMARY');
 		const big = 'lorem ipsum dolor sit amet '.repeat(80);
 		const messages: Message[] = [
-			{ role: 'user', content: big },
-			{ role: 'assistant', content: big },
-			{ role: 'user', content: big },
-			{ role: 'assistant', content: big },
-			{ role: 'user', content: 'recent q' },
-			{ role: 'assistant', content: 'recent a' },
+			{ content: big, role: 'user' },
+			{ content: big, role: 'assistant' },
+			{ content: big, role: 'user' },
+			{ content: big, role: 'assistant' },
+			{ content: 'recent q', role: 'user' },
+			{ content: 'recent a', role: 'assistant' },
 		];
 		const noForce = await compactHistory(messages, 'test/model', env, null);
 		expect(noForce.wasCompacted).toBe(false);
@@ -406,12 +401,12 @@ describe('compactHistory', () => {
 		// 6 small messages can't exceed 50% of 128k, so this is a no-op.
 		await setSetting(env, 'context_compaction_threshold', '50');
 		const messages: Message[] = [
-			{ role: 'user', content: 'q1' },
-			{ role: 'assistant', content: 'a1' },
-			{ role: 'user', content: 'q2' },
-			{ role: 'assistant', content: 'a2' },
-			{ role: 'user', content: 'q3' },
-			{ role: 'assistant', content: 'a3' },
+			{ content: 'q1', role: 'user' },
+			{ content: 'a1', role: 'assistant' },
+			{ content: 'q2', role: 'user' },
+			{ content: 'a2', role: 'assistant' },
+			{ content: 'q3', role: 'user' },
+			{ content: 'a3', role: 'assistant' },
 		];
 		const out = await compactHistory(messages, 'unknown/missing', env, null);
 		expect(out.wasCompacted).toBe(false);

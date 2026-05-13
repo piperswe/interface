@@ -1,6 +1,6 @@
-import { command, form, getRequestEvent } from '$app/server';
 import { error, redirect } from '@sveltejs/kit';
 import { z } from 'zod';
+import { command, form, getRequestEvent } from '$app/server';
 import { archiveConversation, createConversation, deleteConversation, unarchiveConversation } from '$lib/server/conversations';
 import { getConversationStub } from '$lib/server/durable_objects';
 import { conversationIdSchema, safeRedirectPath } from '$lib/server/remote-schemas';
@@ -20,14 +20,11 @@ function stubFor(id: string) {
 // buttons throughout the app. Accepts an optional client-pre-allocated id so
 // the UI can navigate optimistically while the row is created in the
 // background.
-export const createNewConversation = command(
-	z.object({ id: conversationIdSchema.optional() }).optional(),
-	async (input) => {
-		const env = getEnv();
-		const id = await createConversation(env, input?.id);
-		return { id };
-	},
-);
+export const createNewConversation = command(z.object({ id: conversationIdSchema.optional() }).optional(), async (input) => {
+	const env = getEnv();
+	const id = await createConversation(env, input?.id);
+	return { id };
+});
 
 // Form: send a user message into a conversation. Per-conversation instance via
 // `.for(conversationId)` — that namespaces the form so result/pending state
@@ -40,10 +37,10 @@ export const createNewConversation = command(
 // typed while the trailer rides along to the LLM.
 export const sendMessage = form(
 	z.object({
-		conversationId: conversationIdSchema,
-		content: z.string().default(''),
-		model: z.string().default(''),
 		attachments_trailer: z.string().optional().default(''),
+		content: z.string().default(''),
+		conversationId: conversationIdSchema,
+		model: z.string().default(''),
 	}),
 	async ({ conversationId, content, model, attachments_trailer }) => {
 		const fullContent = attachments_trailer ? content + attachments_trailer : content;
@@ -66,8 +63,8 @@ export const sendMessage = form(
 // never have file attachments).
 export const sendMessageRpc = command(
 	z.object({
-		conversationId: conversationIdSchema,
 		content: z.string(),
+		conversationId: conversationIdSchema,
 		model: z.string(),
 	}),
 	async ({ conversationId, content, model }) => {
@@ -96,8 +93,8 @@ export const regenerateTitle = command(conversationIdSchema, async (conversation
 // extended thinking; positive integers cap it.
 export const setThinkingBudget = command(
 	z.object({
-		conversationId: conversationIdSchema,
 		budget: z.number().int().positive().nullable(),
+		conversationId: conversationIdSchema,
 	}),
 	async ({ conversationId, budget }) => {
 		const stub = stubFor(conversationId);
@@ -166,27 +163,21 @@ export const archive = form(
 );
 
 // Form: unarchive a conversation. Reverses `archive`.
-export const unarchive = form(
-	z.object({ conversationId: conversationIdSchema }),
-	async ({ conversationId }) => {
-		await unarchiveConversation(getEnv(), conversationId);
-		redirect(303, `/c/${conversationId}`);
-	},
-);
+export const unarchive = form(z.object({ conversationId: conversationIdSchema }), async ({ conversationId }) => {
+	await unarchiveConversation(getEnv(), conversationId);
+	redirect(303, `/c/${conversationId}`);
+});
 
 // Form: hard-delete a conversation. Drops the D1 row AND wipes the Durable
 // Object's SQLite storage. Cloudflare doesn't let us remove the DO id from
 // the namespace, but `destroy()` empties it so the next resolution returns a
 // blank instance. Caller is expected to confirm before invoking.
-export const destroy = form(
-	z.object({ conversationId: conversationIdSchema }),
-	async ({ conversationId }) => {
-		const env = getEnv();
-		// Wipe the DO first so a request that races the DB delete doesn't see
-		// stale messages. If destroy() throws, the row stays — the operator can
-		// retry.
-		await getConversationStub(env, conversationId).destroy();
-		await deleteConversation(env, conversationId);
-		redirect(303, '/');
-	},
-);
+export const destroy = form(z.object({ conversationId: conversationIdSchema }), async ({ conversationId }) => {
+	const env = getEnv();
+	// Wipe the DO first so a request that races the DB delete doesn't see
+	// stale messages. If destroy() throws, the row stays — the operator can
+	// retry.
+	await getConversationStub(env, conversationId).destroy();
+	await deleteConversation(env, conversationId);
+	redirect(303, '/');
+});

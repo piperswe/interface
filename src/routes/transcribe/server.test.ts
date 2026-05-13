@@ -26,7 +26,7 @@ async function callPost(options: CallOpts = {}): Promise<Response> {
 			headers.set('content-length', String(body.byteLength));
 		}
 	}
-	const request = new Request(url.toString(), { method: 'POST', headers, body });
+	const request = new Request(url.toString(), { body, headers, method: 'POST' });
 	// `wrangler.test.jsonc` doesn't bind Workers AI (it's a remote service),
 	// so synthesise a `platform.env` whose AI binding either passes the
 	// `if (!ai)` guard with a stub, or omits the binding when the test wants
@@ -34,9 +34,9 @@ async function callPost(options: CallOpts = {}): Promise<Response> {
 	// 411 / 400 / 413 / 403 branches all return before it.
 	const ai = options.ai === null ? undefined : (options.ai ?? { run: vi.fn() });
 	const event = {
-		url,
 		platform: { env: { AI: ai } },
 		request,
+		url,
 	} as unknown as Parameters<typeof POST>[0];
 	return POST(event);
 }
@@ -76,7 +76,7 @@ describe('transcribe +server.ts — POST', () => {
 	// AI budget.
 	it('rejects cross-origin requests with 403', async () => {
 		const aiRun = vi.fn();
-		await expectError(callPost({ origin: 'https://evil.example', ai: { run: aiRun } }), 403);
+		await expectError(callPost({ ai: { run: aiRun }, origin: 'https://evil.example' }), 403);
 		expect(aiRun).not.toHaveBeenCalled();
 	});
 

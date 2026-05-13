@@ -1,8 +1,8 @@
 import { env } from 'cloudflare:test';
 import { isHttpError, isRedirect } from '@sveltejs/kit';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createMcpServer, getMcpServer, setMcpServerOauthClient } from '$lib/server/mcp_servers';
 import { now as nowMs } from '$lib/server/clock';
+import { createMcpServer, getMcpServer, setMcpServerOauthClient } from '$lib/server/mcp_servers';
 import { GET } from './+server';
 
 afterEach(async () => {
@@ -15,9 +15,9 @@ async function callGet(idParam: string): Promise<Response> {
 	const url = new URL(`http://app.example/settings/mcp/${idParam}/connect`);
 	const event = {
 		params: { id: idParam },
-		url,
 		platform: { env },
 		request: new Request(url.toString()),
+		url,
 	} as Parameters<typeof GET>[0];
 	return GET(event);
 }
@@ -45,8 +45,8 @@ async function expectError(promise: Promise<unknown>, status: number, msg?: RegE
 
 function jsonRes(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), {
-		status,
 		headers: { 'content-type': 'application/json' },
+		status,
 	});
 }
 
@@ -62,11 +62,11 @@ function mockFullDiscovery() {
 		}
 		if (u.endsWith('/.well-known/oauth-authorization-server')) {
 			return jsonRes({
-				issuer: 'https://as.example.com',
 				authorization_endpoint: 'https://as.example.com/authorize',
-				token_endpoint: 'https://as.example.com/token',
+				issuer: 'https://as.example.com',
 				registration_endpoint: 'https://as.example.com/register',
 				scopes_supported: ['read', 'write'],
+				token_endpoint: 'https://as.example.com/token',
 			});
 		}
 		if (u === 'https://as.example.com/register') {
@@ -93,9 +93,7 @@ describe('settings/mcp/[id]/connect +server.ts — first connect', () => {
 		expect(target.searchParams.get('code_challenge')).toBeTruthy();
 		const state = target.searchParams.get('state');
 		expect(state).toBeTruthy();
-		expect(target.searchParams.get('redirect_uri')).toBe(
-			`http://app.example/settings/mcp/${id}/callback`,
-		);
+		expect(target.searchParams.get('redirect_uri')).toBe(`http://app.example/settings/mcp/${id}/callback`);
 		expect(target.searchParams.get('resource')).toBe('https://mcp.example.com/server');
 		expect(target.searchParams.get('scope')).toBe('read write');
 		// Verify discovery + registration both fired.
@@ -104,9 +102,7 @@ describe('settings/mcp/[id]/connect +server.ts — first connect', () => {
 		expect(urls.some((u) => u.endsWith('/.well-known/oauth-authorization-server'))).toBe(true);
 		expect(urls).toContain('https://as.example.com/register');
 		// Auth state row should exist for the redirected state.
-		const row = await env.DB.prepare(
-			'SELECT state, server_id FROM mcp_oauth_state WHERE state = ?',
-		)
+		const row = await env.DB.prepare('SELECT state, server_id FROM mcp_oauth_state WHERE state = ?')
 			.bind(state)
 			.first<{ state: string; server_id: number }>();
 		expect(row?.server_id).toBe(id);
@@ -124,13 +120,13 @@ describe('settings/mcp/[id]/connect +server.ts — first connect', () => {
 		});
 		// Pre-populate as if a previous connect already registered a client.
 		await setMcpServerOauthClient(env, id, {
-			authorizationServer: 'https://as.example.com',
 			authorizationEndpoint: 'https://as.example.com/authorize',
-			tokenEndpoint: 'https://as.example.com/token',
-			registrationEndpoint: 'https://as.example.com/register',
+			authorizationServer: 'https://as.example.com',
 			clientId: 'cached-cid',
 			clientSecret: null,
+			registrationEndpoint: 'https://as.example.com/register',
 			scopes: 'read',
+			tokenEndpoint: 'https://as.example.com/token',
 		});
 		const fetchSpy = vi.spyOn(globalThis, 'fetch');
 		const target = await expectRedirect(callGet(String(id)));
@@ -206,9 +202,7 @@ describe('settings/mcp/[id]/connect +server.ts — error paths', () => {
 			.run();
 		mockFullDiscovery();
 		await expectRedirect(callGet(String(id)));
-		const stale = await env.DB.prepare('SELECT state FROM mcp_oauth_state WHERE state = ?')
-			.bind('stale-state')
-			.first();
+		const stale = await env.DB.prepare('SELECT state FROM mcp_oauth_state WHERE state = ?').bind('stale-state').first();
 		expect(stale).toBeNull();
 	});
 });

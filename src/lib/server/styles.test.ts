@@ -31,9 +31,7 @@ describe('styles', () => {
 
 	it('deleteStyle clears style_id from conversations referencing it', async () => {
 		const styleId = await createStyle(env, { name: 'X', systemPrompt: 'p' });
-		await env.DB.prepare(
-			"INSERT INTO conversations (id, title, created_at, updated_at, style_id) VALUES (?, 'c', 1, 1, ?)",
-		)
+		await env.DB.prepare("INSERT INTO conversations (id, title, created_at, updated_at, style_id) VALUES (?, 'c', 1, 1, ?)")
 			.bind('test-conv', styleId)
 			.run();
 		await deleteStyle(env, styleId);

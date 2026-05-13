@@ -69,8 +69,7 @@ const server = http.createServer((req, res) => {
 	// gets stamped onto `x-forwarded-host` by fly's edge.
 	const xfh = req.headers['x-forwarded-host'];
 	const xfhFirst = Array.isArray(xfh) ? xfh[0] : xfh;
-	const port =
-		parsePortFromHost(req.headers.host) ?? parsePortFromHost(xfhFirst);
+	const port = parsePortFromHost(req.headers.host) ?? parsePortFromHost(xfhFirst);
 	if (port === null) {
 		res.writeHead(404, { 'content-type': 'text/plain' });
 		res.end(`preview proxy: unrecognized host "${req.headers.host ?? ''}"`);
@@ -79,11 +78,11 @@ const server = http.createServer((req, res) => {
 
 	const upstream = http.request(
 		{
+			headers: copyHeaders(req.headers),
 			host: '127.0.0.1',
-			port,
 			method: req.method,
 			path: req.url,
-			headers: copyHeaders(req.headers),
+			port,
 		},
 		(upstreamRes) => {
 			res.writeHead(upstreamRes.statusCode || 502, upstreamRes.headers);

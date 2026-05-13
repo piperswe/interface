@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
 import type Anthropic from '@anthropic-ai/sdk';
 import type { MessageStreamEvent } from '@anthropic-ai/sdk/resources/messages/messages';
+import { describe, expect, it } from 'vitest';
+import { assertDefined } from '../../../../test/assert-defined';
 import { AnthropicLLM } from './AnthropicLLM';
 import type { StreamEvent } from './LLM';
 
@@ -25,24 +26,24 @@ async function collect(stream: AsyncIterable<StreamEvent>): Promise<StreamEvent[
 
 function messageStartEvent(input = 100, output = 0): MessageStreamEvent {
 	return {
-		type: 'message_start',
 		message: {
-			id: 'msg_1',
-			type: 'message',
-			role: 'assistant',
-			model: 'claude-sonnet-4-5',
 			content: [],
+			id: 'msg_1',
+			model: 'claude-sonnet-4-5',
+			role: 'assistant',
 			stop_reason: null,
 			stop_sequence: null,
+			type: 'message',
 			usage: {
+				cache_creation_input_tokens: 0,
+				cache_read_input_tokens: 0,
 				input_tokens: input,
 				output_tokens: output,
-				cache_read_input_tokens: 0,
-				cache_creation_input_tokens: 0,
 				server_tool_use: null,
 				service_tier: null,
 			},
 		},
+		type: 'message_start',
 	} as unknown as MessageStreamEvent;
 }
 
@@ -57,25 +58,25 @@ describe('AnthropicLLM', () => {
 		const llm = new AnthropicLLM(
 			fakeAnthropic([
 				messageStartEvent(),
-				{ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } } as unknown as MessageStreamEvent,
-				{ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Hello' } } as unknown as MessageStreamEvent,
-				{ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: ' world' } } as unknown as MessageStreamEvent,
-				{ type: 'content_block_stop', index: 0 } as unknown as MessageStreamEvent,
+				{ content_block: { text: '', type: 'text' }, index: 0, type: 'content_block_start' } as unknown as MessageStreamEvent,
+				{ delta: { text: 'Hello', type: 'text_delta' }, index: 0, type: 'content_block_delta' } as unknown as MessageStreamEvent,
+				{ delta: { text: ' world', type: 'text_delta' }, index: 0, type: 'content_block_delta' } as unknown as MessageStreamEvent,
+				{ index: 0, type: 'content_block_stop' } as unknown as MessageStreamEvent,
 				{
-					type: 'message_delta',
 					delta: { stop_reason: 'end_turn', stop_sequence: null },
+					type: 'message_delta',
 					usage: { output_tokens: 50 },
 				} as unknown as MessageStreamEvent,
 				{ type: 'message_stop' } as unknown as MessageStreamEvent,
 			]),
 			'claude-sonnet-4-5',
 		);
-		const events = await collect(llm.chat({ messages: [{ role: 'user', content: 'hi' }] }));
+		const events = await collect(llm.chat({ messages: [{ content: 'hi', role: 'user' }] }));
 		const texts = events.filter((e) => e.type === 'text_delta').map((e) => (e as { delta: string }).delta);
 		expect(texts).toEqual(['Hello', ' world']);
 		const usage = events.find((e) => e.type === 'usage');
 		expect(usage).toEqual({ type: 'usage', usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 } });
-		expect(events.at(-1)).toEqual({ type: 'done', finishReason: 'end_turn' });
+		expect(events.at(-1)).toEqual({ finishReason: 'end_turn', type: 'done' });
 	});
 
 	it('emits thinking_delta for thinking blocks', async () => {
@@ -83,19 +84,19 @@ describe('AnthropicLLM', () => {
 			fakeAnthropic([
 				messageStartEvent(),
 				{
+					content_block: { signature: '', thinking: '', type: 'thinking' },
+					index: 0,
 					type: 'content_block_start',
-					index: 0,
-					content_block: { type: 'thinking', thinking: '', signature: '' },
 				} as unknown as MessageStreamEvent,
 				{
+					delta: { thinking: 'Let me consider', type: 'thinking_delta' },
+					index: 0,
 					type: 'content_block_delta',
-					index: 0,
-					delta: { type: 'thinking_delta', thinking: 'Let me consider' },
 				} as unknown as MessageStreamEvent,
-				{ type: 'content_block_stop', index: 0 } as unknown as MessageStreamEvent,
+				{ index: 0, type: 'content_block_stop' } as unknown as MessageStreamEvent,
 				{
-					type: 'message_delta',
 					delta: { stop_reason: 'end_turn', stop_sequence: null },
+					type: 'message_delta',
 					usage: { output_tokens: 10 },
 				} as unknown as MessageStreamEvent,
 				{ type: 'message_stop' } as unknown as MessageStreamEvent,
@@ -104,7 +105,7 @@ describe('AnthropicLLM', () => {
 		);
 		const events = await collect(llm.chat({ messages: [] }));
 		const thinking = events.find((e) => e.type === 'thinking_delta');
-		expect(thinking).toEqual({ type: 'thinking_delta', delta: 'Let me consider' });
+		expect(thinking).toEqual({ delta: 'Let me consider', type: 'thinking_delta' });
 	});
 
 	it('emits a thinking_signature event when Anthropic delivers a signature_delta', async () => {
@@ -115,24 +116,24 @@ describe('AnthropicLLM', () => {
 			fakeAnthropic([
 				messageStartEvent(),
 				{
+					content_block: { signature: '', thinking: '', type: 'thinking' },
+					index: 0,
 					type: 'content_block_start',
-					index: 0,
-					content_block: { type: 'thinking', thinking: '', signature: '' },
 				} as unknown as MessageStreamEvent,
 				{
+					delta: { thinking: 'Let me consider', type: 'thinking_delta' },
+					index: 0,
 					type: 'content_block_delta',
-					index: 0,
-					delta: { type: 'thinking_delta', thinking: 'Let me consider' },
 				} as unknown as MessageStreamEvent,
 				{
+					delta: { signature: 'auth-blob-abc', type: 'signature_delta' },
+					index: 0,
 					type: 'content_block_delta',
-					index: 0,
-					delta: { type: 'signature_delta', signature: 'auth-blob-abc' },
 				} as unknown as MessageStreamEvent,
-				{ type: 'content_block_stop', index: 0 } as unknown as MessageStreamEvent,
+				{ index: 0, type: 'content_block_stop' } as unknown as MessageStreamEvent,
 				{
-					type: 'message_delta',
 					delta: { stop_reason: 'end_turn', stop_sequence: null },
+					type: 'message_delta',
 					usage: { output_tokens: 10 },
 				} as unknown as MessageStreamEvent,
 				{ type: 'message_stop' } as unknown as MessageStreamEvent,
@@ -141,7 +142,7 @@ describe('AnthropicLLM', () => {
 		);
 		const events = await collect(llm.chat({ messages: [] }));
 		const sig = events.find((e) => e.type === 'thinking_signature');
-		expect(sig).toEqual({ type: 'thinking_signature', signature: 'auth-blob-abc' });
+		expect(sig).toEqual({ signature: 'auth-blob-abc', type: 'thinking_signature' });
 	});
 
 	it('drops thinking blocks without a signature when round-tripping (defense in depth)', async () => {
@@ -149,13 +150,10 @@ describe('AnthropicLLM', () => {
 		// signatureless thinking blocks, which Anthropic rejects. Sanitize
 		// strips them upstream now, but the adapter must also refuse to forge.
 		const capture: { params?: { messages?: Array<{ content: Array<Record<string, unknown>> }> } } = {};
-		const llm = new AnthropicLLM(
-			fakeAnthropic([{ type: 'message_stop' } as unknown as MessageStreamEvent], capture),
-			'claude-sonnet-4-5',
-		);
+		const llm = new AnthropicLLM(fakeAnthropic([{ type: 'message_stop' } as unknown as MessageStreamEvent], capture), 'claude-sonnet-4-5');
 		await collect(
 			llm.chat({
-				messages: [{ role: 'assistant', content: [{ type: 'thinking', text: 'planning' }] }],
+				messages: [{ content: [{ text: 'planning', type: 'thinking' }], role: 'assistant' }],
 			}),
 		);
 		const blocks = capture.params?.messages?.flatMap((m) => m.content) ?? [];
@@ -166,16 +164,13 @@ describe('AnthropicLLM', () => {
 
 	it('round-trips a captured thinking signature back to the SDK', async () => {
 		const capture: { params?: { messages?: Array<{ content: Array<Record<string, unknown>> }> } } = {};
-		const llm = new AnthropicLLM(
-			fakeAnthropic([{ type: 'message_stop' } as unknown as MessageStreamEvent], capture),
-			'claude-sonnet-4-5',
-		);
+		const llm = new AnthropicLLM(fakeAnthropic([{ type: 'message_stop' } as unknown as MessageStreamEvent], capture), 'claude-sonnet-4-5');
 		await collect(
 			llm.chat({
 				messages: [
 					{
+						content: [{ signature: 'auth-blob-abc', text: 'planning', type: 'thinking' }],
 						role: 'assistant',
-						content: [{ type: 'thinking', text: 'planning', signature: 'auth-blob-abc' }],
 					},
 				],
 			}),
@@ -190,24 +185,24 @@ describe('AnthropicLLM', () => {
 			fakeAnthropic([
 				messageStartEvent(),
 				{
+					content_block: { id: 'toolu_1', input: {}, name: 'web_search', type: 'tool_use' },
+					index: 0,
 					type: 'content_block_start',
-					index: 0,
-					content_block: { type: 'tool_use', id: 'toolu_1', name: 'web_search', input: {} },
 				} as unknown as MessageStreamEvent,
 				{
+					delta: { partial_json: '{"q":"', type: 'input_json_delta' },
+					index: 0,
 					type: 'content_block_delta',
-					index: 0,
-					delta: { type: 'input_json_delta', partial_json: '{"q":"' },
 				} as unknown as MessageStreamEvent,
 				{
+					delta: { partial_json: 'cats"}', type: 'input_json_delta' },
+					index: 0,
 					type: 'content_block_delta',
-					index: 0,
-					delta: { type: 'input_json_delta', partial_json: 'cats"}' },
 				} as unknown as MessageStreamEvent,
-				{ type: 'content_block_stop', index: 0 } as unknown as MessageStreamEvent,
+				{ index: 0, type: 'content_block_stop' } as unknown as MessageStreamEvent,
 				{
-					type: 'message_delta',
 					delta: { stop_reason: 'tool_use', stop_sequence: null },
+					type: 'message_delta',
 					usage: { output_tokens: 30 },
 				} as unknown as MessageStreamEvent,
 				{ type: 'message_stop' } as unknown as MessageStreamEvent,
@@ -216,7 +211,7 @@ describe('AnthropicLLM', () => {
 		);
 		const events = await collect(llm.chat({ messages: [] }));
 		const finalized = events.find((e) => e.type === 'tool_call');
-		expect(finalized).toEqual({ type: 'tool_call', id: 'toolu_1', name: 'web_search', input: { q: 'cats' } });
+		expect(finalized).toEqual({ id: 'toolu_1', input: { q: 'cats' }, name: 'web_search', type: 'tool_call' });
 	});
 
 	it('passes thinking budget to the SDK', async () => {
@@ -224,11 +219,11 @@ describe('AnthropicLLM', () => {
 		const llm = new AnthropicLLM(fakeAnthropic([{ type: 'message_stop' } as unknown as MessageStreamEvent], capture), 'claude-sonnet-4-5');
 		await collect(
 			llm.chat({
-				messages: [{ role: 'user', content: 'hi' }],
-				thinking: { type: 'enabled', budgetTokens: 5000 },
+				messages: [{ content: 'hi', role: 'user' }],
+				thinking: { budgetTokens: 5000, type: 'enabled' },
 			}),
 		);
-		expect(capture.params?.thinking).toEqual({ type: 'enabled', budget_tokens: 5000 });
+		expect(capture.params?.thinking).toEqual({ budget_tokens: 5000, type: 'enabled' });
 	});
 
 	it('passes reasoning max_tokens as native thinking to the SDK', async () => {
@@ -236,11 +231,11 @@ describe('AnthropicLLM', () => {
 		const llm = new AnthropicLLM(fakeAnthropic([{ type: 'message_stop' } as unknown as MessageStreamEvent], capture), 'claude-sonnet-4-5');
 		await collect(
 			llm.chat({
-				messages: [{ role: 'user', content: 'hi' }],
-				reasoning: { type: 'max_tokens', maxTokens: 5000 },
+				messages: [{ content: 'hi', role: 'user' }],
+				reasoning: { maxTokens: 5000, type: 'max_tokens' },
 			}),
 		);
-		expect(capture.params?.thinking).toEqual({ type: 'enabled', budget_tokens: 5000 });
+		expect(capture.params?.thinking).toEqual({ budget_tokens: 5000, type: 'enabled' });
 	});
 
 	it('passes thinking disabled to the SDK when thinking type is disabled', async () => {
@@ -251,7 +246,7 @@ describe('AnthropicLLM', () => {
 		const llm = new AnthropicLLM(fakeAnthropic([{ type: 'message_stop' } as unknown as MessageStreamEvent], capture), 'claude-sonnet-4-6');
 		await collect(
 			llm.chat({
-				messages: [{ role: 'user', content: 'hi' }],
+				messages: [{ content: 'hi', role: 'user' }],
 				thinking: { type: 'disabled' },
 			}),
 		);
@@ -263,12 +258,12 @@ describe('AnthropicLLM', () => {
 		const llm = new AnthropicLLM(fakeAnthropic([{ type: 'message_stop' } as unknown as MessageStreamEvent], capture), 'claude-sonnet-4-5');
 		await collect(
 			llm.chat({
-				messages: [{ role: 'user', content: 'hi' }],
-				systemPrompt: 'you are helpful',
 				cacheControl: { type: 'ephemeral' },
+				messages: [{ content: 'hi', role: 'user' }],
+				systemPrompt: 'you are helpful',
 			}),
 		);
-		expect(capture.params?.system).toEqual([{ type: 'text', text: 'you are helpful', cache_control: { type: 'ephemeral' } }]);
+		expect(capture.params?.system).toEqual([{ cache_control: { type: 'ephemeral' }, text: 'you are helpful', type: 'text' }]);
 	});
 
 	it('emits error event on stream failure', async () => {
@@ -281,7 +276,7 @@ describe('AnthropicLLM', () => {
 		} as unknown as Anthropic;
 		const llm = new AnthropicLLM(broken, 'claude-sonnet-4-5');
 		const events = await collect(llm.chat({ messages: [] }));
-		expect(events).toEqual([{ type: 'error', message: 'boom' }]);
+		expect(events).toEqual([{ message: 'boom', type: 'error' }]);
 	});
 
 	it('returns the system prompt as a plain string when no cache control is set', async () => {
@@ -303,12 +298,12 @@ describe('AnthropicLLM', () => {
 		const llm = new AnthropicLLM(fakeAnthropic([{ type: 'message_stop' } as unknown as MessageStreamEvent], capture), 'claude-sonnet-4-5');
 		await collect(
 			llm.chat({
+				cacheControl: { type: 'ephemeral' },
 				messages: [],
 				tools: [
-					{ name: 'a', description: 'A', inputSchema: { type: 'object' } },
-					{ name: 'b', description: 'B', inputSchema: { type: 'object' } },
+					{ description: 'A', inputSchema: { type: 'object' }, name: 'a' },
+					{ description: 'B', inputSchema: { type: 'object' }, name: 'b' },
 				],
-				cacheControl: { type: 'ephemeral' },
 			}),
 		);
 		const tools = capture.params?.tools ?? [];
@@ -323,11 +318,11 @@ describe('AnthropicLLM', () => {
 		await collect(
 			llm.chat({
 				messages: [
-					{ role: 'user', content: [{ type: 'image', mimeType: 'image/jpeg', data: 'AAA' }] },
-					{ role: 'assistant', content: [{ type: 'thinking', text: 'planning', signature: 'sig' }] },
-					{ role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'x', input: { a: 1 } }] },
-					{ role: 'tool', content: [{ type: 'tool_result', toolUseId: 't1', content: 'ok' }] },
-					{ role: 'tool', content: [{ type: 'tool_result', toolUseId: 't2', content: 'fail', isError: true }] },
+					{ content: [{ data: 'AAA', mimeType: 'image/jpeg', type: 'image' }], role: 'user' },
+					{ content: [{ signature: 'sig', text: 'planning', type: 'thinking' }], role: 'assistant' },
+					{ content: [{ id: 't1', input: { a: 1 }, name: 'x', type: 'tool_use' }], role: 'assistant' },
+					{ content: [{ content: 'ok', toolUseId: 't1', type: 'tool_result' }], role: 'tool' },
+					{ content: [{ content: 'fail', isError: true, toolUseId: 't2', type: 'tool_result' }], role: 'tool' },
 				],
 			}),
 		);
@@ -351,19 +346,19 @@ describe('AnthropicLLM', () => {
 		await collect(
 			llm.chat({
 				messages: [
-					{ role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'sandbox_load_image', input: {} }] },
+					{ content: [{ id: 't1', input: {}, name: 'sandbox_load_image', type: 'tool_use' }], role: 'assistant' },
 					{
-						role: 'tool',
 						content: [
 							{
-								type: 'tool_result',
-								toolUseId: 't1',
 								content: [
-									{ type: 'text', text: 'Loaded photo.png.' },
-									{ type: 'image', mimeType: 'image/png', data: 'AAAA' },
+									{ text: 'Loaded photo.png.', type: 'text' },
+									{ data: 'AAAA', mimeType: 'image/png', type: 'image' },
 								],
+								toolUseId: 't1',
+								type: 'tool_result',
 							},
 						],
+						role: 'tool',
 					},
 				],
 			}),
@@ -372,11 +367,12 @@ describe('AnthropicLLM', () => {
 		const toolMsg = messages[messages.length - 1];
 		const toolResult = toolMsg.content.find((b) => b.type === 'tool_result') as { content: Array<Record<string, unknown>> } | undefined;
 		expect(Array.isArray(toolResult?.content)).toBe(true);
-		const inner = toolResult!.content;
-		expect(inner).toContainEqual({ type: 'text', text: 'Loaded photo.png.' });
+		assertDefined(toolResult);
+		const inner = toolResult.content;
+		expect(inner).toContainEqual({ text: 'Loaded photo.png.', type: 'text' });
 		expect(inner).toContainEqual({
+			source: { data: 'AAAA', media_type: 'image/png', type: 'base64' },
 			type: 'image',
-			source: { type: 'base64', media_type: 'image/png', data: 'AAAA' },
 		});
 	});
 
@@ -387,11 +383,11 @@ describe('AnthropicLLM', () => {
 			llm.chat({
 				messages: [
 					{
-						role: 'user',
 						content: [
-							{ type: 'text', text: 'kept' },
-							{ type: 'file', mimeType: 'application/pdf', data: 'AAA' },
+							{ text: 'kept', type: 'text' },
+							{ data: 'AAA', mimeType: 'application/pdf', type: 'file' },
 						],
+						role: 'user',
 					},
 				],
 			}),
@@ -414,7 +410,7 @@ describe('AnthropicLLM', () => {
 		const llm = new AnthropicLLM(broken, 'claude-sonnet-4-5');
 		const events = await collect(llm.chat({ messages: [] }));
 		const err = events.find((e) => e.type === 'error');
-		expect(err).toEqual({ type: 'error', message: 'mid-stream boom' });
+		expect(err).toEqual({ message: 'mid-stream boom', type: 'error' });
 	});
 
 	it('serializes non-Error throw values', async () => {
@@ -438,18 +434,18 @@ describe('AnthropicLLM', () => {
 			llm.chat({
 				messages: [
 					{
-						role: 'user',
 						content: [
-							{ type: 'text', text: 'a' },
-							{ type: 'text', text: 'b' },
+							{ text: 'a', type: 'text' },
+							{ text: 'b', type: 'text' },
 						],
+						role: 'user',
 					},
 				],
 			}),
 		);
 		expect(capture.params?.messages?.[0].content).toEqual([
-			{ type: 'text', text: 'a' },
-			{ type: 'text', text: 'b' },
+			{ text: 'a', type: 'text' },
+			{ text: 'b', type: 'text' },
 		]);
 	});
 });
