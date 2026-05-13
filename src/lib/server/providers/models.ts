@@ -187,6 +187,37 @@ export async function deleteModelsForProvider(env: Env, providerId: string, user
 	await env.DB.prepare('DELETE FROM provider_models WHERE user_id = ? AND provider_id = ?').bind(userId, providerId).run();
 }
 
+/** Move a model to a specific position within its provider's list.
+ * Pass null for beforeModelId to move to the end. */
+export async function moveModelToPosition(
+	env: Env,
+	providerId: string,
+	modelId: string,
+	beforeModelId: string | null,
+	userId: number = SINGLE_USER_ID,
+): Promise<void> {
+	const models = await listModelsForProvider(env, providerId, userId);
+	const dragged = models.find((m) => m.id === modelId);
+	if (!dragged) throw new Error(`Model ${modelId} not found in provider ${providerId}`);
+	const originalIdx = models.findIndex((m) => m.id === modelId);
+	const withoutModel = models.filter((m) => m.id !== modelId);
+	let insertIdx: number;
+	if (beforeModelId === null) {
+		insertIdx = withoutModel.length;
+	} else if (beforeModelId === modelId) {
+		// Self-reference: keep at original position (no-op)
+		insertIdx = originalIdx;
+	} else {
+		const idx = withoutModel.findIndex((m) => m.id === beforeModelId);
+		// Stale/missing beforeModelId: fall back to end
+		insertIdx = idx === -1 ? withoutModel.length : idx;
+	}
+	withoutModel.splice(insertIdx, 0, dragged);
+	await Promise.all(
+		withoutModel.map((m, idx) => updateModel(env, providerId, m.id, { sortOrder: idx }, userId)),
+	);
+}
+
 /** Swap sort_order between two models in the same provider. */
 export async function swapModelOrder(
 	env: Env,

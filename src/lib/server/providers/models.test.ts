@@ -10,6 +10,7 @@ import {
 	listAllModels,
 	listGlobalIdsForProvider,
 	listModelsForProvider,
+	moveModelToPosition,
 	swapModelOrder,
 	updateModel,
 } from './models';
@@ -267,5 +268,60 @@ describe('getResolvedModel', () => {
 		await createModel(env, 'p1', { id: 'anthropic/claude', name: 'Claude' });
 		const r = await getResolvedModel(env, 'p1/anthropic/claude');
 		expect(r?.model.id).toBe('anthropic/claude');
+	});
+});
+
+describe('moveModelToPosition', () => {
+	async function setupThreeModels() {
+		await setupProvider();
+		await createModel(env, 'p1', { id: 'a', name: 'A', sortOrder: 0 });
+		await createModel(env, 'p1', { id: 'b', name: 'B', sortOrder: 1 });
+		await createModel(env, 'p1', { id: 'c', name: 'C', sortOrder: 2 });
+	}
+
+	async function getOrder() {
+		const models = await listModelsForProvider(env, 'p1');
+		return models.map((m) => m.id);
+	}
+
+	it('moves a model from the middle to the front', async () => {
+		await setupThreeModels();
+		await moveModelToPosition(env, 'p1', 'b', 'a');
+		expect(await getOrder()).toEqual(['b', 'a', 'c']);
+	});
+
+	it('moves a model from the front to the end (null = end)', async () => {
+		await setupThreeModels();
+		await moveModelToPosition(env, 'p1', 'a', null);
+		expect(await getOrder()).toEqual(['b', 'c', 'a']);
+	});
+
+	it('moves a model to before a specific model', async () => {
+		await setupThreeModels();
+		await moveModelToPosition(env, 'p1', 'c', 'b');
+		expect(await getOrder()).toEqual(['a', 'c', 'b']);
+	});
+
+	it('is a no-op when the model is referenced before itself (first position)', async () => {
+		await setupThreeModels();
+		await moveModelToPosition(env, 'p1', 'a', 'a');
+		expect(await getOrder()).toEqual(['a', 'b', 'c']);
+	});
+
+	it('is a no-op when a non-first model is referenced before itself', async () => {
+		await setupThreeModels();
+		await moveModelToPosition(env, 'p1', 'b', 'b');
+		expect(await getOrder()).toEqual(['a', 'b', 'c']);
+	});
+
+	it('falls back to end when beforeModelId is not found (stale reference)', async () => {
+		await setupThreeModels();
+		await moveModelToPosition(env, 'p1', 'b', 'stale-id');
+		expect(await getOrder()).toEqual(['a', 'c', 'b']);
+	});
+
+	it('throws when the dragged model does not exist', async () => {
+		await setupThreeModels();
+		await expect(moveModelToPosition(env, 'p1', 'missing', 'a')).rejects.toThrow('missing');
 	});
 });
