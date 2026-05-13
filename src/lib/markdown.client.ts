@@ -6,10 +6,12 @@
 // XSS posture: LLM- and user-generated markdown could otherwise carry raw
 // `<script>` tags or `javascript:` URLs that `{@html}` consumers would
 // execute. marked v14 passes raw HTML through and does not filter URL
-// schemes. We override marked's `html` token to HTML-escape raw HTML, and
-// override the `link`/`image` renderers to drop dangerous URL schemes.
-// DOMPurify is run as defense-in-depth in browsers where `window` is
-// available; the override-based approach is the primary control.
+// schemes. We escape every `html` token's text via a `walkTokens` hook,
+// and override the `link`/`image` renderers to drop dangerous URL schemes.
+// The walkTokens hook must run before marked-shiki — which re-types `code`
+// tokens to `html` with our own already-rendered Shiki output — so the
+// extension that owns it is registered last (marked's walkTokens chain runs
+// newest-registered first).
 
 import 'katex/dist/katex.min.css';
 import { Marked, type MarkedExtension } from 'marked';
@@ -124,11 +126,20 @@ const marked = new Marked({
 	async: true,
 });
 
-// Override marked's `link`, `image`, and `html` renderers so raw HTML and
-// dangerous URL schemes cannot reach `{@html}` consumers. `html` is the
-// markdown-level "block of literal HTML" token — letting it through means
-// `<script>` or `<img onerror>` in LLM output would execute on render.
+// `link` and `image` renderers drop dangerous URL schemes. The `walkTokens`
+// hook escapes raw HTML tokens before they reach the renderer — running at
+// walk time (not render time) lets us escape the `html` tokens that came
+// from the markdown source while leaving alone the `html` tokens that
+// marked-shiki synthesises from `code` blocks with its own trusted output.
 const xssGuardExtension: MarkedExtension = {
+	walkTokens(token) {
+		// Order matters: this runs before marked-shiki's walkTokens (newest
+		// `marked.use(...)` runs first), so code tokens are still `type:
+		// 'code'` here and slip through untouched.
+		if (token.type !== 'html') return;
+		const t = token as { text?: string };
+		if (typeof t.text === 'string') t.text = escapeHtml(t.text);
+	},
 	renderer: {
 		link({ href, title, tokens }) {
 			const safe = isSafeUrl(href) ? href : '#';
@@ -144,16 +155,9 @@ const xssGuardExtension: MarkedExtension = {
 			const titleAttr = title ? ` title="${escapeAttr(title)}"` : '';
 			return `<img src="${escapeAttr(safe)}" alt="${escapeAttr(text)}"${titleAttr}>`;
 		},
-		html({ text }) {
-			// Marked v14's default emits the raw HTML verbatim. Escape it so the
-			// browser sees text, not tags. KaTeX renders via its own extension
-			// path and isn't routed through here.
-			return escapeHtml(text);
-		},
 	},
 };
 
-marked.use(xssGuardExtension);
 marked.use(markedKatex({ throwOnError: false, nonStandard: true }));
 marked.use(markedKatexParen({ throwOnError: false }));
 marked.use(markedInlineCitation());
@@ -168,6 +172,10 @@ marked.use(
 		},
 	}),
 );
+
+// Registered last on purpose: marked chains walkTokens newest-first, so this
+// guard's escape runs before marked-shiki re-types `code` tokens to `html`.
+marked.use(xssGuardExtension);
 
 export async function renderMarkdownClient(src: string): Promise<string> {
 	if (!src) return '';

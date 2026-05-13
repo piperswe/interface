@@ -18,11 +18,19 @@ describe('renderMarkdownClient', () => {
 		expect(html).toContain('<p>A paragraph.</p>');
 	});
 
+	// Regression: marked-shiki re-types `code` tokens to `html` with the
+	// Shiki-rendered HTML in `token.text`. An earlier version of the XSS
+	// guard escaped every `html` token at render time, so the Shiki output
+	// reached `{@html}` consumers as literal `&lt;pre&gt;...` text. The
+	// substring asserts (`'shiki'`, `'const'`) that used to live here passed
+	// either way, so this test now checks for real, un-escaped tags.
 	it('highlights fenced code blocks with shiki', async () => {
 		const html = await renderMarkdownClient('```ts\nconst x = 1;\n```');
-		expect(html).toContain('shiki');
+		expect(html).toMatch(/<pre[^>]*class="[^"]*shiki/i);
+		expect(html).toMatch(/<code><span class="line"/i);
+		expect(html).not.toMatch(/&lt;pre/i);
+		expect(html).not.toMatch(/&lt;code/i);
 		expect(html).toContain('github-dark');
-		expect(html).toContain('const');
 	});
 
 	it('falls back to plain rendering for unknown languages', async () => {
