@@ -20,7 +20,7 @@ import {
 // Image: pushed to fly's per-app registry by CI. The convention here
 // matches `scripts/build-fly-image.sh` / `flyctl deploy`.
 function imageFor(cfg: FlyConfig): string {
-	return `registry.fly.io/${cfg.appName}:latest`;
+	return `registry.fly.io/${cfg.appName}:deployment-01KRHEYB5R4VQSXGX2H4ZHQVTQ`;
 }
 
 function defaultMachineConfig(cfg: FlyConfig, conversationId: string): FlyMachineConfig {
