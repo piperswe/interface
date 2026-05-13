@@ -43,6 +43,7 @@
 		toastSubmit,
 	} from '$lib/form-actions';
 	import { page } from '$app/state';
+	import { invalidateAll } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import type { ProviderType, ReasoningType } from '$lib/server/providers/types';
 
@@ -359,6 +360,7 @@
 			model_id: fromModelId,
 			before_model_id: beforeId ?? undefined,
 		});
+		await invalidateAll();
 	}
 
 	function modelDragEnd() {
