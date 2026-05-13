@@ -157,6 +157,45 @@ export type FlyExecResponse = z.infer<typeof flyExecResponseSchema>;
 
 // ----- HTTP plumbing ------------------------------------------------------
 
+// Truncate a string for log/message inclusion. Defensive against
+// large exec stdin or response payloads — fly's error responses are
+// small, but exec request bodies can carry user-supplied stdin.
+function truncate(s: string, max: number): string {
+	if (s.length <= max) return s;
+	return `${s.slice(0, max)}…[truncated ${s.length - max} chars]`;
+}
+
+// Single chokepoint for fly-API failure surfacing. Builds a
+// `FlyApiError` whose `.message` inlines the response body preview
+// (so UIs that only render `error.message` see *why* fly rejected the
+// call), and emits a structured `console.error` so `wrangler tail`
+// shows the full picture. The bearer token lives in the
+// `Authorization` header, never the body, so logging request/response
+// bodies verbatim is safe.
+function logAndBuildFlyError(args: {
+	method: string;
+	path: string;
+	status: number;
+	responseBody: string;
+	requestBody?: BodyInit | null;
+	reason?: string;
+}): FlyApiError {
+	const { method, path, status, responseBody, reason } = args;
+	const requestBody = typeof args.requestBody === 'string' ? args.requestBody : undefined;
+	const bodyPreview = responseBody ? ` body=${truncate(responseBody, 500)}` : '';
+	const reasonPart = reason ? `: ${reason}` : '';
+	const message = `Fly API ${method} ${path} → ${status}${reasonPart}${bodyPreview}`;
+	console.error('Fly API error', {
+		method,
+		path,
+		reason,
+		requestBody: requestBody ? truncate(requestBody, 2048) : undefined,
+		responseBody: truncate(responseBody, 2048),
+		status,
+	});
+	return new FlyApiError(message, status, responseBody);
+}
+
 async function flyFetch(cfg: FlyConfig, path: string, init: RequestInit = {}): Promise<Response> {
 	const headers = new Headers(init.headers ?? {});
 	headers.set('Authorization', `Bearer ${cfg.token}`);
@@ -183,19 +222,33 @@ async function flyJson<S extends z.ZodTypeAny>(cfg: FlyConfig, path: string, sch
 	const text = await resp.text();
 	const method = init.method ?? 'GET';
 	if (!resp.ok) {
-		throw new FlyApiError(`Fly API ${method} ${path} → ${resp.status}`, resp.status, text);
+		throw logAndBuildFlyError({ method, path, requestBody: init.body, responseBody: text, status: resp.status });
 	}
 	let parsedJson: unknown;
 	if (text) {
 		try {
 			parsedJson = JSON.parse(text);
 		} catch {
-			throw new FlyApiError(`Fly API ${method} ${path}: non-JSON response`, resp.status, text);
+			throw logAndBuildFlyError({
+				method,
+				path,
+				reason: 'non-JSON response',
+				requestBody: init.body,
+				responseBody: text,
+				status: resp.status,
+			});
 		}
 	}
 	const result = schema.safeParse(parsedJson);
 	if (!result.success) {
-		throw new FlyApiError(`Fly API ${method} ${path}: response failed validation (${formatZodError(result.error)})`, resp.status, text);
+		throw logAndBuildFlyError({
+			method,
+			path,
+			reason: `response failed validation (${formatZodError(result.error)})`,
+			requestBody: init.body,
+			responseBody: text,
+			status: resp.status,
+		});
 	}
 	return result.data;
 }
@@ -208,25 +261,28 @@ const flyEmptyResponseSchema = z.unknown();
 // ----- Endpoint helpers ---------------------------------------------------
 
 export async function getMachine(cfg: FlyConfig, machineId: string): Promise<FlyMachine | null> {
-	const resp = await flyFetch(cfg, `/apps/${cfg.appName}/machines/${machineId}`);
+	const path = `/apps/${cfg.appName}/machines/${machineId}`;
+	const resp = await flyFetch(cfg, path);
 	if (resp.status === 404) return null;
 	const text = await resp.text();
 	if (!resp.ok) {
-		throw new FlyApiError(`Fly API GET machine ${machineId} → ${resp.status}`, resp.status, text);
+		throw logAndBuildFlyError({ method: 'GET', path, responseBody: text, status: resp.status });
 	}
 	let parsedJson: unknown;
 	try {
 		parsedJson = text ? JSON.parse(text) : undefined;
 	} catch {
-		throw new FlyApiError(`Fly API GET machine ${machineId}: non-JSON response`, resp.status, text);
+		throw logAndBuildFlyError({ method: 'GET', path, reason: 'non-JSON response', responseBody: text, status: resp.status });
 	}
 	const result = flyMachineSchema.safeParse(parsedJson);
 	if (!result.success) {
-		throw new FlyApiError(
-			`Fly API GET machine ${machineId}: response failed validation (${formatZodError(result.error)})`,
-			resp.status,
-			text,
-		);
+		throw logAndBuildFlyError({
+			method: 'GET',
+			path,
+			reason: `response failed validation (${formatZodError(result.error)})`,
+			responseBody: text,
+			status: resp.status,
+		});
 	}
 	return result.data;
 }
@@ -249,11 +305,12 @@ export async function waitForMachineState(cfg: FlyConfig, machineId: string, sta
 }
 
 export async function destroyMachine(cfg: FlyConfig, machineId: string): Promise<void> {
-	const resp = await flyFetch(cfg, `/apps/${cfg.appName}/machines/${machineId}?force=true`, {
+	const path = `/apps/${cfg.appName}/machines/${machineId}?force=true`;
+	const resp = await flyFetch(cfg, path, {
 		method: 'DELETE',
 	});
 	if (!resp.ok && resp.status !== 404) {
-		throw new FlyApiError(`Fly API DELETE machine ${machineId} → ${resp.status}`, resp.status, await resp.text());
+		throw logAndBuildFlyError({ method: 'DELETE', path, responseBody: await resp.text(), status: resp.status });
 	}
 }
 

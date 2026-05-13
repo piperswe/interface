@@ -137,4 +137,50 @@ describe('machines-api REST', () => {
 		).rejects.toThrow();
 		expect(spy).not.toHaveBeenCalled();
 	});
+
+	it('inlines the fly response body in error.message on 422', async () => {
+		// Regression: a 422 from fly used to surface only "→ 422" with
+		// the actual reason hidden in `.body`. Callers that render
+		// `error.message` should see *why* fly rejected the request.
+		stubFetch(() => new Response('{"error":"image not found"}', { status: 422 }));
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const err = await createMachine(CFG, { config: { image: 'r/x:latest' } }).catch((e) => e);
+		expect(err).toBeInstanceOf(FlyApiError);
+		expect(err.message).toContain('422');
+		expect(err.message).toContain('image not found');
+		expect(err.body).toBe('{"error":"image not found"}');
+	});
+
+	it('emits a structured console.error with method/path/status/responseBody on failure', async () => {
+		// Regression: without a console.error at the throw site, wrangler
+		// tail showed nothing useful when fly rejected a request.
+		stubFetch(() => new Response('{"error":"image not found"}', { status: 422 }));
+		const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		await createMachine(CFG, { config: { image: 'r/x:latest' } }).catch(() => {});
+		expect(errSpy).toHaveBeenCalledTimes(1);
+		const [label, ctx] = errSpy.mock.calls[0];
+		expect(label).toBe('Fly API error');
+		expect(ctx).toMatchObject({
+			method: 'POST',
+			path: '/apps/sandbox-app/machines',
+			responseBody: '{"error":"image not found"}',
+			status: 422,
+		});
+		expect(typeof (ctx as { requestBody?: unknown }).requestBody).toBe('string');
+		expect((ctx as { requestBody: string }).requestBody).toContain('r/x:latest');
+	});
+
+	it('never leaks the bearer token into error logs', async () => {
+		// Defensive: the token lives in the Authorization header, never
+		// the body, so the helper has no reason to log it. This guards
+		// against a future change that adds header logging without
+		// thinking about secrets.
+		stubFetch(() => new Response('{"error":"image not found"}', { status: 422 }));
+		const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		await createMachine(CFG, { config: { image: 'r/x:latest' } }).catch(() => {});
+		for (const call of errSpy.mock.calls) {
+			const serialized = call.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
+			expect(serialized).not.toContain('tok-abc');
+		}
+	});
 });
