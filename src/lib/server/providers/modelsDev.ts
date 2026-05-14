@@ -6,8 +6,7 @@
 // don't persist it ourselves.
 
 import { z } from 'zod';
-import { validateOrThrow } from '$lib/zod-utils';
-import { inferReasoningType } from './fetch';
+import { fetchCachedJson, inferReasoningType } from './fetch';
 import type { CreateModelInput } from './models';
 import type { ReasoningType } from './types';
 
@@ -80,17 +79,12 @@ export interface ModelsDevEntry {
 	knowledge: string | null;
 }
 
-type FetchInitWithCf = RequestInit & { cf?: { cacheTtl?: number; cacheEverything?: boolean } };
-
 export async function fetchModelsDevCatalog(): Promise<ModelsDevEntry[]> {
-	const init: FetchInitWithCf = {
-		cf: { cacheEverything: true, cacheTtl: CACHE_TTL_SECONDS },
-		headers: { Accept: 'application/json' },
-	};
-	const res = await fetch(MODELS_DEV_URL, init as RequestInit);
-	if (!res.ok) throw new Error(`models.dev API error: ${res.status}`);
-
-	const catalog = validateOrThrow(modelsDevCatalogSchema, await res.json(), 'models.dev catalog');
+	const catalog = await fetchCachedJson(MODELS_DEV_URL, modelsDevCatalogSchema, {
+		cacheTtlSeconds: CACHE_TTL_SECONDS,
+		errorPrefix: 'models.dev API error',
+		label: 'models.dev catalog',
+	});
 
 	const entries: ModelsDevEntry[] = [];
 	for (const [providerKey, provider] of Object.entries(catalog)) {

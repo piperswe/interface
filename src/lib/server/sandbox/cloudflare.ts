@@ -32,9 +32,10 @@ function getSdkSandbox(env: Env, conversationId: string): SdkSandbox {
 	return getSandbox(ns, conversationId, { sleepAfter: SLEEP_AFTER });
 }
 
-// Exported so the DO sandbox helper can keep its existing test seam — the
-// SDK return shape drifts across versions, so we defensively normalise both
-// array and `{ ports }` object forms.
+// Normalises the Sandbox SDK's `getExposedPorts` return shape, which drifts
+// across versions — defensively handles both the bare array and `{ ports }`
+// object forms. Exported so the DO sandbox helper can re-export it as a test
+// seam without duplicating the logic.
 export async function _listExposedPorts(
 	sandbox: { getExposedPorts: (hostname: string) => Promise<unknown> },
 	hostname: string,

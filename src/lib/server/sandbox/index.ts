@@ -3,6 +3,7 @@
 // the matching SandboxInstance — falling back to any available backend if
 // the user's preferred one is unconfigured, or `null` if none are.
 
+import { BoundedMap } from '$lib/server/bounded-cache';
 import { getSandboxBackendId } from '$lib/server/settings';
 import type { SandboxBackend, SandboxBackendId, SandboxInstance } from './backend';
 import { cloudflareBackend } from './cloudflare';
@@ -35,15 +36,7 @@ export function listBackends(): SandboxBackend[] {
 const SELECTION_TTL_MS = 30_000;
 const SELECTION_CACHE_MAX = 64;
 type SelectionEntry = { backendId: SandboxBackendId; expiresAt: number };
-const selectionCache = new Map<string, SelectionEntry>();
-
-function rememberSelection(key: string, backendId: SandboxBackendId): void {
-	if (selectionCache.size >= SELECTION_CACHE_MAX) {
-		const first = selectionCache.keys().next().value;
-		if (first !== undefined) selectionCache.delete(first);
-	}
-	selectionCache.set(key, { backendId, expiresAt: Date.now() + SELECTION_TTL_MS });
-}
+const selectionCache = new BoundedMap<string, SelectionEntry>(SELECTION_CACHE_MAX);
 
 // Test helper: wipe the cache between tests so a setting change isn't
 // hidden by a stale entry.
@@ -65,7 +58,7 @@ export async function getBackend(env: Env, userId?: number): Promise<SandboxBack
 	}
 	const preferred = await getSandboxBackendId(env, userId);
 	const backend = available.find((b) => b.id === preferred) ?? available[0];
-	rememberSelection(cacheKey, backend.id);
+	selectionCache.set(cacheKey, { backendId: backend.id, expiresAt: Date.now() + SELECTION_TTL_MS });
 	return backend;
 }
 

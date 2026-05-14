@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { bytesToBase64 } from '$lib/server/base64';
+import { BoundedMap, BoundedSet } from '$lib/server/bounded-cache';
 import { getSandboxInstance } from '$lib/server/sandbox';
 import type { ExecResult, SandboxInstance } from '$lib/server/sandbox/backend';
 import { getWorkspaceIoMode, type WorkspaceIoMode } from '$lib/server/settings';
@@ -58,14 +60,7 @@ async function getConversationSandbox(ctx: ToolContext): Promise<SandboxInstance
 // Bounded so a long-lived Worker isolate that handles many conversations or
 // rotates the SSH key frequently can't accumulate entries indefinitely.
 const SSH_INJECTED_CACHE_MAX = 256;
-const sshKeyInjected = new Set<string>();
-function rememberSshKeyInjected(cacheKey: string): void {
-	if (sshKeyInjected.size >= SSH_INJECTED_CACHE_MAX) {
-		const first = sshKeyInjected.values().next().value;
-		if (first !== undefined) sshKeyInjected.delete(first);
-	}
-	sshKeyInjected.add(cacheKey);
-}
+const sshKeyInjected = new BoundedSet<string>(SSH_INJECTED_CACHE_MAX);
 
 const SSH_KEY_PATH = '/root/.ssh/sandbox_key';
 const SSH_CONFIG_PATH = '/root/.ssh/config';
@@ -85,7 +80,7 @@ const SSH_CONFIG = `Host github.com
 // raw private key doesn't sit in isolate memory across calls; the LRU bound
 // prevents unbounded growth across many key rotations.
 const FINGERPRINT_CACHE_MAX = 64;
-const fingerprintCache = new Map<string, string>();
+const fingerprintCache = new BoundedMap<string, string>(FINGERPRINT_CACHE_MAX);
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
 	// `crypto.subtle.digest` wants a `BufferSource` whose buffer is an
 	// `ArrayBuffer` (not `SharedArrayBuffer`). `bytes.buffer` is typed
@@ -103,10 +98,6 @@ async function fingerprintKey(key: string): Promise<string> {
 	const cached = fingerprintCache.get(fullHash);
 	if (cached) return cached;
 	const fp = fullHash.slice(0, 16);
-	if (fingerprintCache.size >= FINGERPRINT_CACHE_MAX) {
-		const first = fingerprintCache.keys().next().value;
-		if (first !== undefined) fingerprintCache.delete(first);
-	}
 	fingerprintCache.set(fullHash, fp);
 	return fp;
 }
@@ -133,7 +124,7 @@ async function ensureSshKey(ctx: ToolContext): Promise<void> {
 	if (sshKeyInjected.has(cacheKey)) return;
 	const sandbox = await getConversationSandbox(ctx);
 	await injectSshKey(sandbox, key);
-	rememberSshKeyInjected(cacheKey);
+	sshKeyInjected.add(cacheKey);
 }
 
 // ---------------------------------------------------------------------------
@@ -1149,17 +1140,6 @@ export type SandboxLoadImageDeps = {
 	// invocation so a `switch_model` mid-turn picks up the new model's flags.
 	getModels: () => ProviderModel[];
 };
-
-function bytesToBase64(bytes: Uint8Array): string {
-	// Build the binary string in chunks to avoid `Maximum call stack size
-	// exceeded` on large files when spreading into String.fromCharCode.
-	const CHUNK = 0x8000;
-	let binary = '';
-	for (let i = 0; i < bytes.length; i += CHUNK) {
-		binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CHUNK)));
-	}
-	return btoa(binary);
-}
 
 export function createSandboxLoadImageTool(deps: SandboxLoadImageDeps): Tool {
 	return {

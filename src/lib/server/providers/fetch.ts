@@ -40,6 +40,28 @@ export async function fetchOpenRouterModels(apiKey?: string): Promise<CuratedMod
 	});
 }
 
+// `RequestInit` plus Cloudflare's non-standard `cf` field, which controls
+// edge caching for `fetch()` calls made from a Worker.
+export type FetchInitWithCf = RequestInit & { cf?: { cacheTtl?: number; cacheEverything?: boolean } };
+
+// Fetch a JSON document through Cloudflare's edge cache and validate it
+// against `schema`. Shared by the models.dev and OpenRouter catalog
+// fetchers, which both want the same cache-everything behaviour and the
+// same `throw on !res.ok` / `validateOrThrow` boilerplate.
+export async function fetchCachedJson<S extends z.ZodTypeAny>(
+	url: string,
+	schema: S,
+	opts: { cacheTtlSeconds: number; errorPrefix: string; label: string },
+): Promise<z.infer<S>> {
+	const init: FetchInitWithCf = {
+		cf: { cacheEverything: true, cacheTtl: opts.cacheTtlSeconds },
+		headers: { Accept: 'application/json' },
+	};
+	const res = await fetch(url, init as RequestInit);
+	if (!res.ok) throw new Error(`${opts.errorPrefix}: ${res.status}`);
+	return validateOrThrow(schema, await res.json(), opts.label);
+}
+
 export function inferReasoningType(modelId: string): 'effort' | 'max_tokens' | undefined {
 	const lower = modelId.toLowerCase();
 	if (

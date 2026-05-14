@@ -7,8 +7,7 @@
 // pricing convention differ.
 
 import { z } from 'zod';
-import { validateOrThrow } from '$lib/zod-utils';
-import { inferReasoningType } from './fetch';
+import { fetchCachedJson, inferReasoningType } from './fetch';
 import type { CreateModelInput } from './models';
 import type { ReasoningType } from './types';
 
@@ -71,17 +70,12 @@ export interface OpenRouterEntry {
 	knowledgeCutoff: string | null;
 }
 
-type FetchInitWithCf = RequestInit & { cf?: { cacheTtl?: number; cacheEverything?: boolean } };
-
 export async function fetchOpenRouterCatalog(): Promise<OpenRouterEntry[]> {
-	const init: FetchInitWithCf = {
-		cf: { cacheEverything: true, cacheTtl: CACHE_TTL_SECONDS },
-		headers: { Accept: 'application/json' },
-	};
-	const res = await fetch(OPENROUTER_MODELS_URL, init as RequestInit);
-	if (!res.ok) throw new Error(`OpenRouter API error: ${res.status}`);
-
-	const parsed = validateOrThrow(openRouterResponseSchema, await res.json(), 'OpenRouter models catalog');
+	const parsed = await fetchCachedJson(OPENROUTER_MODELS_URL, openRouterResponseSchema, {
+		cacheTtlSeconds: CACHE_TTL_SECONDS,
+		errorPrefix: 'OpenRouter API error',
+		label: 'OpenRouter models catalog',
+	});
 
 	const entries: OpenRouterEntry[] = [];
 	for (const model of parsed.data ?? []) {

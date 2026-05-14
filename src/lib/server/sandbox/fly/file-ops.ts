@@ -5,6 +5,7 @@
 // single-quoted via `shellQuote` (no interpolation) and option parsing is
 // terminated with `--` before the user-supplied path.
 
+import { bytesToBase64 } from '$lib/server/base64';
 import type { ReadFileResult } from '../backend';
 import { execMachine, type FlyConfig } from './client';
 
@@ -82,13 +83,7 @@ export async function writeFileShell(cfg: FlyConfig, machineId: string, path: st
 	// Encode content as base64 on the client side, pipe via stdin to
 	// `base64 -d` on the server. This avoids any shell-escaping or
 	// chunking concerns with arbitrary file contents.
-	const bytes = new TextEncoder().encode(content);
-	let bin = '';
-	const CHUNK = 0x8000;
-	for (let i = 0; i < bytes.length; i += CHUNK) {
-		bin += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CHUNK)));
-	}
-	const b64 = btoa(bin);
+	const b64 = bytesToBase64(new TextEncoder().encode(content));
 	const script = `set -e
 mkdir -p -- "$(dirname -- ${p})"
 base64 -d > ${p}`;
@@ -147,13 +142,7 @@ export async function runCodeShell(
 	const p = shellQuote(file);
 	// Encode code via base64 to avoid any shell-escaping pitfalls with
 	// quotes, dollar signs, backticks, etc.
-	const bytes = new TextEncoder().encode(code);
-	let bin = '';
-	const CHUNK = 0x8000;
-	for (let i = 0; i < bytes.length; i += CHUNK) {
-		bin += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CHUNK)));
-	}
-	const b64 = btoa(bin);
+	const b64 = bytesToBase64(new TextEncoder().encode(code));
 	// `set -e` for the prelude so a base64-decode failure aborts before we
 	// invoke the runner, but `set +e` around the runner itself so a
 	// non-zero exit doesn't skip the `rm -f` cleanup (otherwise the temp

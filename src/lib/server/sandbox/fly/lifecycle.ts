@@ -6,6 +6,7 @@
 // (which also needs the id, to set `fly-prefer-instance-id`) doesn't pay
 // the D1 round-trip on every request.
 
+import { BoundedMap } from '$lib/server/bounded-cache';
 import {
 	createMachine,
 	destroyMachine,
@@ -58,10 +59,9 @@ function defaultMachineConfig(cfg: FlyConfig, conversationId: string): FlyMachin
 	};
 }
 
-// Isolate-local cache of `conversationId -> machineId`. Same bounded-LRU
-// pattern as the SSH-key cache in tools/sandbox.ts.
+// Isolate-local cache of `conversationId -> machineId`.
 const MACHINE_CACHE_MAX = 256;
-const machineCache = new Map<string, string>();
+const machineCache = new BoundedMap<string, string>(MACHINE_CACHE_MAX);
 
 // In-flight `ensureMachine` promises keyed by conversation id. Without
 // this, two concurrent tool calls for the same conversation on the same
@@ -73,14 +73,6 @@ const machineCache = new Map<string, string>();
 // post-create reconciliation step inside `ensureMachineInner`.
 const inFlight = new Map<string, Promise<string>>();
 
-function rememberMachine(conversationId: string, machineId: string): void {
-	if (machineCache.size >= MACHINE_CACHE_MAX) {
-		const first = machineCache.keys().next().value;
-		if (first !== undefined) machineCache.delete(first);
-	}
-	machineCache.set(conversationId, machineId);
-}
-
 function forgetMachine(conversationId: string): void {
 	machineCache.delete(conversationId);
 }
@@ -89,7 +81,7 @@ export async function getCachedMachineId(env: Env, conversationId: string): Prom
 	const cached = machineCache.get(conversationId);
 	if (cached) return cached;
 	const fromDb = await getFlyMachineId(env, conversationId);
-	if (fromDb) rememberMachine(conversationId, fromDb);
+	if (fromDb) machineCache.set(conversationId, fromDb);
 	return fromDb;
 }
 
@@ -149,7 +141,7 @@ async function ensureMachineInner(env: Env, cfg: FlyConfig, conversationId: stri
 		} else {
 			await setFlyMachineId(env, conversationId, machineId);
 		}
-		rememberMachine(conversationId, machineId);
+		machineCache.set(conversationId, machineId);
 		// Newly created machines start automatically; wait for ready.
 		try {
 			await waitForMachineState(cfg, machineId, 'started', 30);
