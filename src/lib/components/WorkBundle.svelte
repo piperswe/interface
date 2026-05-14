@@ -17,7 +17,7 @@
 	} = $props();
 </script>
 
-<details class="work-bundle" open={group.isLast && isStreaming}>
+<details class="work-bundle">
 	<summary>
 		<ChevronRight class="chevron" size={12} aria-hidden="true" />
 		<span class="work-bundle-label">{group.mixed ? 'Tools & thinking' : 'Thinking'}</span>

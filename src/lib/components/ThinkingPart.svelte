@@ -2,19 +2,14 @@
 	import { ChevronRight } from 'lucide-svelte';
 	import type { ThinkingPart } from '$lib/types/conversation';
 
-	let {
-		part,
-		isCurrent,
-		nested,
-	}: { part: ThinkingPart; isCurrent: boolean; nested: boolean } = $props();
+	let { part, nested }: { part: ThinkingPart; nested: boolean } = $props();
 </script>
 
 {#if part.text}
-	<details class="thinking{nested ? ' nested' : ''}" open={isCurrent}>
+	<details class="thinking{nested ? ' nested' : ''}">
 		<summary>
 			<ChevronRight class="chevron" size={12} aria-hidden="true" />
 			<span class="thinking-label">Thinking</span>
-			{#if isCurrent}<span class="streaming-indicator" aria-hidden="true">●</span>{/if}
 		</summary>
 		{#if part.textHtml}
 			<div class="thinking-body">{@html part.textHtml}</div>

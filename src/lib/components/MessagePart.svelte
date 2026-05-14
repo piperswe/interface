@@ -20,12 +20,6 @@
 		results: Map<string, ToolResultPart>;
 		nested: boolean;
 	} = $props();
-
-	// A trailing thinking part on a streaming message is "current" — open by
-	// default and shows the streaming indicator.
-	const isCurrentThinking = $derived(
-		isStreaming && index === lastIndex && part.type === 'thinking',
-	);
 </script>
 
 {#if part.type === 'text'}
@@ -37,7 +31,7 @@
 		{/if}
 	{/if}
 {:else if part.type === 'thinking'}
-	<ThinkingPart {part} isCurrent={isCurrentThinking} {nested} />
+	<ThinkingPart {part} {nested} />
 {:else if part.type === 'info'}
 	<InfoPart {part} />
 {:else if part.type === 'citations'}
