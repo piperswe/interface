@@ -1,0 +1,26 @@
+src/lib/components/ThinkingPart.svelte
+  s_df6964040a075a::t_8d9541aeda786a 5
+  s_df6964040a075a::t_6954c4e4f59a6b 9
+src/lib/components/WorkBundle.svelte
+  s_df6964040a075a::t_5195a18fa4693d 20
+src/lib/components/CitationsPart.svelte
+  s_df6964040a075a::t_e2b162569bfccb 9
+src/lib/components/MessagePart.svelte
+  s_df6964040a075a::t_d17a868723e0e5 34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "ed0443ff80e6203de00d947eb766c617801280b3",
+  "prompts": {},
+  "sessions": {
+    "s_df6964040a075a": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_1db1c1c2effe6uCzYgjECnt3z5",
+        "model": "Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-oQ8e"
+      },
+      "human_author": "Piper McCorkle <contact@piperswe.me>"
+    }
+  }
+}
